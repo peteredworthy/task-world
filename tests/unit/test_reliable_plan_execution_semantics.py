@@ -17,6 +17,7 @@ from orchestrator.graph import (
     PatchEnvelope,
     PatchCommandContext,
     PatchOp,
+    ReliablePlanAssignmentCarrier,
     SemanticArtifactRecord,
     SemanticSchemaDeclarationRecord,
     SequentialIdGenerator,
@@ -26,6 +27,7 @@ from orchestrator.graph import (
     build_projection,
     classify_write_worker_semantics,
     compile_routine,
+    correction_superseded_task_region_id,
     expand_patch_macros,
     initial_projection,
     semantic_schema_declarations_view,
@@ -57,6 +59,43 @@ PLAN_SCHEMA = SemanticArtifactSchemaConfig(
         "additionalProperties": False,
     },
 )
+
+
+def _reliable_plan_carrier() -> ReliablePlanAssignmentCarrier:
+    assignment = {
+        "runner_type": "codex_server",
+        "model": "gpt-test",
+        "profile": "architect",
+    }
+    return ReliablePlanAssignmentCarrier.model_validate(
+        {
+            "skeleton_id": "reliable-plan-fff4f6b7-v1",
+            "selected_runner_type": "codex_server",
+            "arm": {
+                "arm_id": "test-arm",
+                "planner": assignment,
+                "discovery_worker": {**assignment, "profile": "summarizer"},
+                "implementation_worker": {**assignment, "profile": "coder"},
+                "correction_worker": {**assignment, "profile": "coder"},
+                "verifier": {**assignment, "profile": "coder"},
+                "successor_planner": assignment,
+            },
+        }
+    )
+
+
+def _reliable_plan_planner_fields(*, successor: bool = False) -> dict[str, Any]:
+    carrier = _reliable_plan_carrier()
+    role = "successor_planner" if successor else "planner"
+    assignment = carrier.assignment_for(role)
+    return {
+        "reliable_plan_skeleton_id": carrier.skeleton_id,
+        "reliable_plan_assignment_carrier": carrier.model_dump(mode="json"),
+        "reliable_plan_assignment_role": role,
+        "reliable_plan_selected_runner_type": carrier.selected_runner_type,
+        "runner_model_override": assignment.model,
+        "profile": assignment.profile.value,
+    }
 
 
 def _macro_patch(macro: str, args: dict[str, Any]) -> PatchEnvelope:
@@ -405,6 +444,118 @@ def test_declared_batch_write_worker_cannot_relabel_itself_corrective_work() -> 
     assert result.rejection_reason == (
         "implementation against a declared batch plan must use effectful_batch semantics"
     )
+
+
+def _correction_supersession_facts() -> tuple[Any, dict[str, Any]]:
+    projection = build_projection(
+        [
+            event(
+                "node_created",
+                {
+                    "node_id": "worker-batch-1",
+                    "kind": "worker",
+                    "semantic_stage": "effectful_batch",
+                    "declared_batch_id": "batch-1",
+                    "task_region_id": "region-batch-1",
+                },
+            ),
+            event(
+                "output_record_accepted",
+                {
+                    "record_id": "candidate-batch-1",
+                    "record_kind": "output",
+                    "record_type": "candidate",
+                    "producer_node_id": "worker-batch-1",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": "candidate-batch-1",
+                    "task_region_id": "region-batch-1",
+                    "attempt_number": 1,
+                    "value": {"summary": "failed candidate"},
+                },
+                position=1,
+            ),
+            event(
+                "node_created",
+                {
+                    "node_id": "verifier-batch-1",
+                    "kind": "verifier",
+                    "semantic_stage": "effectful_batch",
+                    "declared_batch_id": "batch-1",
+                    "task_region_id": "region-batch-1",
+                },
+                position=2,
+            ),
+            event(
+                "output_record_accepted",
+                {
+                    "record_id": "verification-batch-1-failed",
+                    "record_kind": "verification",
+                    "record_type": "verification_report",
+                    "producer_node_id": "verifier-batch-1",
+                    "port": "verification_report",
+                    "schema": "VerificationReport",
+                    "candidate_id": "candidate-batch-1",
+                    "task_region_id": "region-batch-1",
+                    "outcome": "failed",
+                    "value": {"outcome": "failed", "grades": []},
+                },
+                position=3,
+            ),
+            event(
+                "verification_failed",
+                {
+                    "node_id": "verifier-batch-1",
+                    "verifier_node_id": "verifier-batch-1",
+                    "candidate_id": "candidate-batch-1",
+                    "task_region_id": "region-batch-1",
+                    "record_id": "verification-batch-1-failed",
+                    "outcome": "failed",
+                },
+                position=4,
+            ),
+        ]
+    )
+    return projection, {
+        "node_id": "worker-correction",
+        "kind": "worker",
+        "semantic_stage": "corrective_work",
+        "declared_batch_id": "batch-1",
+        "failed_candidate_id": "candidate-batch-1",
+        "failed_verification_record_id": "verification-batch-1-failed",
+        "base_snapshot_selection": "rejected_candidate",
+        "base_snapshot_candidate_id": "candidate-batch-1",
+        "recovery_reason": "failed_verification",
+        "recovery_of_node_id": "verifier-batch-1",
+        "recovery_of_record_id": "verification-batch-1-failed",
+    }
+
+
+def test_correction_supersession_requires_exact_failed_candidate_lineage() -> None:
+    projection, node = _correction_supersession_facts()
+
+    assert correction_superseded_task_region_id(projection, node) == "region-batch-1"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("declared_batch_id", "batch-2"),
+        ("failed_candidate_id", "candidate-other"),
+        ("base_snapshot_selection", "accepted_region"),
+        ("base_snapshot_candidate_id", "candidate-other"),
+        ("recovery_of_node_id", "verifier-other"),
+        ("recovery_of_record_id", "verification-other"),
+    ],
+)
+def test_correction_supersession_lineage_mutations_fail_closed(
+    field: str,
+    value: str,
+) -> None:
+    projection, node = _correction_supersession_facts()
+    node[field] = value
+
+    assert correction_superseded_task_region_id(projection, node) is None
 
 
 def test_composite_revision_attempt_uses_same_semantic_plan_revision_classifier() -> None:
@@ -893,7 +1044,7 @@ def test_reliable_plan_initial_skeleton_rejects_extra_dispatchable_atomically(
                     "kind": "planner",
                     "role": "planner",
                     "state": "leased",
-                    "reliable_plan_skeleton_id": "reliable-plan-v1",
+                    **_reliable_plan_planner_fields(),
                     "reliable_plan_one_horizon_authorized": True,
                 },
                 position=1,
@@ -1014,7 +1165,7 @@ def test_reliable_plan_successor_stage_cannot_masquerade_as_write_worker() -> No
                     "kind": "planner",
                     "role": "planner",
                     "state": "leased",
-                    "reliable_plan_skeleton_id": "reliable-plan-v1",
+                    **_reliable_plan_planner_fields(),
                     "reliable_plan_one_horizon_authorized": True,
                 },
                 position=1,
@@ -1264,7 +1415,7 @@ def test_effectful_batch_rejects_pass_report_for_a_different_plan_artifact() -> 
                 "role": "planner",
                 "state": "leased",
                 "semantic_stage": "successor_planning",
-                "reliable_plan_skeleton_id": "reliable-plan-v1",
+                **_reliable_plan_planner_fields(successor=True),
             },
         ),
         event(

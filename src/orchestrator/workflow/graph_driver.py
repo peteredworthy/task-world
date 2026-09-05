@@ -528,6 +528,7 @@ class GraphRunDriver:
                         session,
                         run_id=run_id,
                         run_config=run.config,
+                        selected_runner_type=run.agent_runner_type.value,
                     )
             except ValueError as exc:
                 message = f"Reliable-plan authorization rejected: {exc}"
@@ -563,6 +564,7 @@ class GraphRunDriver:
                 seed_run_config = verified_reliable_plan_seed_config(
                     seed_run_config,
                     reliable_plan_facts,
+                    selected_runner_type=run.agent_runner_type.value,
                 )
             await seed_run(
                 self._session_factory,

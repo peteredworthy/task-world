@@ -4,13 +4,19 @@ Frozen contract for the dynamic execution graph. This is the spec the DG-5.1
 saga discovered one expensive live run at a time. It is now asserted by:
 
 - `tests/unit/test_graph_dynamic_contract.py` — table-driven kernel rules.
-- `tests/integration/test_graph_dynamic_e2e.py` — deterministic, in-process,
-  scripted-runner end-to-end runs (zero LLM, runs in CI).
+- `tests/integration/test_graph_sequential_product_path.py` — the
+  default-collected, public-API joined product path (zero LLM, runs in CI).
+- `tests/unit/test_graph_runner_boundary_commands.py::test_runner_recovery_completes_non_gap_planner_with_accepted_patch`
+  — accepted-patch recovery when a runner exits before submit.
+- `tests/unit/test_graph_dispatch_on_output.py::test_gap_planner_submit_emits_classified_gap_after_accepted_nonempty_patch`
+  and `::test_gap_planner_submit_emits_no_gap_after_accepted_no_op_patch` —
+  dispatch output for corrective and no-op gap decisions. Kernel permission for
+  those no-op shapes remains table-driven in `test_graph_dynamic_contract.py`.
 
 **Rule of engagement:** a new failure found by a live run must be reproduced as
-a case in one of those two files *before* it is fixed. Do not debug the dynamic
-carrier by spending tokens on live runs; spend them only on the final
-comparison.
+a case in the appropriate joined or focused file above *before* it is fixed.
+Do not debug the dynamic carrier by spending tokens on live runs; spend them
+only on the final comparison.
 
 ---
 

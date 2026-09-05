@@ -10,11 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from orchestrator.db import ReliablePlanQualificationRepository
 from orchestrator.graph import (
     GraphProjection,
-    ReliablePlanEvaluationArm,
     ReliablePlanQualificationAuthorityFacts,
     ReliablePlanQualificationGrant,
     ReliablePlanScenarioManifest,
     qualification_from_accepted_records,
+    reliable_plan_assignment_carrier,
 )
 
 
@@ -68,6 +68,7 @@ async def require_reliable_plan_qualification_for_run(
     *,
     run_id: str,
     run_config: dict[str, Any],
+    selected_runner_type: str,
 ) -> ReliablePlanQualificationAuthorityFacts:
     """Revalidate the durable reference/run binding immediately before graph seed."""
     raw_authorization = run_config.get(_INTERNAL_AUTHORIZATION_KEY)
@@ -85,6 +86,11 @@ async def require_reliable_plan_qualification_for_run(
     skeleton_id = run_config.get("reliable_plan_skeleton_id")
     if facts.qualification.manifest.skeleton_id != skeleton_id:
         raise ValueError("reliable-plan run authorization skeleton mismatch")
+    reliable_plan_assignment_carrier(
+        skeleton_id=str(skeleton_id),
+        arm=run_config.get("reliable_plan_model_assignments"),
+        selected_runner_type=selected_runner_type,
+    )
     return facts
 
 
@@ -106,14 +112,22 @@ def has_caller_supplied_reliable_plan_authorization(config: dict[str, Any]) -> b
 def verified_reliable_plan_seed_config(
     run_config: dict[str, Any],
     facts: ReliablePlanQualificationAuthorityFacts,
+    *,
+    selected_runner_type: str,
 ) -> dict[str, Any]:
     """Replace the opaque reference with the bounded capability consumed by compilation."""
     result = dict(run_config)
-    assignments = ReliablePlanEvaluationArm.model_validate(
-        result.get("reliable_plan_model_assignments")
+    carrier = reliable_plan_assignment_carrier(
+        skeleton_id=str(result.get("reliable_plan_skeleton_id")),
+        arm=result.get("reliable_plan_model_assignments"),
+        selected_runner_type=selected_runner_type,
     )
     result.pop(_INTERNAL_AUTHORIZATION_KEY, None)
-    result["reliable_plan_model_assignments"] = assignments.model_dump(mode="json")
+    result["reliable_plan_model_assignments"] = carrier.arm.model_dump(mode="json")
+    result["reliable_plan_selected_runner_type"] = carrier.selected_runner_type
     result["reliable_plan_one_horizon_authorized"] = True
+    # Controller-owned authority for the supported bounded sequential profile:
+    # horizon one, followed by one successor planned from accepted evidence.
+    result["reliable_plan_remaining_horizons"] = 2
     result["reliable_plan_qualification_evidence_hash"] = facts.receipt.evidence_hash
     return result

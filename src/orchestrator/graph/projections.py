@@ -3582,6 +3582,8 @@ def _failed_check_result_blockers_from_projection(
         status = payload.status
         if status in {"passed", "pass", "ok"}:
             continue
+        if _check_result_recovery_superseded(projection, payload):
+            continue
         key = payload.record_id or node_id
         blocker: FinalInvariantBlocker = {
             "kind": "failed_check_result",
@@ -5173,12 +5175,15 @@ def project_graph_projection_snapshot(
 
 
 def project_node_max_attempts(events: list[EventEnvelope] | GraphProjection) -> dict[str, int]:
-    """Return first-declared executable retry budgets keyed by node id."""
+    """Return effective finite executable retry budgets keyed by node id."""
+    from orchestrator.graph.retry_policy import effective_node_max_attempts
+
     if isinstance(events, GraphProjection):
         return {
-            node_id: node.spec.max_attempts
+            node_id: effective
             for node_id, node in events.nodes.items()
-            if node.spec.max_attempts is not None
+            if (effective := effective_node_max_attempts(node.spec.kind, node.spec.max_attempts))
+            is not None
         }
     max_attempts: dict[str, int] = {}
     for event in events:
@@ -5187,9 +5192,11 @@ def project_node_max_attempts(events: list[EventEnvelope] | GraphProjection) -> 
         node_id = event.payload.get("node_id")
         if not isinstance(node_id, str) or node_id in max_attempts:
             continue
-        value = event.payload.get("max_attempts")
-        if isinstance(value, int) and not isinstance(value, bool):
-            max_attempts[node_id] = value
+        effective = effective_node_max_attempts(
+            event.payload.get("kind"), event.payload.get("max_attempts")
+        )
+        if effective is not None:
+            max_attempts[node_id] = effective
     return max_attempts
 
 
@@ -5900,6 +5907,9 @@ def _derive_task_states(state: GraphProjection) -> dict[str, str]:
 
     task_states: dict[str, str] = {}
     for task_region_id in sorted(task_region_ids):
+        if _semantic_plan_region_accepted(state, task_region_id):
+            task_states[task_region_id] = "accepted"
+            continue
         task = state.tasks.get(task_region_id)
         latest_candidate = _latest_candidate(task.candidates if task is not None else ())
         if latest_candidate is None:
@@ -5953,6 +5963,21 @@ def _derive_task_states(state: GraphProjection) -> dict[str, str]:
     return task_states
 
 
+def _semantic_plan_region_accepted(
+    state: GraphProjection,
+    task_region_id: str,
+) -> bool:
+    """Treat a passed plan verifier as acceptance for its read-only plan region."""
+    return any(
+        node.spec.task_region_id == task_region_id
+        and node.spec.dispatch_payload.get("semantic_stage") == "plan_verification"
+        and node.runtime.state == "completed"
+        and (verdict := state.verification.verdicts_by_node.get(node_id)) is not None
+        and verdict.verdict == "passed"
+        for node_id, node in state.nodes.items()
+    )
+
+
 def _apply_accepted_region_supersessions(
     state: GraphProjection,
     task_states: dict[str, str],
@@ -5964,7 +5989,7 @@ def _apply_accepted_region_supersessions(
         if latest_candidate is None:
             continue
         for superseded_region_id in latest_candidate.supersedes_task_region_ids:
-            if task_states.get(superseded_region_id) == "needs_revision":
+            if task_states.get(superseded_region_id) in {"needs_revision", "pending"}:
                 task_states[superseded_region_id] = "accepted"
 
 
@@ -6179,6 +6204,25 @@ def _check_result_recovery_superseded(
     )
     if not isinstance(record_id, str) or not record_id:
         return False
+    task_region_id = (
+        check_result.task_region_id
+        if isinstance(check_result, CheckResultValue)
+        else check_result.get("task_region_id")
+    )
+    candidate_id = (
+        (check_result.candidate_record_ids[0] if check_result.candidate_record_ids else None)
+        if isinstance(check_result, CheckResultValue)
+        else check_result.get("candidate_id")
+    )
+    if (
+        isinstance(task_region_id, str)
+        and isinstance(candidate_id, str)
+        and _accepted_candidate_supersedes_region(state, task_region_id)
+    ):
+        task = state.tasks.get(task_region_id)
+        latest = _latest_candidate(task.candidates) if task is not None else None
+        if latest is not None and latest.candidate_id == candidate_id:
+            return True
     recoveries = (
         state.verification.recovery_nodes_by_record_id[record_id]
         if record_id in state.verification.recovery_nodes_by_record_id
@@ -6195,6 +6239,11 @@ def _failed_verification_recovery_superseded(
     task_region_id: str,
     candidate_id: str,
 ) -> bool:
+    if _accepted_candidate_supersedes_region(state, task_region_id):
+        task = state.tasks.get(task_region_id)
+        latest = _latest_candidate(task.candidates) if task is not None else None
+        if latest is not None and latest.candidate_id == candidate_id:
+            return True
     for verification in state.verification.failed_results_by_record_id.values():
         if verification.candidate_id != candidate_id:
             continue
@@ -6211,6 +6260,34 @@ def _failed_verification_recovery_superseded(
         for recovery in recoveries:
             if _recovery_lineage_has_complete_verification(state, recovery.node_id):
                 return True
+    return False
+
+
+def _accepted_candidate_supersedes_region(
+    state: GraphProjection,
+    superseded_region_id: str,
+) -> bool:
+    """Require the superseding candidate's own region to pass every direct gate."""
+    for task_region_id, task in state.tasks.items():
+        if task_region_id == superseded_region_id:
+            continue
+        candidate = _latest_candidate(task.candidates)
+        if candidate is None or superseded_region_id not in candidate.supersedes_task_region_ids:
+            continue
+        if task.state == "accepted":
+            return True
+        verdict = _verifier_verdict_for_candidate(state, candidate.candidate_id)
+        if verdict is None or verdict.verdict != "passed":
+            continue
+        configured = state.governance.configured_gates_by_task.get(task_region_id, FrozenMap())
+        decisions = state.governance.gate_decisions_by_task.get(task_region_id, FrozenMap())
+        if not _all_configured_gates_passed(configured, decisions):
+            continue
+        if not _task_file_state_accepted(state, task_region_id, candidate.candidate_id):
+            continue
+        if not _required_checks_passed(state, task_region_id):
+            continue
+        return True
     return False
 
 

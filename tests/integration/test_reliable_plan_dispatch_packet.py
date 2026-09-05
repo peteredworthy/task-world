@@ -12,7 +12,7 @@ import yaml
 from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.config import AgentRunnerType, RoutineConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
-from orchestrator.graph import FakeClock, SequentialIdGenerator
+from orchestrator.graph import FakeClock, ReliablePlanEvaluationConfig, SequentialIdGenerator
 from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchExecutor,
@@ -115,6 +115,11 @@ async def test_routine_seed_outbox_dispatch_sends_reliable_macros_to_codex(
     routine_path = Path(__file__).parents[2] / "routines" / "dynamic-graph-feature" / "routine.yaml"
     raw_routine = yaml.safe_load(routine_path.read_text())
     routine = RoutineConfig.model_validate(raw_routine["routine"])
+    evaluation = ReliablePlanEvaluationConfig.model_validate_json(
+        (
+            Path(__file__).parents[1] / "fixtures" / "graph" / "reliable_plan_fff4f6b7.json"
+        ).read_text()
+    )
 
     engine = create_engine(tmp_path / "dispatch-packet.db")
     await init_db(engine)
@@ -137,7 +142,9 @@ async def test_routine_seed_outbox_dispatch_sends_reliable_macros_to_codex(
                 "feature_spec_path": "docs/dynamic-graph/reliable-plan-execution-contract.md",
                 "feature_spec_content": "Reliable plan dispatch packet qualification.",
                 "acceptance_command": "uv run pytest -q",
-                "reliable_plan_skeleton_id": "reliable-plan-v1",
+                "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
+                "reliable_plan_selected_runner_type": "codex_server",
+                "reliable_plan_model_assignments": evaluation.luna_arm.model_dump(mode="json"),
             },
         )
         controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
@@ -167,7 +174,7 @@ async def test_routine_seed_outbox_dispatch_sends_reliable_macros_to_codex(
             controller,
             StaticGraphAgentFactory(
                 AgentRunnerType.CODEX_SERVER,
-                {"local_provider": "lmstudio"},
+                {"local_provider": "lmstudio", "model": "gpt-5.6-sol"},
                 runner_builder=runner_builder,
             ),
             worktree_path=repo,
@@ -181,7 +188,7 @@ async def test_routine_seed_outbox_dispatch_sends_reliable_macros_to_codex(
         assert runner_builder.calls == [
             (
                 AgentRunnerType.CODEX_SERVER,
-                {"local_provider": "lmstudio"},
+                {"local_provider": "lmstudio", "model": "gpt-5.6-sol"},
                 run_id,
                 "building",
             )

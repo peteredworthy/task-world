@@ -1310,6 +1310,7 @@ class RunnerRecoveryRequestedPayload(StrictEventPayload):
         "cancelled",
         "staged_artifact_missing",
         "staged_artifact_corrupt",
+        "submission_repair_exhausted",
     ]
     error_detail: str | None = Field(default=None, max_length=4_096)
     max_attempts: StrictInt = 0
@@ -1977,10 +1978,17 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     declared_batch_id: str | None = None
     declared_batch_ids: list[str] | None = None
     accepted_plan_amendment_record_id: str | None = None
+    failed_verification_record_id: str | None = None
+    failed_check_record_ids: list[str] | None = None
+    classified_gap_record_id: str | None = None
     final_audit_required: StrictBool | None = None
     reliable_plan_skeleton_id: str | None = None
     reliable_plan_one_horizon_authorized: StrictBool | None = None
+    reliable_plan_remaining_horizons: StrictInt | None = Field(default=None, ge=0)
     reliable_plan_qualification_evidence_hash: str | None = None
+    reliable_plan_assignment_carrier: dict[str, Any] | None = None
+    reliable_plan_assignment_role: str | None = None
+    reliable_plan_selected_runner_type: str | None = None
     reliable_plan_successor_model: str | None = None
     reliable_plan_successor_profile: str | None = None
     runner_model_override: str | None = None

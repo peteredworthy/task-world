@@ -49,6 +49,8 @@ class CreateWorkRegionArgs(MacroArgs):
     failed_verification_record_id: str | None = None
     failed_check_record_ids: list[str] | None = None
     classified_gap_record_id: str | None = None
+    declared_batch_id: str | None = None
+    planning_horizon: int | None = Field(default=None, gt=0)
     base_snapshot_selection: (
         Literal["run_baseline", "latest_accepted", "accepted_region", "rejected_candidate"] | None
     ) = None
@@ -338,11 +340,22 @@ def _create_work_region(
         corrective_node.update(
             {
                 "semantic_stage": "corrective_work",
+                "failed_candidate_id": args.get("base_snapshot_candidate_id"),
                 "failed_verification_record_id": args["failed_verification_record_id"],
                 "failed_check_record_ids": list(args["failed_check_record_ids"]),
                 "classified_gap_record_id": args["classified_gap_record_id"],
                 "base_snapshot_region_id": args.get("base_snapshot_region_id"),
                 "base_snapshot_candidate_id": args.get("base_snapshot_candidate_id"),
+                "declared_batch_id": args.get("declared_batch_id"),
+                "planning_horizon": args.get("planning_horizon"),
+            }
+        )
+        verifier_payload.update(
+            {
+                "semantic_stage": "corrective_work",
+                "failed_candidate_id": args.get("base_snapshot_candidate_id"),
+                "declared_batch_id": args.get("declared_batch_id"),
+                "planning_horizon": args.get("planning_horizon"),
             }
         )
         gap_source = (
@@ -412,9 +425,64 @@ def _create_work_region(
                     prompt_hydration_policy="structured_json",
                 ),
             )
-    for check_args in _checks(args):
-        normalized = {"region_id": region_id, "evidence_source_node_id": verifier_id, **check_args}
-        ops.extend(_attach_check(normalized))
+    for index, check_args in enumerate(_checks(args), start=1):
+        if not corrective:
+            normalized = {
+                "region_id": region_id,
+                "evidence_source_node_id": verifier_id,
+                **check_args,
+            }
+            ops.extend(_attach_check(normalized))
+            continue
+        check_id = _str(check_args, "check_id") or f"check-{region_id}-{index}"
+        check_node: dict[str, Any] = {
+            "node_id": check_id,
+            "kind": "check",
+            "role": "batch_check",
+            "state": "planned",
+            "task_region_id": region_id,
+            "semantic_stage": "corrective_work",
+            "declared_batch_id": args.get("declared_batch_id"),
+            "planning_horizon": args.get("planning_horizon"),
+            "base_snapshot_selection": "candidate_under_test",
+        }
+        _copy_command(check_args, check_node)
+        ops.extend(
+            [
+                {"op": "create_node", "node": check_node},
+                _edge(
+                    f"edge-{worker_id}-candidate-to-{check_id}",
+                    worker_id,
+                    "candidate",
+                    check_id,
+                    "candidate_under_test",
+                    ("candidate",),
+                ),
+                _edge(
+                    f"edge-{check_id}-result-to-{verifier_id}",
+                    check_id,
+                    "check_result",
+                    verifier_id,
+                    f"check_result_{index}",
+                    ("check_result",),
+                    selector={
+                        "record_type": "any_of",
+                        "selectors": [
+                            {
+                                "record_type": "check_result",
+                                "schema": "CheckResult",
+                                "status": "passed",
+                            },
+                            {
+                                "record_type": "check_result",
+                                "schema": "CheckResult",
+                                "status": "failed",
+                            },
+                        ],
+                    },
+                ),
+            ]
+        )
     return ops
 
 
@@ -836,6 +904,7 @@ def _create_effectful_batch(args: dict[str, Any]) -> list[dict[str, Any]]:
     verifier_payload.update(
         {
             "semantic_stage": "effectful_batch",
+            "planning_horizon": args["planning_horizon"],
             "declared_batch_id": batch_id,
             "bound_requirement_ids": list(args.get("requirement_source_node_ids", [])),
             "base_snapshot_selection": "candidate_under_test",

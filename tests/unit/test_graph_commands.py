@@ -4319,6 +4319,32 @@ def test_patch_accept_emits_graph_events() -> None:
     assert output[0].payload["base_graph_position"] == -1
 
 
+def test_patch_created_oversight_defaults_finite_execution_budget() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "patch_id": "patch-oversight",
+            "base_graph_position": -1,
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "oversight-1",
+                        "kind": "oversight",
+                        "role": "oversight",
+                        "state": "planned",
+                    },
+                }
+            ],
+        },
+    )
+
+    created = next(event for event in output if event.event_type == "node_created")
+    assert created.payload["attempt_number"] == 1
+    assert created.payload["max_attempts"] == 3
+
+
 def test_patch_create_edge_preserves_producer_class_constraints() -> None:
     output = _apply(
         [
@@ -6013,6 +6039,8 @@ def test_patch_accept_emits_events_for_all_v1_ops() -> None:
     assert output[3].payload["kind"] == "worker"
     assert output[4].payload["kind"] == "verifier"
     assert output[5].payload["kind"] == "appeal"
+    assert output[5].payload["attempt_number"] == 1
+    assert output[5].payload["max_attempts"] == 3
     assert output[2].payload["worker_node"] == output[3].payload
     assert output[2].payload["verifier_node"] == output[4].payload
     assert all(
@@ -9402,7 +9430,8 @@ def test_agent_died_revokes_active_lease_and_requires_differentiating_recovery()
         "execution_id": "exec-1",
         "lease_generation": 1,
         "reason": "process_exit",
-        "attempt_number": 0,
+        "attempt_number": 1,
+        "max_attempts": 3,
     }
     assert leases_view(projection)["lease-1"].state == "revoked"
     assert node_state(projection, "worker-1") == "blocked"
@@ -9420,7 +9449,8 @@ def test_agent_died_revokes_active_lease_and_requires_differentiating_recovery()
             "reason": "process_exit",
             "failure_class": "infrastructure_failure",
             "retry_basis": "no_differentiating_action",
-            "attempt_number": 0,
+            "attempt_number": 1,
+            "max_attempts": 3,
         },
     }
     assert "retry_base_snapshot_id" not in output[3].payload["value"]
@@ -9429,7 +9459,7 @@ def test_agent_died_revokes_active_lease_and_requires_differentiating_recovery()
         "new_state": "blocked",
         "trigger": "agent_died_recovery_required",
         "reason": "missing_health_evidence_or_changed_recovery_action",
-        "attempt_number": 0,
+        "attempt_number": 1,
     }
 
 
@@ -9637,7 +9667,8 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
         "reason": "process_exit",
         "failure_class": "infrastructure_failure",
         "retry_basis": "retry_backoff_only",
-        "attempt_number": 1,
+        "attempt_number": 2,
+        "max_attempts": 3,
         "retry_after_seconds": 60,
         "retry_not_before": retry_not_before,
     }
@@ -9646,7 +9677,7 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
         "new_state": "blocked",
         "trigger": "agent_died_retry_backoff_scheduled",
         "retry_not_before": retry_not_before,
-        "attempt_number": 1,
+        "attempt_number": 2,
     }
     assert node_state(projection, "worker-1") == "blocked"
 
@@ -9741,13 +9772,13 @@ def test_agent_died_retry_records_classified_failure_before_scheduling_retry() -
     assert failure_value["failure_class"] == "infrastructure_failure"
     assert failure_value["retryable"] is True
     assert failure_value["error_class"] == "runtime_death_recovery_required"
-    assert failure_value["attempt_number"] == 0
+    assert failure_value["attempt_number"] == 1
 
     recovery_value = output[recovery_index].payload["value"]
     assert recovery_value["retry_base_snapshot_id"] == "routine-snapshot"
 
 
-def test_agent_died_retry_plan_omits_max_attempts_when_unbounded() -> None:
+def test_agent_died_retry_plan_defaults_legacy_missing_budget_to_three() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
         _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 1),
@@ -9784,8 +9815,8 @@ def test_agent_died_retry_plan_omits_max_attempts_when_unbounded() -> None:
         if event.event_type == "output_record_accepted"
         and event.payload.get("record_type") == "recovery_plan"
     )
-    assert "max_attempts" not in unbounded_failure.payload["value"]
-    assert "max_attempts" not in unbounded_recovery.payload["value"]
+    assert unbounded_failure.payload["value"]["max_attempts"] == 3
+    assert unbounded_recovery.payload["value"]["max_attempts"] == 3
 
     bounded_output = _apply(
         events,
@@ -9880,6 +9911,54 @@ def test_agent_died_fails_node_when_max_attempts_exhausted() -> None:
     }
     assert leases_view(projection)["lease-1"].state == "revoked"
     assert node_state(projection, "worker-1") == "failed"
+
+
+@pytest.mark.parametrize("kind", ["oversight", "appeal", "review"])
+@pytest.mark.parametrize("declared_max_attempts", [None, 0])
+def test_legacy_agent_alias_exhausts_at_effective_default_budget(
+    kind: str,
+    declared_max_attempts: int | None,
+) -> None:
+    node_payload: dict[str, object] = {
+        "node_id": "oversight-1",
+        "kind": kind,
+        "role": "oversight",
+        "state": "running",
+        "attempt_number": 3,
+    }
+    if declared_max_attempts is not None:
+        node_payload["max_attempts"] = declared_max_attempts
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", node_payload, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "oversight-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "agent_died",
+        {
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "process_exit",
+        },
+    )
+
+    assert not any(event.event_type == "runtime_retry_scheduled" for event in output)
+    terminal = output[-1]
+    assert terminal.event_type == "node_state_changed"
+    assert terminal.payload["new_state"] == "failed"
+    assert terminal.payload["trigger"] == "max_attempts_exhausted"
+    assert terminal.payload["max_attempts"] == 3
 
 
 def test_agent_died_rate_limit_revokes_lease_and_fails_without_retry() -> None:
@@ -10242,14 +10321,16 @@ def test_agent_died_recovery_exhausted_revokes_lease_and_fails_node() -> None:
         "execution_id": "exec-1",
         "lease_generation": 1,
         "reason": "runtime_execution_missing_no_callback",
-        "attempt_number": 0,
+        "attempt_number": 1,
+        "max_attempts": 3,
     }
     assert output[3].payload == {
         "node_id": "dynamic-worker-1",
         "new_state": "failed",
         "trigger": "recovery_budget_exhausted",
         "reason": "recovery_budget_exhausted",
-        "attempt_number": 0,
+        "attempt_number": 1,
+        "max_attempts": 3,
     }
     assert leases_view(projection)["lease-1"].state == "revoked"
     assert node_state(projection, "dynamic-worker-1") == "failed"

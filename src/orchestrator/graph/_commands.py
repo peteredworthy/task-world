@@ -60,6 +60,10 @@ from orchestrator.graph.event_registry import (
     validate_emitted_event_type,
 )
 from orchestrator.graph.macros import expand_patch_macros
+from orchestrator.graph.reliable_plan_evaluation import (
+    ReliablePlanAssignmentCarrier,
+    ReliablePlanAssignmentRole,
+)
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
@@ -118,6 +122,7 @@ from orchestrator.graph.semantic_artifacts import (
     semantic_declaration_conflict,
     validate_semantic_artifact_content,
 )
+from orchestrator.graph.semantic_applicability import correction_superseded_task_region_id
 from orchestrator.graph.patch_validator import (
     iter_patch_node_payloads,
     normalize_patch_node_payload,
@@ -137,6 +142,10 @@ from orchestrator.graph.scheduler import (
     claims_conflict,
     evaluate_readiness,
     schedule,
+)
+from orchestrator.graph.retry_policy import (
+    effective_node_attempt_number,
+    effective_node_max_attempts,
 )
 from orchestrator.graph.projection_queries import (
     node_failed_candidates_view,
@@ -697,8 +706,18 @@ def _semantic_final_gate_blockers(
             continue
         producer = payloads.get(record.producer_node_id, {})
         batch_id = producer.get("declared_batch_id")
+        valid_batch_stage = producer.get("semantic_stage") == "effectful_batch" or (
+            isinstance(batch_id, str)
+            and _corrective_batch_report_supersedes_region(
+                projection,
+                record,
+                batch_id,
+                records,
+                payloads,
+            )
+        )
         if (
-            producer.get("semantic_stage") == "effectful_batch"
+            valid_batch_stage
             and isinstance(batch_id, str)
             and batch_id in declared_batches
             and _runtime_batch_report_topology_valid(
@@ -728,6 +747,41 @@ def _semantic_final_gate_blockers(
     if not final_audit_passed:
         blockers.append({"kind": "missing_final_independent_audit"})
     return blockers
+
+
+def _corrective_batch_report_supersedes_region(
+    projection: GraphProjection,
+    report: VerificationReportRecord,
+    batch_id: str,
+    records: dict[str, Any],
+    payloads: dict[str, dict[str, Any]],
+) -> bool:
+    verifier = payloads.get(report.producer_node_id, {})
+    if (
+        verifier.get("semantic_stage") != "corrective_work"
+        or verifier.get("declared_batch_id") != batch_id
+        or verifier.get("recovery_reason") != "failed_verification"
+    ):
+        return False
+    candidate_ids = set(report.candidate_record_ids)
+    if report.candidate_record_id is not None:
+        candidate_ids.add(report.candidate_record_id)
+    for candidate_id in candidate_ids:
+        candidate = records.get(candidate_id)
+        if not isinstance(candidate, CandidateRecord):
+            continue
+        worker = payloads.get(candidate.producer_node_id, {})
+        superseded_region_id = correction_superseded_task_region_id(projection, worker)
+        if (
+            superseded_region_id is not None
+            and candidate.supersedes_task_region_id == superseded_region_id
+            and worker.get("declared_batch_id") == batch_id
+            and verifier.get("recovery_of_node_id") == worker.get("recovery_of_node_id")
+            and verifier.get("recovery_of_record_id") == worker.get("recovery_of_record_id")
+            and verifier.get("failed_candidate_id") == worker.get("failed_candidate_id")
+        ):
+            return True
+    return False
 
 
 def _runtime_batch_report_topology_valid(
@@ -1438,6 +1492,14 @@ def _output_record_contract_conflict(
                 record_payload,
                 expected_producer_node_id,
             )
+            supersession_conflict = _candidate_supersession_conflict(
+                projection,
+                node_payload,
+                record_payload,
+                index,
+            )
+            if supersession_conflict is not None:
+                return supersession_conflict
             expected_file_state_ids = _file_state_record_ids_for_candidate(
                 record_payload,
                 file_state_records,
@@ -1713,6 +1775,14 @@ def _accepted_output_record_events(
                 record_payload,
                 expected_producer_node_id,
             )
+            superseded_region_id = correction_superseded_task_region_id(
+                projection,
+                node_payload_view(projection, expected_producer_node_id) or {},
+            )
+            record_payload.pop("supersedes_task_region_id", None)
+            record_payload.pop("supersedes_task_region_ids", None)
+            if superseded_region_id is not None:
+                record_payload["supersedes_task_region_id"] = superseded_region_id
             try:
                 record = CandidateRecord.model_validate(record_payload)
             except ValueError:
@@ -2153,7 +2223,9 @@ def _candidate_is_bound_to_verifier(
     candidate_id: str,
 ) -> bool:
     bindings = input_bindings_view(projection).get(verifier_node_id, {})
-    for port in ("candidate_under_test", "semantic_artifact"):
+    candidate_ports = ["candidate_under_test", "semantic_artifact"]
+    candidate_ports.extend(port for port in bindings if port.startswith("verification_report_"))
+    for port in candidate_ports:
         binding = bindings.get(port)
         if binding is not None and candidate_id in binding.record_ids:
             return True
@@ -2265,6 +2337,36 @@ def _candidate_record_payload_for_validation(
     if isinstance(record_id, str) and record_id:
         output.setdefault("candidate_id", record_id)
     return output
+
+
+def _candidate_supersession_conflict(
+    projection: GraphProjection,
+    producer: dict[str, Any],
+    payload: dict[str, Any],
+    index: int,
+) -> str | None:
+    supplied: list[str] = []
+    singular = payload.get("supersedes_task_region_id")
+    if singular is not None:
+        if not isinstance(singular, str):
+            return f"candidate record at index {index} has invalid supersession region"
+        supplied.append(singular)
+    plural = payload.get("supersedes_task_region_ids")
+    if plural is not None:
+        if not isinstance(plural, list) or not all(
+            isinstance(item, str) for item in cast(list[Any], plural)
+        ):
+            return f"candidate record at index {index} has invalid supersession regions"
+        supplied.extend(cast(list[str], plural))
+    if not supplied:
+        return None
+    expected = correction_superseded_task_region_id(projection, producer)
+    if expected is None or set(supplied) != {expected}:
+        return (
+            f"candidate record at index {index} supersession is not proven by its "
+            "failed-verification correction lineage"
+        )
+    return None
 
 
 GAP_CLASSIFICATION_PORTS = frozenset({"gap_plan", "gap_classification", "classified_gap"})
@@ -2510,6 +2612,18 @@ def _evaluated_record_citation_conflict(
     citations = _evaluated_record_citations(projection, node_id)
     for field in ("candidate_record_ids", "file_state_record_ids", "evaluated_record_ids"):
         expected = citations.get(field)
+        if field == "evaluated_record_ids":
+            # Check execution deliberately reports the complete causal evidence
+            # set: directly bound verification plus the candidate/file-state
+            # records that verification assessed.  Validate against that same
+            # deterministic ordering instead of only the direct edge binding.
+            causal_record_ids = [
+                *citations.get("verification_report_record_ids", []),
+                *citations.get("candidate_record_ids", []),
+                *citations.get("file_state_record_ids", []),
+                *citations.get("evaluated_record_ids", []),
+            ]
+            expected = list(dict.fromkeys(causal_record_ids)) if causal_record_ids else None
         if expected is None:
             continue
         conflict = _explicit_record_ids_conflict(record_payload, field, expected)
@@ -2614,13 +2728,6 @@ def _evaluated_record_citations(
         file_state_record_ids.extend(
             _file_state_record_ids_for_candidate_records(projection, candidate_record_ids)
         )
-    output: dict[str, list[str]] = {}
-    unique_candidate_record_ids = _unique_record_ids(candidate_record_ids)
-    unique_file_state_record_ids = _unique_record_ids(file_state_record_ids)
-    if unique_candidate_record_ids:
-        output["candidate_record_ids"] = unique_candidate_record_ids
-    if unique_file_state_record_ids:
-        output["file_state_record_ids"] = unique_file_state_record_ids
     evidence_record_ids = _bound_record_ids_for_ports(
         projection,
         node_id,
@@ -2635,6 +2742,33 @@ def _evaluated_record_citations(
             ),
         ),
     )
+    # A check commonly binds only a passed verification report.  That report
+    # carries the exact candidate and file-state records it evaluated; include
+    # those causal citations when validating the check callback just as the
+    # dispatch-side check assembler does.
+    records = output_record_payloads_view(projection)
+    for evidence_record_id in evidence_record_ids:
+        evidence_record = records.get(evidence_record_id)
+        if evidence_record is None:
+            continue
+        evidence_payload = evidence_record.model_dump(mode="json")
+        candidate_record_ids.extend(
+            record_id
+            for record_id in evidence_payload.get("candidate_record_ids", [])
+            if isinstance(record_id, str)
+        )
+        file_state_record_ids.extend(
+            record_id
+            for record_id in evidence_payload.get("file_state_record_ids", [])
+            if isinstance(record_id, str)
+        )
+    unique_candidate_record_ids = _unique_record_ids(candidate_record_ids)
+    unique_file_state_record_ids = _unique_record_ids(file_state_record_ids)
+    output: dict[str, list[str]] = {}
+    if unique_candidate_record_ids:
+        output["candidate_record_ids"] = unique_candidate_record_ids
+    if unique_file_state_record_ids:
+        output["file_state_record_ids"] = unique_file_state_record_ids
     if evidence_record_ids:
         output["verification_report_record_ids"] = evidence_record_ids
     evaluated_record_ids = _unique_record_ids(
@@ -3372,9 +3506,28 @@ def _stamp_reliable_plan_successor_authority(
     proposed_by_node_id: str,
     ops: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Propagate skeleton identity while consuming the one-horizon capability."""
+    """Propagate bounded sequential authority to the next horizon planner."""
     parent = node_payload_view(projection, proposed_by_node_id) or {}
     skeleton_id = parent.get("reliable_plan_skeleton_id")
+    raw_carrier = parent.get("reliable_plan_assignment_carrier")
+    carrier = (
+        ReliablePlanAssignmentCarrier.model_validate(raw_carrier)
+        if isinstance(raw_carrier, dict)
+        else None
+    )
+    if isinstance(skeleton_id, str) and carrier is None:
+        raise ValueError(
+            "reliable-plan execution node is missing sealed assignment carrier; "
+            "recreate the run with a qualified assignment arm"
+        )
+    raw_remaining = parent.get("reliable_plan_remaining_horizons")
+    remaining = (
+        raw_remaining
+        if isinstance(raw_remaining, int) and not isinstance(raw_remaining, bool)
+        else (1 if parent.get("reliable_plan_one_horizon_authorized") is True else 0)
+    )
+    parent_is_successor = parent.get("semantic_stage") == "successor_planning"
+    child_remaining = max(remaining - (1 if parent_is_successor else 0), 0)
     stamped: list[dict[str, Any]] = []
     for op in ops:
         copied: dict[str, Any] = dict(op)
@@ -3383,28 +3536,140 @@ def _stamp_reliable_plan_successor_authority(
             node = cast(dict[str, Any], raw_node)
         else:
             node = None
-        if node is not None and node.get("kind") == "planner" and node.get("role") == "planner":
+        if node is not None and node.get("kind") in {"planner", "worker", "verifier"}:
             stamped_node: dict[str, Any] = dict(node)
             for field_name in (
+                "reliable_plan_assignment_carrier",
+                "reliable_plan_assignment_role",
+                "reliable_plan_selected_runner_type",
                 "reliable_plan_skeleton_id",
                 "reliable_plan_one_horizon_authorized",
+                "reliable_plan_remaining_horizons",
                 "reliable_plan_qualification_evidence_hash",
                 "reliable_plan_successor_model",
                 "reliable_plan_successor_profile",
                 "runner_model_override",
+                "profile",
             ):
                 stamped_node.pop(field_name, None)
-            if isinstance(skeleton_id, str):
+            if isinstance(skeleton_id, str) and carrier is not None:
+                assignment_role = _reliable_plan_assignment_role(stamped_node)
+                assignment = carrier.assignment_for(assignment_role)
+                stamped_node["reliable_plan_assignment_carrier"] = carrier.model_dump(mode="json")
+                stamped_node["reliable_plan_assignment_role"] = assignment_role
+                stamped_node["reliable_plan_selected_runner_type"] = carrier.selected_runner_type
                 stamped_node["reliable_plan_skeleton_id"] = skeleton_id
-                stamped_node["reliable_plan_one_horizon_authorized"] = False
                 stamped_node["reliable_plan_qualification_evidence_hash"] = parent.get(
                     "reliable_plan_qualification_evidence_hash"
                 )
-                stamped_node["runner_model_override"] = parent.get("reliable_plan_successor_model")
-                stamped_node["profile"] = parent.get("reliable_plan_successor_profile")
+                stamped_node["runner_model_override"] = assignment.model
+                stamped_node["profile"] = assignment.profile.value
+                if stamped_node.get("kind") == "planner":
+                    stamped_node["reliable_plan_one_horizon_authorized"] = child_remaining > 0
+                    stamped_node["reliable_plan_remaining_horizons"] = child_remaining
             copied["node"] = stamped_node
         stamped.append(copied)
-    return stamped
+    return _stamp_failed_verification_correction_lineage(projection, stamped)
+
+
+def _stamp_failed_verification_correction_lineage(
+    projection: GraphProjection,
+    ops: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Attach controller-owned failed-verification lineage to proven corrections."""
+    worker_proofs: dict[str, tuple[str, str, str, str]] = {}
+    records = output_record_payloads_view(projection)
+    for op in ops:
+        raw_node = op.get("node")
+        if op.get("op") != "create_node" or not isinstance(raw_node, dict):
+            continue
+        node = cast(dict[str, Any], raw_node)
+        failed_region_id = correction_superseded_task_region_id(
+            projection,
+            node,
+            require_stamped_lineage=False,
+        )
+        failed_record_id = node.get("failed_verification_record_id")
+        if failed_region_id is None or not isinstance(failed_record_id, str):
+            continue
+        report = records.get(failed_record_id)
+        if not isinstance(report, VerificationReportRecord):
+            continue
+        node_id = node.get("node_id")
+        task_region_id = node.get("task_region_id")
+        candidate_id = node.get("candidate_id")
+        if not all(isinstance(value, str) for value in (node_id, task_region_id, candidate_id)):
+            continue
+        worker_proofs[cast(str, node_id)] = (
+            report.producer_node_id,
+            failed_record_id,
+            cast(str, node.get("failed_candidate_id")),
+            cast(str, node.get("declared_batch_id")),
+        )
+
+    verifier_proofs: dict[str, tuple[str, str, str, str]] = {}
+    for op in ops:
+        if op.get("op") != "create_edge":
+            continue
+        worker_id = op.get("from_node_id")
+        verifier_id = op.get("to_node_id")
+        proof = worker_proofs.get(worker_id) if isinstance(worker_id, str) else None
+        if (
+            proof is not None
+            and isinstance(verifier_id, str)
+            and op.get("from_port") == "candidate"
+            and op.get("to_port") == "candidate_under_test"
+        ):
+            verifier_proofs[verifier_id] = proof
+
+    output: list[dict[str, Any]] = []
+    for op in ops:
+        copied = dict(op)
+        raw_node = copied.get("node")
+        if copied.get("op") == "create_node" and isinstance(raw_node, dict):
+            node = dict(cast(dict[str, Any], raw_node))
+            node_id = node.get("node_id")
+            proof = (worker_proofs.get(node_id) if isinstance(node_id, str) else None) or (
+                verifier_proofs.get(node_id) if isinstance(node_id, str) else None
+            )
+            if proof is not None:
+                failed_node_id, failed_record_id, failed_candidate_id, batch_id = proof
+                if (
+                    node.get("semantic_stage") == "corrective_work"
+                    and node.get("failed_candidate_id") == failed_candidate_id
+                    and node.get("declared_batch_id") == batch_id
+                ):
+                    node["recovery_reason"] = "failed_verification"
+                    node["recovery_of_node_id"] = failed_node_id
+                    node["recovery_of_record_id"] = failed_record_id
+                    copied["node"] = node
+        output.append(copied)
+    return output
+
+
+def _reliable_plan_assignment_role(
+    node: dict[str, Any],
+) -> ReliablePlanAssignmentRole:
+    kind = node.get("kind")
+    stage = node.get("semantic_stage")
+    role = node.get("role")
+    if kind == "verifier":
+        return "verifier"
+    if kind == "planner":
+        if stage == "successor_planning" or role == "gap_planner":
+            return "successor_planner"
+        return "successor_planner"
+    if kind == "worker":
+        if stage == "discovery":
+            return "discovery_worker"
+        if stage == "corrective_work" or role in {"correction_worker", "corrective_worker"}:
+            return "correction_worker"
+        if stage == "effectful_batch" or node.get("access_mode") == "write":
+            return "implementation_worker"
+        raise ValueError(
+            f"reliable-plan worker {node.get('node_id', '<unknown>')} has ambiguous assignment role"
+        )
+    raise ValueError("reliable-plan assignment requested for non-model-backed node")
 
 
 def _reliable_plan_successor_authority_rejection(
@@ -3412,20 +3677,38 @@ def _reliable_plan_successor_authority_rejection(
     patch: PatchEnvelope,
     successor_node_ids: list[str],
 ) -> str | None:
-    if not successor_node_ids:
-        return None
     parent = node_payload_view(projection, patch.proposed_by_node_id) or {}
     if not isinstance(parent.get("reliable_plan_skeleton_id"), str):
         return None
-    if parent.get("reliable_plan_one_horizon_authorized") is not True:
+    if parent.get("semantic_stage") == "successor_planning" and non_gap_planner_has_accepted_patch(
+        projection, patch.proposed_by_node_id
+    ):
+        return "reliable_plan_horizon_already_materialized"
+    if not successor_node_ids:
+        return None
+    raw_remaining = parent.get("reliable_plan_remaining_horizons")
+    remaining = (
+        raw_remaining
+        if isinstance(raw_remaining, int) and not isinstance(raw_remaining, bool)
+        else (1 if parent.get("reliable_plan_one_horizon_authorized") is True else 0)
+    )
+    if remaining <= 1 and parent.get("semantic_stage") == "successor_planning":
         return "reliable_plan_successor_planning_not_authorized"
+    if remaining <= 0:
+        return "reliable_plan_successor_planning_not_authorized"
+    expected_horizon = (
+        int(parent.get("planning_horizon", 0)) + 1
+        if parent.get("semantic_stage") == "successor_planning"
+        or (parent.get("role") == "gap_planner" and isinstance(parent.get("planning_horizon"), int))
+        else 1
+    )
     for op in patch.ops:
         if op.op != "create_node" or not isinstance(op.node, dict):
             continue
         if op.node.get("node_id") not in successor_node_ids:
             continue
-        if op.node.get("planning_horizon") != 1:
-            return "reliable_plan_authority_allows_only_horizon_one"
+        if op.node.get("planning_horizon") != expected_horizon:
+            return "reliable_plan_authority_requires_next_sequential_horizon"
     return None
 
 
@@ -3849,6 +4132,33 @@ def _dedupe_repair_events(repair_events: list[EventEnvelope]) -> list[EventEnvel
     return output
 
 
+def _reliable_plan_recovery_planner_payload(
+    projection: GraphProjection,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Carry sealed run authority into controller-created correction planners."""
+    root = node_payload_view(projection, "root") or {}
+    raw_carrier = root.get("reliable_plan_assignment_carrier")
+    if not isinstance(raw_carrier, dict):
+        return payload
+    carrier = ReliablePlanAssignmentCarrier.model_validate(raw_carrier)
+    assignment = carrier.assignment_for("successor_planner")
+    return {
+        **payload,
+        "reliable_plan_skeleton_id": carrier.skeleton_id,
+        "reliable_plan_assignment_carrier": carrier.model_dump(mode="json"),
+        "reliable_plan_assignment_role": "successor_planner",
+        "reliable_plan_selected_runner_type": carrier.selected_runner_type,
+        "runner_model_override": assignment.model,
+        "profile": assignment.profile.value,
+        "reliable_plan_one_horizon_authorized": root.get("reliable_plan_one_horizon_authorized"),
+        "reliable_plan_remaining_horizons": root.get("reliable_plan_remaining_horizons"),
+        "reliable_plan_qualification_evidence_hash": root.get(
+            "reliable_plan_qualification_evidence_hash"
+        ),
+    }
+
+
 def _failed_check_recovery_events(
     projection: GraphProjection,
     active_lease_node_ids: list[str],
@@ -3875,6 +4185,12 @@ def _failed_check_recovery_events(
     for failed_check in _current_failed_check_results(projection):
         if record_ids is not None and failed_check["record_id"] not in record_ids:
             continue
+        # A batch verifier that consumes this exact failed check is the
+        # deterministic semantic-recovery owner.  Let it emit the joined
+        # failed verification report instead of racing a second check-owned
+        # gap planner into existence.
+        if _failed_check_has_verification_owner(projection, failed_check):
+            continue
         recovery_node_id = _failed_check_recovery_node_id(failed_check)
         if recovery_node_id in node_states_view(projection):
             continue
@@ -3890,20 +4206,24 @@ def _failed_check_recovery_events(
         selector: dict[str, Any] = {"record_type": record_type, "schema": source_schema}
         if record_type == "check_result":
             selector["status"] = "failed"
+        recovery_payload = _reliable_plan_recovery_planner_payload(
+            projection,
+            {
+                "node_id": recovery_node_id,
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "planned",
+                "task_region_id": recovery_region_id,
+                "recovery_reason": "failed_required_check",
+                "recovery_of_node_id": node_id,
+                "recovery_of_record_id": record_id,
+            },
+        )
         output.append(
             _node_created_event(
                 projection,
                 make_event,
-                {
-                    "node_id": recovery_node_id,
-                    "kind": "planner",
-                    "role": "gap_planner",
-                    "state": "planned",
-                    "task_region_id": recovery_region_id,
-                    "recovery_reason": "failed_required_check",
-                    "recovery_of_node_id": node_id,
-                    "recovery_of_record_id": record_id,
-                },
+                recovery_payload,
             )
         )
         recovery_edges = [
@@ -3977,20 +4297,24 @@ def _failed_verification_recovery_events(
         record_id = verification["record_id"]
         task_region_id = verification.get("task_region_id", node_id)
         recovery_region_id = f"recovery-{_stable_graph_id_part(task_region_id)}"
+        recovery_payload = _reliable_plan_recovery_planner_payload(
+            projection,
+            {
+                "node_id": recovery_node_id,
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "planned",
+                "task_region_id": recovery_region_id,
+                "recovery_reason": "failed_verification",
+                "recovery_of_node_id": node_id,
+                "recovery_of_record_id": record_id,
+            },
+        )
         output.append(
             _node_created_event(
                 projection,
                 make_event,
-                {
-                    "node_id": recovery_node_id,
-                    "kind": "planner",
-                    "role": "gap_planner",
-                    "state": "planned",
-                    "task_region_id": recovery_region_id,
-                    "recovery_reason": "failed_verification",
-                    "recovery_of_node_id": node_id,
-                    "recovery_of_record_id": record_id,
-                },
+                recovery_payload,
             )
         )
         recovery_edges = [
@@ -4542,7 +4866,7 @@ def _unreachable_failure_branch_node_ids(
             continue
         if edge.from_port != "verification_report":
             continue
-        if edge.to_port != "verification_evidence":
+        if edge.to_port not in {"verification_evidence", "verification_report"}:
             continue
         if _selector_value_match(edge, "outcome") != "failed":
             continue
@@ -4660,7 +4984,11 @@ def _has_existing_failed_verification_recovery(
             continue
         if edge.from_port != "verification_report":
             continue
-        if edge.to_port != "verification_evidence":
+        if edge.to_port not in {
+            "verification_evidence",
+            "verification_report",
+            "check_result",
+        }:
             continue
         to_node_id = edge.to_node_id
         if node_states_view(projection).get(to_node_id) in {"cancelled", "failed", "retired"}:
@@ -4738,6 +5066,36 @@ def _has_existing_failed_check_recovery(
             continue
         if node_kinds_view(projection).get(to_node_id) == "planner" and (
             node_roles_view(projection).get(to_node_id) == "gap_planner"
+        ):
+            return True
+    return False
+
+
+def _failed_check_has_verification_owner(
+    projection: GraphProjection,
+    failed_check: dict[str, str],
+) -> bool:
+    """Whether an exact live verifier is already responsible for this check."""
+    record = output_record_payloads_view(projection).get(failed_check["record_id"])
+    if not isinstance(record, CheckResultRecord):
+        return False
+    record_payload = record.model_dump(mode="json")
+    for edge in edges_view(projection).values():
+        if (
+            edge.from_node_id != failed_check["node_id"]
+            or edge.from_port != "check_result"
+            or node_kinds_view(projection).get(edge.to_node_id) != "verifier"
+            or node_states_view(projection).get(edge.to_node_id)
+            in {"cancelled", "failed", "retired"}
+            or not record_selector_matches(edge.accepted_record_selector, record_payload)
+        ):
+            continue
+        candidate_binding = (
+            input_bindings_view(projection).get(edge.to_node_id, {}).get("candidate_under_test")
+        )
+        verifier_payload = node_payload_view(projection, edge.to_node_id) or {}
+        if verifier_payload.get("candidate_id") == record.candidate_id or (
+            candidate_binding is not None and record.candidate_id in candidate_binding.record_ids
         ):
             return True
     return False
@@ -5065,7 +5423,7 @@ def _apply_agent_died(
             ),
             make_event(
                 "output_record_accepted",
-                _failure_record_payload(
+                failure_record_payload(
                     node_id=node_id,
                     phase="dispatch",
                     failure_class="invalid_plan_failure",
@@ -5130,7 +5488,7 @@ def _apply_agent_died(
             ),
             make_event(
                 "output_record_accepted",
-                _failure_record_payload(
+                failure_record_payload(
                     node_id=node_id,
                     phase="runtime",
                     failure_class=failure_class,
@@ -5170,7 +5528,7 @@ def _apply_agent_died(
             ),
             make_event(
                 "output_record_accepted",
-                _failure_record_payload(
+                failure_record_payload(
                     node_id=node_id,
                     phase="runtime",
                     failure_class=failure_class,
@@ -5193,8 +5551,20 @@ def _apply_agent_died(
             ),
         ]
 
-    max_attempts = payload.max_attempts
-    attempt_number = node_attempts_view(projection).get(node_id, 0)
+    declared_node_payload = node_payload_view(projection, node_id)
+    max_attempts = effective_node_max_attempts(
+        node_kinds_view(projection).get(node_id),
+        declared_node_payload.get("max_attempts")
+        if declared_node_payload is not None
+        else payload.max_attempts,
+    )
+    if max_attempts is None:
+        max_attempts = payload.max_attempts
+    elif payload.max_attempts > 0:
+        # A recovery caller may tighten a legacy/default budget, but can never
+        # enlarge the node's durable execution budget.
+        max_attempts = min(max_attempts, payload.max_attempts)
+    attempt_number = effective_node_attempt_number(node_attempts_view(projection).get(node_id))
     if max_attempts > 0 and attempt_number >= max_attempts:
         return [
             make_event("agent_died", event_payload),
@@ -5212,7 +5582,7 @@ def _apply_agent_died(
             ),
             make_event(
                 "output_record_accepted",
-                _failure_record_payload(
+                failure_record_payload(
                     node_id=node_id,
                     phase="runtime",
                     failure_class=failure_class,
@@ -5259,7 +5629,7 @@ def _apply_agent_died(
             ),
             make_event(
                 "output_record_accepted",
-                _failure_record_payload(
+                failure_record_payload(
                     node_id=node_id,
                     phase="runtime",
                     failure_class=failure_class,
@@ -5318,7 +5688,7 @@ def _apply_agent_died(
             ),
             make_event(
                 "output_record_accepted",
-                _failure_record_payload(
+                failure_record_payload(
                     node_id=node_id,
                     phase="runtime",
                     failure_class=failure_class,
@@ -5404,7 +5774,7 @@ def _apply_agent_died(
         ),
         make_event(
             "output_record_accepted",
-            _failure_record_payload(
+            failure_record_payload(
                 node_id=node_id,
                 phase="runtime",
                 failure_class=failure_class,
@@ -5443,7 +5813,7 @@ def _apply_agent_died(
     ]
 
 
-def _failure_record_payload(
+def failure_record_payload(
     *,
     node_id: str,
     phase: str,
@@ -6618,7 +6988,7 @@ def _expired_lease_events(
             expired.append(
                 make_event(
                     "output_record_accepted",
-                    _failure_record_payload(
+                    failure_record_payload(
                         node_id=node_id,
                         phase="runtime",
                         failure_class="infrastructure_failure",

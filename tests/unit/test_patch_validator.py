@@ -359,6 +359,56 @@ def test_planner_can_create_node() -> None:
     assert result.accepted
 
 
+def test_create_executable_node_rejects_explicit_zero_attempt_budget() -> None:
+    result = _validate(_patch([{"op": "create_node", "node": _revision_worker(max_attempts=0)}]))
+
+    assert not result.accepted
+    assert result.rejection_reason == "executable node max_attempts must be at least 1"
+
+
+def test_create_appeal_rejects_explicit_zero_attempt_budget() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_appeal",
+                    "node": {
+                        "node_id": "appeal-1",
+                        "kind": "appeal",
+                        "max_attempts": 0,
+                    },
+                    "appealed_node_id": "verifier-1",
+                    "appeal_type": "invalid_test",
+                }
+            ]
+        )
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == "executable node max_attempts must be at least 1"
+
+
+def test_create_oversight_rejects_explicit_zero_attempt_budget() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "oversight-1",
+                        "kind": "oversight",
+                        "role": "oversight",
+                        "max_attempts": 0,
+                    },
+                }
+            ]
+        )
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == "executable node max_attempts must be at least 1"
+
+
 def test_create_node_rejects_unknown_node_type() -> None:
     result = _validate(
         _patch([{"op": "create_node", "node": {"node_id": "mystery-1", "kind": "mystery"}}])

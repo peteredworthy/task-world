@@ -1575,7 +1575,7 @@ def test_node_max_attempts_matches_dispatch_first_node_created_lookup() -> None:
         ]
     )
 
-    assert attempts == {"worker-1": 2, "worker-3": 4}
+    assert attempts == {"worker-1": 2, "worker-2": 3, "worker-3": 3}
 
 
 def test_outcome_classification() -> None:

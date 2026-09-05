@@ -7,6 +7,7 @@ from typing import Any, cast
 from orchestrator.graph._commands import (
     apply_callback_command,
     apply_record_managed_snapshot_cleanup_applied,
+    failure_record_payload,
 )
 from orchestrator.graph.command_models import (
     CompleteRunnerRecoveryCommand,
@@ -26,6 +27,7 @@ from orchestrator.graph.projection_queries import (
     node_attempts_view,
     node_max_attempts_view,
 )
+from orchestrator.graph.retry_policy import effective_node_attempt_number
 from orchestrator.graph.projection_queries import (
     cache_authority_binding,
     cache_authority_is_new_format,
@@ -625,9 +627,21 @@ def handle_request_runner_recovery(
     del events, command_type, context, clock, id_gen
     if reason := _authority_reason(projection, payload):
         return _conflict(make_event, "request_runner_recovery", reason)
+    effective_max_attempts = node_max_attempts_view(projection).get(payload.node_id)
+    if effective_max_attempts is None:
+        effective_max_attempts = payload.max_attempts
     attempt = execution_attempts_view(projection).get(payload.execution_id)
     if attempt is None or not _same_identity(attempt, payload):
         return _conflict(make_event, "request_runner_recovery", "unknown execution baseline")
+    if payload.max_attempts > effective_max_attempts:
+        reason = (
+            "recovery request conflicts"
+            if attempt.state == "recovery_requested"
+            else "max_attempts differs from the node execution budget"
+        )
+        return _conflict(make_event, "request_runner_recovery", reason)
+    if payload.max_attempts > 0:
+        effective_max_attempts = payload.max_attempts
     if attempt.state not in {"baseline_captured", "submission_staged", "completion_witnessed"}:
         if attempt.state == "recovery_requested":
             paths = _request_recovery_paths(attempt, payload)
@@ -639,7 +653,7 @@ def handle_request_runner_recovery(
                 attempt.recovery_id == recovery_id
                 and attempt.recovery_reason == payload.reason
                 and attempt.recovery_error_detail == payload.error_detail
-                and attempt.recovery_max_attempts == payload.max_attempts
+                and attempt.recovery_max_attempts == effective_max_attempts
                 and attempt.retry_after_recovery == payload.retry_after_recovery
                 and attempt.node_id == payload.node_id
                 and attempt.lease_id == payload.lease_id
@@ -673,7 +687,7 @@ def handle_request_runner_recovery(
                 "lease_generation": attempt.lease_generation,
                 "reason": payload.reason,
                 "error_detail": payload.error_detail,
-                "max_attempts": payload.max_attempts,
+                "max_attempts": effective_max_attempts,
                 "retry_after_recovery": payload.retry_after_recovery,
                 "recovery_snapshot_id": payload.recovery_snapshot_id,
                 "recovery_snapshot_ref": payload.recovery_snapshot_ref,
@@ -783,9 +797,42 @@ def handle_complete_runner_recovery(
         "staged_artifact_missing",
         "staged_artifact_corrupt",
     } or (attempt.recovery_reason == "cancelled" and attempt.retry_after_recovery)
-    if retryable_recovery:
-        attempt_number = node_attempts_view(projection).get(attempt.node_id, 0)
-        max_attempts = attempt.recovery_max_attempts or 0
+    if attempt.recovery_reason == "submission_repair_exhausted":
+        reason = attempt.recovery_error_detail or "submission repair exhausted"
+        lifecycle_events.extend(
+            [
+                make_event(
+                    "output_record_accepted",
+                    failure_record_payload(
+                        node_id=attempt.node_id,
+                        phase="submission",
+                        failure_class="invalid_plan_failure",
+                        error_class="submission_repair_exhausted",
+                        retryable=False,
+                        lease_id=attempt.lease_id,
+                        execution_id=attempt.execution_id,
+                        generation=attempt.lease_generation,
+                        reason=reason,
+                    ),
+                ),
+                make_event(
+                    "node_state_changed",
+                    {
+                        "node_id": attempt.node_id,
+                        "new_state": "failed",
+                        "trigger": "submission_repair_exhausted",
+                        "reason": reason,
+                    },
+                ),
+            ]
+        )
+    elif retryable_recovery:
+        attempt_number = effective_node_attempt_number(
+            node_attempts_view(projection).get(attempt.node_id)
+        )
+        max_attempts = attempt.recovery_max_attempts or node_max_attempts_view(projection).get(
+            attempt.node_id, 0
+        )
         if attempt.recovery_reason == "runner_died" and non_gap_planner_has_accepted_patch(
             projection, attempt.node_id
         ):

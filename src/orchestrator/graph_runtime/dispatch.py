@@ -67,6 +67,8 @@ from orchestrator.graph import (
     PatchEnvelope,
     SubmitPatchCommand,
     RequirementRecord,
+    ReliablePlanAssignmentCarrier,
+    ReliablePlanModelAssignment,
     SemanticArtifactRecord,
     StoredArtifactRef,
     check_command_uses_acceptance_fallback,
@@ -90,6 +92,7 @@ from orchestrator.graph import (
     safe_validation_path,
     semantic_schema_declarations_view,
     validate_semantic_artifact_content,
+    effective_node_max_attempts,
 )
 from orchestrator.graph_runtime import prompts as _prompts
 from orchestrator.graph_runtime.controller import (
@@ -157,6 +160,7 @@ from orchestrator.runners import (
     SubmissionContract,
     SubmissionAcknowledgement,
     SubmissionOutputContract,
+    SubmissionRepairExhaustedError,
 )
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
 
@@ -168,6 +172,9 @@ logger = logging.getLogger(__name__)
 # heartbeat can never shorten the lease granted by the scheduling policy.
 MANAGED_LEASE_TTL_SECONDS = 3600
 MAX_GRAPH_JSON_SECTION_CHARS = _prompts.MAX_GRAPH_JSON_SECTION_CHARS
+# Compatibility name retained for diagnostics/tests; all executable nodes now
+# share this finite default through ``effective_node_max_attempts``.
+DEFAULT_GAP_PLANNER_RUNTIME_DEATH_MAX_ATTEMPTS = 3
 MAX_GRAPH_PROMPT_FIELD_CHARS = _prompts.MAX_GRAPH_PROMPT_FIELD_CHARS
 MAX_CHECK_OUTPUT_CHARS = 20_000
 
@@ -236,7 +243,6 @@ CHECK_OUTPUT_EXTERNALIZE_BYTES = 16_384
 CHECK_OUTPUT_TAIL_CHARS = 4_000
 DEFAULT_CHECK_TIMEOUT_SECONDS = 300
 MAX_STALE_COMMAND_RETRIES = 5
-DEFAULT_GAP_PLANNER_RUNTIME_DEATH_MAX_ATTEMPTS = 3
 SNAPSHOT_REF_PATTERN = re.compile(r"^refs/orchestrator/snapshots/(?!.*\.\.)[A-Za-z0-9._-]+$")
 
 
@@ -483,7 +489,7 @@ def _semantic_output_records_from_submit_args(
     context: GraphDispatchContext,
     args: dict[str, Any],
 ) -> list[dict[str, object]]:
-    """Wrap model-authored semantic content in controller-trusted record fields."""
+    """Compose controller-owned records with model-authored semantic content."""
     contract = _submission_contract(context)
     if contract is None or not contract.requires_arguments:
         if args:
@@ -505,7 +511,21 @@ def _semantic_output_records_from_submit_args(
             f"node {context.node_id} submit has unknown output ports={unknown_ports}; "
             f"declared ports={sorted(declared_ports)}"
         )
-    records: list[dict[str, object]] = []
+    generated_records = [
+        cast(dict[str, object], record) for record in _output_records_for_submit(context, [])
+    ]
+    generated_ports: set[str] = set()
+    for record in generated_records:
+        generated_port = record.get("port")
+        if isinstance(generated_port, str):
+            generated_ports.add(generated_port)
+    ownership_collisions = sorted(generated_ports & declared_ports)
+    if ownership_collisions:
+        raise ValueError(
+            f"node {context.node_id} output port {ownership_collisions[0]} has an ownership "
+            "collision; the port is both controller-generated and agent-authored"
+        )
+    authored_records: list[dict[str, object]] = []
     for output in contract.outputs:
         if output.content_json_schema is None:
             continue
@@ -588,8 +608,22 @@ def _semantic_output_records_from_submit_args(
                 f"schema={output.schema_name}, semantic identity={output.semantic_schema_id}@"
                 f"{output.semantic_schema_version}; content validation failed: {content_error}"
             )
-        records.append(cast(dict[str, object], record.model_dump(mode="json", by_alias=True)))
-    return records
+        authored_records.append(
+            cast(dict[str, object], record.model_dump(mode="json", by_alias=True))
+        )
+
+    controller_ports = {
+        output.port for output in contract.outputs if output.content_json_schema is None
+    }
+    controller_records: list[dict[str, object]] = []
+    for record in generated_records:
+        port = record.get("port")
+        if not isinstance(port, str):
+            continue
+        if port not in controller_ports:
+            continue
+        controller_records.append(record)
+    return [*controller_records, *authored_records]
 
 
 def _empty_event_list() -> list[EventEnvelope]:
@@ -1107,20 +1141,18 @@ class StaticGraphAgentFactory:
         *,
         graph_mcp_available: bool,
     ) -> None:
-        del context
         self._graph_tool_catalog.preflight(
             execution_context,
             graph_mcp_available=graph_mcp_available,
         )
+        self._validated_reliable_plan_assignment(context)
 
     def create_runner(self, context: GraphDispatchContext) -> AgentRunner:
         phase = "verifying" if context.node_kind == "verifier" else "building"
         runner_config = dict(self._runner_config)
-        if isinstance(context.node_payload.get("reliable_plan_skeleton_id"), str) and isinstance(
-            (model_override := context.node_payload.get("runner_model_override")),
-            str,
-        ):
-            runner_config["model"] = model_override
+        assignment = self._validated_reliable_plan_assignment(context)
+        if assignment is not None:
+            runner_config["model"] = assignment.model
         return self._runner_builder(
             self._runner_type,
             runner_config,
@@ -1128,14 +1160,101 @@ class StaticGraphAgentFactory:
             phase=phase,
         )
 
+    def _validated_reliable_plan_assignment(
+        self, context: GraphDispatchContext
+    ) -> ReliablePlanModelAssignment | None:
+        payload = context.node_payload
+        root_payload = node_payload_view(context.graph_projection, "root") or {}
+        raw_authoritative_carrier = root_payload.get("reliable_plan_assignment_carrier")
+        reliable_plan_membership = isinstance(
+            root_payload.get("reliable_plan_skeleton_id"), str
+        ) or any(
+            isinstance(
+                (node_payload_view(context.graph_projection, node_id) or {}).get(
+                    "reliable_plan_skeleton_id"
+                ),
+                str,
+            )
+            for node_id in node_kinds_view(context.graph_projection)
+        )
+        if not reliable_plan_membership:
+            return None
+        if not isinstance(raw_authoritative_carrier, dict):
+            raise ValueError(
+                "reliable-plan graph is missing root sealed assignment carrier; "
+                "historical runs remain readable but cannot execute"
+            )
+        authoritative_carrier = ReliablePlanAssignmentCarrier.model_validate(
+            raw_authoritative_carrier
+        )
+        raw_carrier = payload.get("reliable_plan_assignment_carrier")
+        if not isinstance(raw_carrier, dict):
+            raise ValueError(
+                "reliable-plan execution is missing sealed assignment carrier; "
+                "recreate the run with a qualified assignment arm"
+            )
+        carrier = ReliablePlanAssignmentCarrier.model_validate(raw_carrier)
+        if carrier != authoritative_carrier:
+            raise ValueError("reliable-plan node assignment carrier does not match root authority")
+        if carrier.selected_runner_type != self._runner_type.value:
+            raise ValueError(
+                "reliable-plan selected runner mismatch: "
+                f"node requires {carrier.selected_runner_type}, dispatch selected "
+                f"{self._runner_type.value}"
+            )
+        raw_role = payload.get("reliable_plan_assignment_role")
+        if not isinstance(raw_role, str) or raw_role not in {
+            "planner",
+            "discovery_worker",
+            "implementation_worker",
+            "correction_worker",
+            "verifier",
+            "successor_planner",
+        }:
+            raise ValueError("reliable-plan node has invalid assignment role")
+        expected_role = self._reliable_plan_role_for_payload(payload)
+        if raw_role != expected_role:
+            raise ValueError(
+                "reliable-plan node assignment role does not match controller-derived role"
+            )
+        assignment = carrier.assignment_for(cast(Any, raw_role))
+        if payload.get("reliable_plan_selected_runner_type") != carrier.selected_runner_type:
+            raise ValueError("reliable-plan node selected-runner stamp does not match carrier")
+        if payload.get("runner_model_override") != assignment.model:
+            raise ValueError("reliable-plan node model stamp does not match carrier")
+        if payload.get("profile") != assignment.profile.value:
+            raise ValueError("reliable-plan node profile stamp does not match carrier")
+        return assignment
+
+    @staticmethod
+    def _reliable_plan_role_for_payload(payload: dict[str, Any]) -> str:
+        kind = payload.get("kind")
+        stage = payload.get("semantic_stage")
+        role = payload.get("role")
+        if kind == "verifier":
+            return "verifier"
+        if kind == "planner":
+            if stage == "successor_planning" or role == "gap_planner":
+                return "successor_planner"
+            return "planner"
+        if kind == "worker":
+            if stage == "discovery":
+                return "discovery_worker"
+            if stage == "corrective_work" or role in {
+                "correction_worker",
+                "corrective_worker",
+            }:
+                return "correction_worker"
+            if stage == "effectful_batch" or payload.get("access_mode") == "write":
+                return "implementation_worker"
+        raise ValueError("reliable-plan model-backed node has ambiguous assignment role")
+
 
 def _runtime_death_max_attempts(context: GraphDispatchContext) -> int | None:
-    max_attempts = context.node_payload.get("max_attempts")
-    if isinstance(max_attempts, int) and not isinstance(max_attempts, bool):
-        return max_attempts
-    if context.node_role == "gap_planner":
-        return DEFAULT_GAP_PLANNER_RUNTIME_DEATH_MAX_ATTEMPTS
-    return None
+    return effective_node_max_attempts(
+        context.node_kind,
+        context.node_payload.get("max_attempts"),
+    )
 
 
 def _authority_file_state_policy(context: GraphDispatchContext) -> FileStatePolicy:
@@ -2021,6 +2140,24 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     )
                 )
             raise
+        except SubmissionRepairExhaustedError as exc:
+            if managed:
+                try:
+                    await self._record_managed_runner_error(context, exc)
+                except Exception:
+                    logger.exception(
+                        "submission repair exhaustion diagnostic could not be persisted "
+                        "for execution %s",
+                        context.execution_id,
+                    )
+                await self._request_runner_recovery(
+                    context,
+                    "submission_repair_exhausted",
+                    error_detail=str(exc),
+                    worktree_lock_held=True,
+                )
+            else:
+                await self._invalid_execution_contract(context, str(exc))
         except Exception as exc:
             if managed:
                 # Record the runner exception before recovery mutates the
@@ -3187,6 +3324,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             "cancelled",
             "staged_artifact_missing",
             "staged_artifact_corrupt",
+            "submission_repair_exhausted",
         ],
         *,
         publish_snapshot_ref: bool = True,
@@ -3263,6 +3401,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             "cancelled",
             "staged_artifact_missing",
             "staged_artifact_corrupt",
+            "submission_repair_exhausted",
         ],
         *,
         error_detail: str | None = None,

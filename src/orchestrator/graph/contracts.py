@@ -510,6 +510,11 @@ def _dynamic_input_port(contract: NodeContract, port: str) -> PortContract | Non
         return _port(port, "artifact_reference", schemas=("ContextArtifact",))
     if port.startswith("check_result_") and contract.node_type == "verifier":
         return _port(port, "check_result", schemas=("CheckResult",))
+    if port.startswith("verification_report_") and contract.node_type in {
+        "verifier",
+        "final_gate",
+    }:
+        return _port(port, "verification_report", schemas=("VerificationReport",))
     if port.startswith("source_record_") and contract.node_type == "join":
         return _port(
             port,

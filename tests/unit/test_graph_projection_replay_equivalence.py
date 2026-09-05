@@ -23,11 +23,13 @@ from orchestrator.graph import (
     boundary_manifest_hash,
     execution_attempts_view,
     initial_projection,
+    iter_final_invariant_blockers,
     projection_from_checkpoint,
     projection_to_checkpoint,
     reduce_event,
     recovery_proof_hash,
     SequentialIdGenerator,
+    task_states_view,
 )
 from orchestrator.graph_runtime import (
     CrashBarrierObservation,
@@ -35,6 +37,7 @@ from orchestrator.graph_runtime import (
     CrashBarrierSlotState,
     schema_two_slot_lineage_authorized,
 )
+from tests.unit.graph_test_utils import event as graph_event
 from tests.unit.graph_projection_behavior_cases import behavior_cases, fold_events, replay_streams
 
 
@@ -69,6 +72,186 @@ def test_gatekeeper_verdict_replay_after_checkpoint_preserves_projected_file_ent
     restored = projection_from_checkpoint(deepcopy(projection_to_checkpoint(prefix)))
 
     assert fold_events(stream[3:], restored) == full
+
+
+def test_failed_correction_supersession_replays_identically_at_every_split() -> None:
+    event = graph_event
+    stream = [
+        event(
+            "node_created",
+            {
+                "node_id": "worker-original",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "region-original",
+            },
+            position=0,
+        ),
+        event(
+            "output_record_accepted",
+            {
+                "record_id": "file-original",
+                "record_kind": "file_state",
+                "record_type": "file_state",
+                "producer_node_id": "worker-original",
+                "schema": "FileStateRecord",
+                "candidate_id": "candidate-original",
+                "task_region_id": "region-original",
+            },
+            position=1,
+        ),
+        event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-original",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-original",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-original",
+                "task_region_id": "region-original",
+                "file_state_record_ids": ["file-original"],
+                "value": {"summary": "original"},
+            },
+            position=2,
+        ),
+        event(
+            "node_created",
+            {
+                "node_id": "verifier-original",
+                "kind": "verifier",
+                "state": "completed",
+                "task_region_id": "region-original",
+            },
+            position=3,
+        ),
+        event(
+            "output_record_accepted",
+            {
+                "record_id": "verification-original-failed",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verifier-original",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-original",
+                "task_region_id": "region-original",
+                "outcome": "failed",
+                "value": {"outcome": "failed", "grades": []},
+            },
+            position=4,
+        ),
+        event(
+            "verification_failed",
+            {
+                "node_id": "verifier-original",
+                "verifier_node_id": "verifier-original",
+                "candidate_id": "candidate-original",
+                "task_region_id": "region-original",
+                "record_id": "verification-original-failed",
+                "outcome": "failed",
+            },
+            position=5,
+        ),
+        event(
+            "node_created",
+            {
+                "node_id": "worker-correction",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "region-correction",
+            },
+            position=6,
+        ),
+        event(
+            "output_record_accepted",
+            {
+                "record_id": "file-correction",
+                "record_kind": "file_state",
+                "record_type": "file_state",
+                "producer_node_id": "worker-correction",
+                "schema": "FileStateRecord",
+                "candidate_id": "candidate-correction",
+                "task_region_id": "region-correction",
+            },
+            position=7,
+        ),
+        event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-correction",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-correction",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-correction",
+                "task_region_id": "region-correction",
+                "file_state_record_ids": ["file-correction"],
+                "supersedes_task_region_id": "region-original",
+                "value": {"summary": "correction"},
+            },
+            position=8,
+        ),
+        event(
+            "node_created",
+            {
+                "node_id": "verifier-correction",
+                "kind": "verifier",
+                "state": "completed",
+                "task_region_id": "region-correction",
+            },
+            position=9,
+        ),
+        event(
+            "output_record_accepted",
+            {
+                "record_id": "verification-correction-passed",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verifier-correction",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-correction",
+                "task_region_id": "region-correction",
+                "outcome": "passed",
+                "value": {"outcome": "passed", "grades": []},
+            },
+            position=10,
+        ),
+        event(
+            "verification_passed",
+            {
+                "node_id": "verifier-correction",
+                "verifier_node_id": "verifier-correction",
+                "candidate_id": "candidate-correction",
+                "task_region_id": "region-correction",
+                "record_id": "verification-correction-passed",
+                "outcome": "passed",
+            },
+            position=11,
+        ),
+    ]
+    full = build_projection(stream)
+    expected_states = task_states_view(full)
+    expected_blockers = list(iter_final_invariant_blockers(stream, full))
+    assert expected_states == {"region-correction": "accepted", "region-original": "accepted"}
+    assert expected_blockers == []
+
+    for split in range(len(stream) + 1):
+        prefix = build_projection(stream[:split])
+        frozen_prefix = prefix.model_copy(deep=True)
+        checkpoint = projection_to_checkpoint(prefix)
+        frozen_checkpoint = deepcopy(checkpoint)
+        restored = projection_from_checkpoint(deepcopy(checkpoint))
+        replayed = _fold(restored, stream[split:])
+
+        assert replayed == full, split
+        assert task_states_view(replayed) == expected_states, split
+        assert list(iter_final_invariant_blockers(stream, replayed)) == expected_blockers, split
+        assert prefix == frozen_prefix, split
+        assert checkpoint == frozen_checkpoint, split
 
 
 def test_canonical_gatekeeper_stream_preserves_ordinary_and_external_entry_subtypes() -> None:

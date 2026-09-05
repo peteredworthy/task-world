@@ -32,6 +32,24 @@ class AgentExecutionError(AgentError):
         super().__init__(f"Agent runner '{agent_runner_type}' execution failed: {message}")
 
 
+class SubmissionRepairExhaustedError(AgentExecutionError):
+    """The bounded same-session submit correction budget was exhausted."""
+
+    def __init__(self, agent_runner_type: str, first_cause: str, last_cause: str) -> None:
+        self.first_cause = first_cause
+        self.last_cause = last_cause
+        self.operator_action = (
+            "Inspect the node submission contract and the first/last rejection; "
+            "repair the contract or authored payload before explicitly retrying."
+        )
+        super().__init__(
+            agent_runner_type,
+            "submission repair exhausted after 3 attempts; "
+            f"first_cause={first_cause}; last_cause={last_cause}; "
+            f"operator_action={self.operator_action}",
+        )
+
+
 class AgentNotAvailableError(AgentError):
     """Agent runner is not available on this system."""
 

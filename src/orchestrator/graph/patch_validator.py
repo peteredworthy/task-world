@@ -30,6 +30,7 @@ from orchestrator.graph.projection_queries import (
     cache_authority_is_new_format,
     edges_view,
     input_bindings_view,
+    leases_view,
     node_kinds_view,
     node_payload_view,
     node_roles_view,
@@ -41,6 +42,10 @@ from orchestrator.graph.projection_queries import (
     output_records_by_node_port_view,
 )
 from orchestrator.graph.projections import GraphProjection
+from orchestrator.graph.retry_policy import (
+    DEFAULT_EXECUTABLE_NODE_MAX_ATTEMPTS,
+    EXECUTABLE_NODE_KINDS,
+)
 from orchestrator.graph.semantic_artifacts import (
     accepted_semantic_declaration,
 )
@@ -89,7 +94,7 @@ ALLOWED_BY_ROLE = {
 MODE_RANK = {"read": 0, "write": 1, "graph_write": 2, "review_write": 3}
 RESOURCE_CLAIM_MODES = {"read", "write", "external", "graph_write", "review_write"}
 RUNNING_STATES = {"running", "leased"}
-EXECUTABLE_NODE_KINDS = {"worker", "verifier", "check", "planner"}
+ROLE_REQUIRED_EXECUTABLE_NODE_KINDS = {"worker", "verifier", "check", "planner"}
 PLANNER_SUCCESSOR_PORTS = {
     "region_summary",
     "accepted_file_state",
@@ -221,6 +226,11 @@ def normalize_patch_node_payload(
     node["node_id"] = node_id if isinstance(node_id, str) else (default_node_id or default_kind)
     node.setdefault("kind", default_kind)
     node.setdefault("state", "planned")
+    if node["kind"] in EXECUTABLE_NODE_KINDS:
+        if node.get("max_attempts") == 0:
+            raise ValueError("executable node max_attempts must be at least 1")
+        node.setdefault("max_attempts", DEFAULT_EXECUTABLE_NODE_MAX_ATTEMPTS)
+        node.setdefault("attempt_number", 1)
     for key in (
         "task_region_id",
         "attempt_number",
@@ -358,13 +368,20 @@ def validate_patch(
             return PatchValidationResult(accepted=False, rejection_reason=contract_error)
         role = typed_node.get("role")
         if actor_role == "gap_planner":
-            gap_planner_error = _validate_gap_planner_node(typed_node)
+            proposing_node = node_payload_view(projection, patch.proposed_by_node_id) or {}
+            gap_planner_error = _validate_gap_planner_node(
+                typed_node,
+                reliable_plan=(
+                    isinstance(proposing_node.get("reliable_plan_skeleton_id"), str)
+                    and isinstance(proposing_node.get("reliable_plan_assignment_carrier"), dict)
+                ),
+            )
             if gap_planner_error is not None:
                 return PatchValidationResult(
                     accepted=False,
                     rejection_reason=gap_planner_error,
                 )
-        if kind in EXECUTABLE_NODE_KINDS and not isinstance(role, str):
+        if kind in ROLE_REQUIRED_EXECUTABLE_NODE_KINDS and not isinstance(role, str):
             return PatchValidationResult(
                 accepted=False,
                 rejection_reason=f"executable node requires role: {kind}",
@@ -409,7 +426,12 @@ def validate_patch(
     if dynamic_region_error is not None:
         return PatchValidationResult(accepted=False, rejection_reason=dynamic_region_error)
 
-    semantic_stage_error = _validate_semantic_stage_invariants(ops, projection, actor_role)
+    semantic_stage_error = _validate_semantic_stage_invariants(
+        ops,
+        projection,
+        actor_role,
+        proposed_by_node_id=patch.proposed_by_node_id,
+    )
     if semantic_stage_error is not None:
         return PatchValidationResult(
             accepted=False,
@@ -734,9 +756,15 @@ def _node_contract_identity(
     return (kind, role if isinstance(role, str) else None)
 
 
-def _validate_gap_planner_node(node: dict[str, Any]) -> str | None:
+def _validate_gap_planner_node(node: dict[str, Any], *, reliable_plan: bool = False) -> str | None:
     kind = node.get("kind")
     if kind == "planner":
+        if (
+            reliable_plan
+            and node.get("role") == "planner"
+            and node.get("semantic_stage") == "successor_planning"
+        ):
+            return None
         return "gap planner cannot create planner successor"
     if (
         kind in {"worker", "verifier", "check"}
@@ -945,16 +973,17 @@ def _validate_dynamic_region_dependencies(
         kind = node.get("kind")
         role = node.get("role")
         ports = incoming_ports.get(node_id, set())
-        semantic_plan_revision = (
-            classify_write_worker_semantics(
-                node_id,
-                node,
-                projection,
-                edges=all_edges,
-                nodes=created_nodes,
-            )
-            == "semantic_plan_revision"
+        write_applicability = classify_write_worker_semantics(
+            node_id,
+            node,
+            projection,
+            edges=all_edges,
+            nodes=created_nodes,
         )
+        exact_correction = write_applicability in {
+            "semantic_plan_revision",
+            "declared_batch_correction",
+        }
         if (
             kind == "planner"
             and role == "gap_planner"
@@ -964,14 +993,15 @@ def _validate_dynamic_region_dependencies(
         if (
             actor_role not in {"gap_planner", "human"}
             and _is_corrective_worker(node_id, node)
-            and not semantic_plan_revision
+            and not exact_correction
             and "classified_gap" not in ports
         ):
             return "corrective worker requires classified_gap input edge"
         if (
             actor_role != "human"
+            and kind == "worker"
             and node.get("semantic_stage") == "corrective_work"
-            and not semantic_plan_revision
+            and not exact_correction
         ):
             if "verification_report" not in ports:
                 return "corrective worker requires exact failed verification_report input edge"
@@ -990,6 +1020,8 @@ def _validate_semantic_stage_invariants(
     ops: list[dict[str, Any]],
     projection: GraphProjection,
     actor_role: str,
+    *,
+    proposed_by_node_id: str,
 ) -> str | None:
     """Enforce reliable-plan semantics on staged nodes, not merely prompts."""
     created = _created_nodes_by_id(ops)
@@ -1082,10 +1114,17 @@ def _validate_semantic_stage_invariants(
 
         if (
             actor_role != "human"
+            and kind == "worker"
             and stage == "corrective_work"
-            and write_applicability != "semantic_plan_revision"
+            and write_applicability not in {"semantic_plan_revision", "declared_batch_correction"}
         ):
-            correction_error = _corrective_evidence_error(node_id, node, all_edges, projection)
+            correction_error = _corrective_evidence_error(
+                node_id,
+                node,
+                all_edges,
+                projection,
+                proposed_by_node_id=proposed_by_node_id,
+            )
             if correction_error is not None:
                 return correction_error
 
@@ -1191,7 +1230,32 @@ def _validate_reliable_plan_topology(
         "incompatible_schemas": [],
     }
 
-    if parent.get("reliable_plan_one_horizon_authorized") is True:
+    if parent.get("role") == "gap_planner":
+        corrective_workers = {
+            node_id
+            for node_id, node in created.items()
+            if node.get("kind") == "worker" and node.get("semantic_stage") == "corrective_work"
+        }
+        successor_planners = {
+            node_id
+            for node_id, node in created.items()
+            if node.get("kind") == "planner"
+            and node.get("role") == "planner"
+            and node.get("semantic_stage") == "successor_planning"
+        }
+        if corrective_workers:
+            if len(corrective_workers) != 1 or len(successor_planners) != 1:
+                return (
+                    f"patch {patch.patch_id} reliable-plan correction requires exactly one "
+                    "corrective worker and one passed-evidence successor planner",
+                    {**diagnostics, "violation": "invalid_reliable_plan_correction"},
+                )
+            return None
+
+    if (
+        parent.get("reliable_plan_one_horizon_authorized") is True
+        and parent.get("semantic_stage") != "successor_planning"
+    ):
         discovery_ids = {
             node_id
             for node_id, node in created.items()
@@ -1334,13 +1398,41 @@ def _validate_reliable_plan_topology(
         if node.get("semantic_stage") == "effectful_batch" and node.get("kind") == "worker"
     }
     if not effectful_ids:
+        if parent.get("semantic_stage") == "successor_planning" and any(
+            node.get("kind") == "planner" and node.get("role") == "planner"
+            for node in created.values()
+        ):
+            return (
+                f"patch {patch.patch_id} reliable-plan successor cannot advance without "
+                "materializing its bounded effectful batch",
+                {**diagnostics, "violation": "empty_sequential_horizon"},
+            )
         return None
     diagnostics["effectful_node_ids"] = sorted(effectful_ids)
+    if len(effectful_ids) != 1:
+        return (
+            f"patch {patch.patch_id} reliable-plan sequential profile requires exactly one "
+            "effectful batch per horizon",
+            {**diagnostics, "violation": "non_sequential_effectful_horizon"},
+        )
     if parent.get("semantic_stage") != "successor_planning":
         return (
             f"patch {patch.patch_id} effectful batch may only be proposed by the verified-plan "
             "successor planner",
             {**diagnostics, "violation": "unauthorized_effectful_proposer"},
+        )
+    parent_horizon = parent.get("planning_horizon")
+    effectful_horizon = created[next(iter(effectful_ids))].get("planning_horizon")
+    if isinstance(parent_horizon, int) and effectful_horizon != parent_horizon:
+        return (
+            f"patch {patch.patch_id} effectful batch horizon must match its proposing "
+            "successor planner",
+            {
+                **diagnostics,
+                "violation": "non_sequential_effectful_horizon",
+                "proposer_horizon": parent_horizon,
+                "effectful_horizon": effectful_horizon,
+            },
         )
     verification_binding = (
         input_bindings_view(projection)
@@ -1372,6 +1464,28 @@ def _validate_reliable_plan_topology(
                 "bound_verification_record_ids": record_ids,
             },
         )
+    parent_horizon = parent.get("planning_horizon")
+    if isinstance(parent_horizon, int) and parent_horizon > 1:
+        typed_records = output_record_payloads_view(projection)
+        predecessor_reports = [
+            record_id
+            for record_id in passed_reports
+            if isinstance((record := typed_records.get(record_id)), VerificationReportRecord)
+            and (producer := node_payload_view(projection, record.producer_node_id)) is not None
+            and producer.get("semantic_stage") in {"effectful_batch", "corrective_work"}
+            and producer.get("planning_horizon") == parent_horizon - 1
+        ]
+        if not predecessor_reports:
+            return (
+                f"patch {patch.patch_id} successor horizon requires accepted evidence from "
+                "the immediately preceding effectful horizon",
+                {
+                    **diagnostics,
+                    "violation": "missing_sequential_predecessor_evidence",
+                    "proposer_horizon": parent_horizon,
+                    "bound_verification_record_ids": record_ids,
+                },
+            )
     plan_edges = [
         edge
         for edge in edges
@@ -1410,7 +1524,6 @@ def _validate_reliable_plan_topology(
             and plan.value.authority_status == "accepted"
             and isinstance(report, VerificationReportRecord)
             and report.outcome == "passed"
-            and report_record_id in passed_reports
             and plan_record_id in report.evaluated_record_ids
         ):
             lineage_verified_report_ids.append(report_record_id)
@@ -1432,6 +1545,14 @@ def _validate_reliable_plan_topology(
             ),
         }
     )
+    if (not isinstance(parent_horizon, int) or parent_horizon <= 1) and not set(
+        lineage_verified_report_ids
+    ).intersection(passed_reports):
+        return (
+            f"patch {patch.patch_id} first effectful horizon must consume the exact plan "
+            "verification bound to its successor planner",
+            {**diagnostics, "violation": "unverified_exact_plan_lineage"},
+        )
     if (
         len(effective_plan_record_ids) != len(effectful_ids)
         or len(effective_report_ids) != len(effectful_ids)
@@ -1577,6 +1698,8 @@ def _corrective_evidence_error(
     node: dict[str, Any],
     edges: list[dict[str, Any]],
     projection: GraphProjection,
+    *,
+    proposed_by_node_id: str,
 ) -> str | None:
     incoming = [edge for edge in edges if edge.get("to_node_id") == node_id]
     records = record_payloads_view(projection)
@@ -1595,6 +1718,29 @@ def _corrective_evidence_error(
         if not isinstance(source, str) or not isinstance(record_id, str):
             return f"corrective worker {to_port} edge requires an exact immutable record_id"
         payload = records.get(record_id)
+        promised_current_gap = (
+            to_port == "classified_gap"
+            and source == proposed_by_node_id
+            and any(
+                lease.node_id == proposed_by_node_id
+                and lease.state == "active"
+                and record_id == f"classified-gap-{lease.execution_id}"
+                for lease in leases_view(projection).values()
+            )
+        )
+        if payload is None and promised_current_gap:
+            promised_cited_ids = [
+                record_id
+                for binding in input_bindings_view(projection).get(proposed_by_node_id, {}).values()
+                for record_id in binding.record_ids
+            ]
+            payload = {
+                "record_id": record_id,
+                "producer_node_id": source,
+                "record_type": "gap_classification",
+                "value": {"classification": "corrective_work_required"},
+                "provenance": {"evaluated_record_ids": promised_cited_ids},
+            }
         if payload is None or payload.get("producer_node_id") != source:
             return f"corrective worker {to_port} record must exist and match its edge producer"
         exact[cast(str, to_port)].append(payload)
@@ -1841,7 +1987,7 @@ def _final_gate_semantic_error(
         cast(str, payloads[source].get("declared_batch_id"))
         for source in passed_sources
         if source in payloads
-        and payloads[source].get("semantic_stage") == "effectful_batch"
+        and payloads[source].get("semantic_stage") in {"effectful_batch", "corrective_work"}
         and isinstance(payloads[source].get("declared_batch_id"), str)
     }
     if verified_batches != declared_batches:
@@ -1849,7 +1995,7 @@ def _final_gate_semantic_error(
     batch_sources = {
         source
         for source in passed_sources
-        if payloads.get(source, {}).get("semantic_stage") == "effectful_batch"
+        if payloads.get(source, {}).get("semantic_stage") in {"effectful_batch", "corrective_work"}
     }
     for source in batch_sources:
         error = _batch_verifier_topology_error(source, edges, payloads)

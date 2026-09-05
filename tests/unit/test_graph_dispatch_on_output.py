@@ -25,6 +25,8 @@ from orchestrator.graph import (
     GraphCommandContext,
     SequentialIdGenerator,
     initial_projection,
+    node_payload_view,
+    reliable_plan_assignment_carrier,
     reduce_event,
 )
 from orchestrator.git import snapshot
@@ -117,6 +119,154 @@ def _event(event_type: str, payload: dict[str, Any], position: int = -1) -> Even
         timestamp=FakeClock().now(),
         payload=canonical_event_payload(event_type, payload),
     )
+
+
+def _reliable_assignment_payload(*, model: str = "gpt-role") -> dict[str, Any]:
+    assignment = {
+        "runner_type": "codex_server",
+        "model": model,
+        "profile": "coder",
+    }
+    arm = {
+        "arm_id": "sealed-arm",
+        "planner": {**assignment, "profile": "architect"},
+        "discovery_worker": assignment,
+        "implementation_worker": assignment,
+        "correction_worker": assignment,
+        "verifier": assignment,
+        "successor_planner": {**assignment, "profile": "architect"},
+    }
+    carrier = reliable_plan_assignment_carrier(
+        skeleton_id="reliable-plan-fff4f6b7-v1",
+        arm=arm,
+        selected_runner_type="codex_server",
+    )
+    return {
+        "reliable_plan_skeleton_id": carrier.skeleton_id,
+        "reliable_plan_assignment_carrier": carrier.model_dump(mode="json"),
+        "reliable_plan_assignment_role": "implementation_worker",
+        "reliable_plan_selected_runner_type": "codex_server",
+        "runner_model_override": model,
+        "profile": "coder",
+        "access_mode": "write",
+    }
+
+
+def _reliable_projection(payload: dict[str, Any]) -> GraphProjection:
+    root_payload = {
+        **payload,
+        "node_id": "root",
+        "kind": "root",
+        "role": "run_root",
+        "state": "completed",
+        "reliable_plan_assignment_role": "planner",
+        "runner_model_override": "gpt-role",
+        "profile": "architect",
+    }
+    return _project([_event("node_created", root_payload, 1)])
+
+
+def test_static_factory_uses_exact_sealed_assignment_over_base_model() -> None:
+    captured: dict[str, Any] = {}
+
+    def build_runner(
+        runner_type: AgentRunnerType,
+        runner_config: dict[str, Any],
+        *,
+        run_id: str,
+        phase: str,
+    ) -> Any:
+        captured.update(
+            runner_type=runner_type,
+            runner_config=runner_config,
+            run_id=run_id,
+            phase=phase,
+        )
+        return object()
+
+    factory = StaticGraphAgentFactory(
+        AgentRunnerType.CODEX_SERVER,
+        {"model": "base", "reasoning_effort": "high"},
+        runner_builder=build_runner,
+    )
+    payload = _reliable_assignment_payload()
+    factory.create_runner(
+        _context(node_payload=payload, graph_projection=_reliable_projection(payload))
+    )
+
+    assert captured["runner_config"] == {
+        "model": "gpt-role",
+        "reasoning_effort": "high",
+    }
+
+
+def test_static_factory_rejects_tampered_reliable_plan_model_stamp() -> None:
+    payload = _reliable_assignment_payload()
+    payload["runner_model_override"] = "agent-authored-model"
+    factory = StaticGraphAgentFactory(AgentRunnerType.CODEX_SERVER)
+
+    with pytest.raises(ValueError, match="model stamp does not match carrier"):
+        factory.create_runner(
+            _context(node_payload=payload, graph_projection=_reliable_projection(payload))
+        )
+
+
+@pytest.mark.parametrize(
+    ("node_id", "kind", "role"),
+    [
+        ("planner-old", "planner", "planner"),
+        ("worker-old", "worker", "worker"),
+        ("verifier-old", "verifier", "verifier"),
+        ("planner-recovery-old", "planner", "recovery_planner"),
+    ],
+)
+def test_historical_unsealed_reliable_plan_replay_is_readable_but_not_executable(
+    node_id: str,
+    kind: str,
+    role: str,
+) -> None:
+    historical_payloads = [
+        {"node_id": "root", "kind": "root", "role": "run_root", "state": "completed"},
+        {
+            "node_id": "planner-old",
+            "kind": "planner",
+            "role": "planner",
+            "state": "planned",
+            "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
+        },
+        {"node_id": "worker-old", "kind": "worker", "role": "worker", "state": "planned"},
+        {
+            "node_id": "verifier-old",
+            "kind": "verifier",
+            "role": "verifier",
+            "state": "planned",
+        },
+        {
+            "node_id": "planner-recovery-old",
+            "kind": "planner",
+            "role": "recovery_planner",
+            "state": "planned",
+            "recovery_of_node_id": "worker-old",
+        },
+    ]
+    events = [
+        _event("node_created", payload, index)
+        for index, payload in enumerate(historical_payloads, start=1)
+    ]
+    replayed = _project(events)
+    payload = next(item for item in historical_payloads if item["node_id"] == node_id)
+    context = _context(
+        node_id=node_id,
+        node_kind=kind,
+        node_role=role,
+        node_payload=payload,
+        graph_events=events,
+        graph_projection=replayed,
+    )
+
+    assert node_payload_view(replayed, node_id) is not None
+    with pytest.raises(ValueError, match="historical runs remain readable but cannot execute"):
+        StaticGraphAgentFactory(AgentRunnerType.CODEX_SERVER).create_runner(context)
 
 
 def _project(events: list[EventEnvelope]) -> GraphProjection:
@@ -1176,8 +1326,18 @@ def test_runtime_death_max_attempts_bounds_gap_planners_without_node_limit() -> 
         == DEFAULT_GAP_PLANNER_RUNTIME_DEATH_MAX_ATTEMPTS
     )
     assert _runtime_death_max_attempts(_context(node_payload={"max_attempts": 7})) == 7
-    assert _runtime_death_max_attempts(_context(node_payload={"max_attempts": True})) is None
-    assert _runtime_death_max_attempts(_context(node_kind="worker", node_role="builder")) is None
+    assert _runtime_death_max_attempts(_context(node_payload={"max_attempts": True})) == 3
+    assert _runtime_death_max_attempts(_context(node_kind="worker", node_role="builder")) == 3
+
+
+@pytest.mark.parametrize("kind", ["oversight", "appeal", "review", "summarizer"])
+@pytest.mark.parametrize("declared", [None, 0])
+def test_runtime_death_max_attempts_defaults_agent_contract_kinds(
+    kind: str,
+    declared: int | None,
+) -> None:
+    payload = {} if declared is None else {"max_attempts": declared}
+    assert _runtime_death_max_attempts(_context(node_kind=kind, node_payload=payload)) == 3
 
 
 @pytest.mark.asyncio
@@ -1916,6 +2076,34 @@ def _semantic_discovery_context() -> GraphDispatchContext:
     )
 
 
+def _mixed_semantic_revision_context() -> GraphDispatchContext:
+    context = _semantic_discovery_context()
+    return replace(
+        context,
+        node_id="worker-reliable-plan-semantic-revision",
+        node_role="fixer",
+        node_payload={
+            **context.node_payload,
+            "node_id": "worker-reliable-plan-semantic-revision",
+            "role": "fixer",
+            "candidate_id": "semantic-artifact-revision-40a6d711-semantic_artifact",
+            "task_region_id": "corrective_work_region",
+            "outputs": [
+                {
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "required": True,
+                },
+                {
+                    "port": "semantic_artifact",
+                    "schema": "SemanticArtifact",
+                    "required": True,
+                },
+            ],
+        },
+    )
+
+
 def test_discovery_submission_contract_shapes_prompt_and_codex_tool() -> None:
     context = _semantic_discovery_context()
     execution_context = RecordingExecutor()._execution_context(context)
@@ -1999,6 +2187,105 @@ def test_semantic_submit_wraps_only_authored_content_and_validates_precisely() -
     assert cast(dict[str, Any], record["value"])["content"] == {
         "batches": [{"batch_id": "batch-1"}]
     }
+
+
+def test_mixed_semantic_submit_composes_trusted_candidate_and_authored_artifact() -> None:
+    context = _mixed_semantic_revision_context()
+    execution_context = RecordingExecutor()._execution_context(context)
+    assert execution_context.submission_contract is not None
+
+    submit = next(
+        spec
+        for spec in build_dynamic_tool_specs(context=execution_context)
+        if spec["name"] == "submit"
+    )
+    outputs_schema = submit["inputSchema"]["properties"]["outputs"]
+    assert outputs_schema["required"] == ["semantic_artifact"]
+    assert set(outputs_schema["properties"]) == {"semantic_artifact"}
+
+    with pytest.raises(ValueError, match=r"unknown output ports=\['candidate'\]"):
+        _semantic_output_records_from_submit_args(
+            context,
+            {
+                "outputs": {
+                    "candidate": {"candidate_id": "agent-forged"},
+                    "semantic_artifact": {"batches": [{"batch_id": "batch-1"}]},
+                }
+            },
+        )
+
+    records = _semantic_output_records_from_submit_args(
+        context,
+        {"outputs": {"semantic_artifact": {"batches": [{"batch_id": "batch-1"}]}}},
+    )
+
+    assert [record["port"] for record in records] == ["candidate", "semantic_artifact"]
+    candidate, artifact = records
+    assert candidate["record_id"] == "semantic-artifact-revision-40a6d711-semantic_artifact"
+    assert candidate["producer_node_id"] == context.node_id
+    assert candidate["candidate_id"] == "semantic-artifact-revision-40a6d711-semantic_artifact"
+    assert artifact["record_id"] == "semantic-artifact-exec-1-semantic_artifact"
+    assert artifact["producer_node_id"] == context.node_id
+    assert _declared_output_contract_error(context, records) is None
+
+
+def test_semantic_submit_rejects_controller_agent_port_ownership_collision() -> None:
+    context = _mixed_semantic_revision_context()
+    context = replace(
+        context,
+        node_payload={
+            **context.node_payload,
+            "outputs": [
+                {
+                    "port": "candidate",
+                    "schema": "SemanticArtifact",
+                    "required": True,
+                }
+            ],
+        },
+    )
+
+    with pytest.raises(ValueError, match="output port candidate has an ownership collision"):
+        _semantic_output_records_from_submit_args(
+            context,
+            {"outputs": {"candidate": {"batches": [{"batch_id": "batch-1"}]}}},
+        )
+
+
+def test_mixed_semantic_submit_preserves_multiple_controller_records_on_one_port() -> None:
+    context = _mixed_semantic_revision_context()
+    context = replace(
+        context,
+        node_payload={
+            **context.node_payload,
+            "artifacts": [
+                {"id": "plan", "path": "docs/plan.md"},
+                {"id": "evidence", "path": "docs/evidence.json"},
+            ],
+            "outputs": [
+                *cast(list[dict[str, Any]], context.node_payload["outputs"]),
+                {
+                    "port": "artifact_reference",
+                    "schema": "ArtifactReference",
+                    "required": True,
+                },
+            ],
+        },
+    )
+
+    records = _semantic_output_records_from_submit_args(
+        context,
+        {"outputs": {"semantic_artifact": {"batches": [{"batch_id": "batch-1"}]}}},
+    )
+
+    assert [record["port"] for record in records] == [
+        "candidate",
+        "artifact_reference",
+        "artifact_reference",
+        "semantic_artifact",
+    ]
+    assert len({record["record_id"] for record in records}) == 4
+    assert _declared_output_contract_error(context, records) is None
 
 
 def test_worker_redispatch_prompt_includes_bounded_prior_attempt_failure() -> None:

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -26,12 +27,17 @@ from orchestrator.runners import (
     RELIABLE_PLAN_REQUIRED_TOOL_NAMES,
     RealStdioTransport,
 )
-from orchestrator.runners.errors import AgentNotAvailableError
+from orchestrator.runners.errors import AgentNotAvailableError, SubmissionRepairExhaustedError
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
 from orchestrator.config import ChecklistStatus
 from orchestrator.config.models import MCPServerConfig
 from orchestrator.config.models import RoutineConfig, StepConfig
-from orchestrator.graph import FakeClock, SequentialIdGenerator, compile_routine
+from orchestrator.graph import (
+    FakeClock,
+    ReliablePlanEvaluationConfig,
+    SequentialIdGenerator,
+    compile_routine,
+)
 
 # ---------------------------------------------------------------------------
 # Fake transport
@@ -354,12 +360,19 @@ async def test_reliable_plan_compiled_routine_sends_required_dynamic_tools() -> 
             )
         ],
     )
+    evaluation = ReliablePlanEvaluationConfig.model_validate_json(
+        Path("tests/fixtures/graph/reliable_plan_fff4f6b7.json").read_text()
+    )
     events = compile_routine(
         routine,
         FakeClock(),
         SequentialIdGenerator(),
         run_id="run-reliable-packet",
-        run_config={"reliable_plan_skeleton_id": "reliable-plan-v1"},
+        run_config={
+            "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
+            "reliable_plan_selected_runner_type": "codex_server",
+            "reliable_plan_model_assignments": evaluation.luna_arm.model_dump(mode="json"),
+        },
     )
     planner = next(
         event.payload
@@ -652,6 +665,30 @@ async def test_execute_accepts_corrected_submit_in_same_session() -> None:
         "missing required output port semantic_artifact" in responses[10]["contentItems"][0]["text"]
     )
     assert responses[11]["success"] is True
+
+
+async def test_execute_stops_after_three_rejected_submissions() -> None:
+    notifications = [
+        _tool_call_request("submit", {"outputs": {"attempt": attempt}}, 10 + attempt)
+        for attempt in range(3)
+    ]
+    agent, transport = _make_agent(notifications)
+
+    async def reject_submit(args: dict[str, Any]) -> None:
+        raise ValueError(f"submit callback rejected: invalid payload {args['outputs']['attempt']}")
+
+    with pytest.raises(SubmissionRepairExhaustedError) as raised:
+        await agent.execute(
+            context=_ctx(node_kind="worker"),
+            on_checklist_update=_noop_checklist,
+            on_submit=reject_submit,
+        )
+
+    assert "first_cause=submit callback rejected: invalid payload 0" in str(raised.value)
+    assert "last_cause=submit callback rejected: invalid payload 2" in str(raised.value)
+    assert "operator_action=" in str(raised.value)
+    responses = [sent for sent in transport.sent if sent.get("id") in {10, 11, 12}]
+    assert [response["result"]["success"] for response in responses] == [False, False, False]
 
 
 async def test_legacy_submit_rejection_does_not_terminate_before_corrected_dynamic_call() -> None:

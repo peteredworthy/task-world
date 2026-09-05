@@ -60,6 +60,7 @@ from orchestrator.runners.environment import build_agent_subprocess_env
 from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentExecutionError,
+    SubmissionRepairExhaustedError,
     AgentNotAvailableError,
     AgentTimeoutError,
 )
@@ -715,6 +716,7 @@ class CodexServerAgent:
             # --- Step 4: Process notification stream ---
             done = False
             num_actions = 0
+            submit_rejection_causes: list[str] = []
             turn_usage: dict[str, int] = {}
             finish_reasons: list[str] = []
 
@@ -748,6 +750,7 @@ class CodexServerAgent:
                     )
                 except ValueError as exc:
                     if _is_submit_callback_rejection(tool_name, exc):
+                        submit_rejection_causes.append(str(exc))
                         parser.record_dynamic_tool_result(
                             str(req_id), success=False, output=str(exc)
                         )
@@ -758,6 +761,12 @@ class CodexServerAgent:
                                 output=str(exc),
                             )
                         )
+                        if len(submit_rejection_causes) >= 3:
+                            raise SubmissionRepairExhaustedError(
+                                AgentRunnerType.CODEX_SERVER.value,
+                                submit_rejection_causes[0],
+                                submit_rejection_causes[-1],
+                            )
                         logger.warning(
                             "CodexServerAgent: submit rejected with actionable feedback; "
                             "continuing the same session: %s",
@@ -812,6 +821,13 @@ class CodexServerAgent:
                     await transport.send(
                         build_dynamic_tool_call_response(req_id, success=False, output=feedback)
                     )
+                    submit_rejection_causes.append(feedback)
+                    if len(submit_rejection_causes) >= 3:
+                        raise SubmissionRepairExhaustedError(
+                            AgentRunnerType.CODEX_SERVER.value,
+                            submit_rejection_causes[0],
+                            submit_rejection_causes[-1],
+                        )
                 except Exception as cb_exc:
                     # Callback raised an unexpected error (GateBlockedError, DB error, etc.).
                     # Send failure response to unblock the codex server, then re-raise
@@ -856,6 +872,7 @@ class CodexServerAgent:
                     on_grade,
                     context.graph_patch_callback,
                     on_complete_recovery,
+                    submit_rejection_causes,
                 )
                 finish_reasons.extend(extract_turn_finish_reasons(msg))
                 # Accumulate usage: cumulative wins (last value overwrites), or sum per-turn.
@@ -1194,6 +1211,7 @@ class CodexServerAgent:
         on_grade: GradeCallback | None,
         on_submit_graph_patch: Any | None = None,
         on_complete_recovery: CompleteRecoveryCallback | None = None,
+        submit_rejection_causes: list[str] | None = None,
     ) -> tuple[bool, dict[str, int]]:
         """Process one JSON-RPC notification.
 
@@ -1248,6 +1266,14 @@ class CodexServerAgent:
                 )
             except ValueError as exc:
                 if _is_submit_callback_rejection(tool_name, exc):
+                    causes = submit_rejection_causes if submit_rejection_causes is not None else []
+                    causes.append(str(exc))
+                    if len(causes) >= 3:
+                        raise SubmissionRepairExhaustedError(
+                            AgentRunnerType.CODEX_SERVER.value,
+                            causes[0],
+                            causes[-1],
+                        )
                     logger.warning(
                         "CodexServerAgent: legacy submit notification rejected; "
                         "continuing the same session: %s",

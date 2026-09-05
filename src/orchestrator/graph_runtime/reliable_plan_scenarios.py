@@ -1085,9 +1085,9 @@ class ReliablePlanProductPathRunner:
                         candidate_id="candidate-batch",
                         grades=[],
                         evaluated_record_ids=[
+                            "check-result-batch",
                             "candidate-batch",
                             "file-state-batch",
-                            "check-result-batch",
                         ],
                     )
                 ],

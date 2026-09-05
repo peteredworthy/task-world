@@ -282,10 +282,13 @@ def runtime_retry_counts_view(projection: GraphProjection) -> dict[str, int]:
 
 
 def node_max_attempts_view(projection: GraphProjection) -> dict[str, int]:
+    from orchestrator.graph.retry_policy import effective_node_max_attempts
+
     return {
-        node_id: node.spec.max_attempts
+        node_id: effective
         for node_id, node in projection.nodes.items()
-        if node.spec.max_attempts is not None
+        if (effective := effective_node_max_attempts(node.spec.kind, node.spec.max_attempts))
+        is not None
     }
 
 

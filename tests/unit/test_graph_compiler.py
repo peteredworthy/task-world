@@ -640,9 +640,39 @@ def test_dynamic_graph_feature_large_spec_keeps_seed_events_bounded() -> None:
             "feature_spec_content": "bounded contract evidence " * 2_000,
             "acceptance_command": "uv run pytest -q",
             "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
+            "reliable_plan_selected_runner_type": "codex_server",
             "reliable_plan_model_assignments": {
-                "planner": {"model": "gpt-5.6-sol", "profile": "architect"},
-                "successor_planner": {"model": "gpt-5.6-luna", "profile": "architect"},
+                "arm_id": "unit-arm",
+                "planner": {
+                    "runner_type": "codex_server",
+                    "model": "gpt-5.6-sol",
+                    "profile": "architect",
+                },
+                "discovery_worker": {
+                    "runner_type": "codex_server",
+                    "model": "gpt-5.6-luna",
+                    "profile": "coder",
+                },
+                "implementation_worker": {
+                    "runner_type": "codex_server",
+                    "model": "gpt-5.6-sol",
+                    "profile": "coder",
+                },
+                "correction_worker": {
+                    "runner_type": "codex_server",
+                    "model": "gpt-5.6-sol",
+                    "profile": "coder",
+                },
+                "verifier": {
+                    "runner_type": "codex_server",
+                    "model": "gpt-5.6-sol",
+                    "profile": "coder",
+                },
+                "successor_planner": {
+                    "runner_type": "codex_server",
+                    "model": "gpt-5.6-luna",
+                    "profile": "architect",
+                },
             },
             "reliable_plan_one_horizon_authorized": True,
             "reliable_plan_qualification_evidence_hash": "sha256:" + "a" * 64,
@@ -656,6 +686,14 @@ def test_dynamic_graph_feature_large_spec_keeps_seed_events_bounded() -> None:
         for event in events
     }
     assert max(event_sizes.values()) < (MAX_EVENT_ENVELOPE_BYTES - 256), event_sizes
+    root = _node_event(events, "root").payload
+    planner = _node_event(events, "planner-s-01").payload
+    assert root["reliable_plan_assignment_role"] == "planner"
+    assert planner["reliable_plan_assignment_role"] == "planner"
+    assert root["reliable_plan_selected_runner_type"] == "codex_server"
+    assert planner["runner_model_override"] == "gpt-5.6-sol"
+    assert planner["profile"] == "architect"
+    assert planner["reliable_plan_assignment_carrier"] == root["reliable_plan_assignment_carrier"]
 
 
 def test_dynamic_feature_inputs_compile_canonical_acceptance_requirement() -> None:

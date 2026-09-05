@@ -116,9 +116,19 @@ class ReliablePlanToolPreflightError(AgentConfigError):
 def is_reliable_plan_planner(
     *, node_kind: str | None, node_payload: Mapping[str, Any] | None
 ) -> bool:
-    """Return whether this is the reliable-plan planner dispatch boundary."""
-    return node_kind == "planner" and isinstance(
-        (node_payload or {}).get("reliable_plan_skeleton_id"), str
+    """Return whether this is a bounded-horizon reliable-plan planner.
+
+    Failure gap planners inherit the reliable-plan provenance carrier, but use
+    the correction tool contract for their role. Requiring the four horizon
+    construction macros from those nodes makes a valid correction impossible:
+    the role-scoped catalog intentionally exposes ``create_corrective_region``
+    instead. Root and successor planners retain the strict four-tool preflight.
+    """
+    payload = node_payload or {}
+    return (
+        node_kind == "planner"
+        and payload.get("role") != "gap_planner"
+        and isinstance(payload.get("reliable_plan_skeleton_id"), str)
     )
 
 

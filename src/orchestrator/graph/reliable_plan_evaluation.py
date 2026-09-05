@@ -362,6 +362,67 @@ class ReliablePlanEvaluationArm(BaseModel):
         return self
 
 
+ReliablePlanAssignmentRole = Literal[
+    "planner",
+    "discovery_worker",
+    "implementation_worker",
+    "correction_worker",
+    "verifier",
+    "successor_planner",
+]
+
+
+class ReliablePlanAssignmentCarrier(BaseModel):
+    """Sealed, redundant execution assignments propagated to reliable-plan nodes."""
+
+    model_config = {"extra": "forbid", "frozen": True}
+    skeleton_id: Literal["reliable-plan-fff4f6b7-v1"]
+    arm: ReliablePlanEvaluationArm
+    selected_runner_type: Literal[
+        "openhands_local", "openhands_docker", "cli_subprocess", "codex_server"
+    ]
+
+    @model_validator(mode="after")
+    def _single_selected_runner(self) -> Self:
+        runner_types = {
+            assignment.runner_type
+            for assignment in (
+                self.arm.planner,
+                self.arm.discovery_worker,
+                self.arm.implementation_worker,
+                self.arm.correction_worker,
+                self.arm.verifier,
+                self.arm.successor_planner,
+            )
+        }
+        if runner_types != {self.selected_runner_type}:
+            raise ValueError(
+                "reliable-plan assignments must all use the selected runner "
+                f"{self.selected_runner_type}"
+            )
+        return self
+
+    def assignment_for(self, role: ReliablePlanAssignmentRole) -> ReliablePlanModelAssignment:
+        return getattr(self.arm, role)
+
+
+def reliable_plan_assignment_carrier(
+    *,
+    skeleton_id: str,
+    arm: object,
+    selected_runner_type: str,
+) -> ReliablePlanAssignmentCarrier:
+    """Validate the complete arm and bind it to the one selected runner."""
+
+    return ReliablePlanAssignmentCarrier.model_validate(
+        {
+            "skeleton_id": skeleton_id,
+            "arm": arm,
+            "selected_runner_type": selected_runner_type,
+        }
+    )
+
+
 class ReliablePlanEvaluationConfig(BaseModel):
     """Two-arm dogfood configuration.
 

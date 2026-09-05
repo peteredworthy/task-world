@@ -26,6 +26,7 @@ from orchestrator.graph import (
     ready_nodes_view,
     routine_snapshot_dynamic_feature_view,
     semantic_schema_declarations_view,
+    correction_superseded_task_region_id,
     thaw_json,
     DEFAULT_NODE_CONTRACTS,
     EventEnvelope,
@@ -1436,6 +1437,18 @@ def _candidate_id_for_verifier(context: GraphDispatchContext) -> str:
     )
     if bound_candidate_ids:
         return bound_candidate_ids[0]
+    audit_inputs = _bound_record_ids_for_ports(
+        context,
+        tuple(
+            port
+            for port in sorted(
+                input_bindings_view(context.graph_projection).get(context.node_id, {})
+            )
+            if port.startswith("verification_report_")
+        ),
+    )
+    if audit_inputs:
+        return audit_inputs[0]
     return str(context.node_payload.get("candidate_id") or f"candidate-{context.node_id}")
 
 
@@ -1470,13 +1483,16 @@ def _evaluated_record_citations(context: GraphDispatchContext) -> dict[str, list
         (
             "verification_evidence",
             "verification_report",
+            "check_result",
             "verifier_check_results",
             *tuple(
                 port
                 for port in sorted(
                     input_bindings_view(context.graph_projection).get(context.node_id, {})
                 )
-                if port.startswith("check_result_") or port.startswith("requirement_")
+                if port.startswith("check_result_")
+                or port.startswith("requirement_")
+                or port.startswith("verification_report_")
             ),
         ),
     )
@@ -1485,7 +1501,10 @@ def _evaluated_record_citations(context: GraphDispatchContext) -> dict[str, list
     for record in _record_payloads_for_ids(context.graph_projection, evidence_record_ids):
         candidate_record_ids.extend(_citation_record_ids(record, "candidate_record_ids"))
         file_state_record_ids.extend(_citation_record_ids(record, "file_state_record_ids"))
-    if not file_state_record_ids:
+    if (
+        not file_state_record_ids
+        and context.node_payload.get("semantic_stage") != "plan_verification"
+    ):
         file_state_record_ids.extend(_file_state_record_ids_for_task_region(context))
     citations: dict[str, list[str]] = {}
     unique_candidate_record_ids = _unique_record_ids(candidate_record_ids)
@@ -1498,7 +1517,7 @@ def _evaluated_record_citations(context: GraphDispatchContext) -> dict[str, list
     if unique_evidence_record_ids:
         citations["verification_report_record_ids"] = unique_evidence_record_ids
     evaluated_record_ids = _unique_record_ids(
-        [*unique_candidate_record_ids, *unique_file_state_record_ids, *evidence_record_ids]
+        [*evidence_record_ids, *unique_candidate_record_ids, *unique_file_state_record_ids]
     )
     if evaluated_record_ids:
         citations["evaluated_record_ids"] = evaluated_record_ids
@@ -1606,6 +1625,8 @@ def _merge_record_citations(
     field: str,
     citations: dict[str, list[str]],
 ) -> None:
+    if not citations:
+        return
     existing = record.get(field)
     if existing is None:
         record[field] = {key: list(value) for key, value in citations.items()}
@@ -1630,6 +1651,7 @@ def _output_records_for_submit(
         role = context.node_role
         if role == "gap_planner" and "_accepted_gap_planner_patch_had_ops" in node:
             patch_had_ops = node.get("_accepted_gap_planner_patch_had_ops") is True
+            citations = _evaluated_record_citations(context)
             gap_value = {
                 "milestone_kind": "gap_analysis",
                 "classification": "corrective_work_required" if patch_had_ops else "no_gap",
@@ -1641,7 +1663,7 @@ def _output_records_for_submit(
                 "task_region_id": task_region_id,
                 "attempt_number": attempt_number,
             }
-            return [
+            records = [
                 _gap_classification_record(
                     f"gap-plan-{context.execution_id}",
                     context.node_id,
@@ -1661,6 +1683,9 @@ def _output_records_for_submit(
                     gap_value,
                 ),
             ]
+            for record in records:
+                _merge_record_citations(record, "provenance", citations)
+            return records
         if role == "fan_out_reader":
             return [
                 {
@@ -1741,18 +1766,25 @@ def _output_records_for_submit(
                 verification_reports_at_top_level=False,
             )
         ]
+    candidate_record = {
+        "record_id": candidate_id,
+        "record_kind": "output",
+        "producer_node_id": context.node_id,
+        "port": "candidate",
+        "schema": "ImplementationCandidate",
+        "candidate_id": candidate_id,
+        "task_region_id": task_region_id,
+        "attempt_number": attempt_number,
+        "value": {"summary": "submitted by graph runner"},
+    }
+    superseded_region_id = correction_superseded_task_region_id(
+        context.graph_projection,
+        node,
+    )
+    if superseded_region_id is not None:
+        candidate_record["supersedes_task_region_id"] = superseded_region_id
     return [
-        {
-            "record_id": candidate_id,
-            "record_kind": "output",
-            "producer_node_id": context.node_id,
-            "port": "candidate",
-            "schema": "ImplementationCandidate",
-            "candidate_id": candidate_id,
-            "task_region_id": task_region_id,
-            "attempt_number": attempt_number,
-            "value": {"summary": "submitted by graph runner"},
-        },
+        candidate_record,
         *_artifact_reference_records_for_submit(context, candidate_id),
     ]
 

@@ -1,0 +1,251 @@
+{
+  "review_date": "2026-09-04",
+  "scope": "Saved journal and source; not live API state",
+  "run_id": "1bb308dc-4292-4a1b-a274-49fc4b238d33",
+  "events": [
+    {
+      "journal_line": 46162,
+      "global_position": 92939,
+      "timestamp": "2026-09-03T20:40:37.063247Z",
+      "type": "run_status_changed",
+      "payload": {
+        "timestamp": "2026-09-03T20:40:37.063247Z",
+        "run_id": "1bb308dc-4292-4a1b-a274-49fc4b238d33",
+        "event_type": "run_status_changed",
+        "old_status": "draft",
+        "new_status": "active",
+        "pause_reason": null,
+        "last_error": null
+      }
+    },
+    {
+      "journal_line": 46586,
+      "global_position": 93363,
+      "timestamp": "2026-09-03T21:01:43.073718+00:00",
+      "type": "node_created",
+      "payload": {
+        "node_id": "worker-reliable-plan-semantic-revision",
+        "kind": "worker",
+        "role": "fixer",
+        "state": "planned",
+        "task_region_id": "corrective_work_region",
+        "attempt_number": 2,
+        "candidate_id": "semantic-artifact-revision-40a6d711-semantic_artifact",
+        "failed_candidate_id": "semantic-artifact-exec-7ca5db93d69448d4b80cb1f2d35bacac-semantic_artifact",
+        "authority": {
+          "allowed_actions": [
+            "submit_records",
+            "request_clarification",
+            "raise_appeal"
+          ],
+          "resource_claims": [
+            {
+              "mode": "write",
+              "scope": "repo",
+              "paths": [
+                "."
+              ]
+            }
+          ]
+        },
+        "recovery_of_record_id": "semantic-artifact-exec-7ca5db93d69448d4b80cb1f2d35bacac-semantic_artifact",
+        "patch_id": "recover-failed-reliable-plan-verification-40a6d711-v4",
+        "inputs": [
+          {
+            "port": "verification_report",
+            "direction": "input",
+            "schema": "VerificationReport",
+            "required": true
+          },
+          {
+            "port": "semantic_artifact",
+            "direction": "input",
+            "schema": "SemanticArtifact",
+            "required": true
+          }
+        ],
+        "outputs": [
+          {
+            "port": "candidate",
+            "direction": "output",
+            "schema": "ImplementationCandidate",
+            "required": true
+          },
+          {
+            "port": "semantic_artifact",
+            "direction": "output",
+            "schema": "SemanticArtifact",
+            "required": true
+          }
+        ],
+        "access_mode": "write",
+        "acceptance": [
+          "The exact failed plan-verification report is addressed.",
+          "The replacement preserves typed staged-plan semantics and produces a verifiable candidate and semantic artifact."
+        ],
+        "effect_contract": "effectful_write",
+        "bound_requirement_ids": [
+          "dynamic_feature_acceptance"
+        ],
+        "invariants": [
+          "Preserve the accepted reliable-plan schema and requirement associations.",
+          "Keep staged implementation batches explicit and bounded."
+        ],
+        "objective": "Revise the exact failed implementation-plan artifact so the failed plan-verification grade is corrected.",
+        "prohibited_actions": [
+          "Do not widen the accepted plan scope.",
+          "Do not replace the semantic artifact with a generic candidate or file-state record."
+        ],
+        "scope": "The accepted reliable-plan implementation-plan semantic artifact and its staged plan evidence only.",
+        "cache_authority_hash": "4dfbaf5a268d8e51c8ef183a024fcf4da01cc0c6a1774f5aa02f6c5533e90ba0",
+        "semantic_stage": "corrective_work",
+        "semantic_schema_id": "reliable-plan-implementation-plan",
+        "semantic_schema_version": 1
+      }
+    },
+    {
+      "journal_line": 46757,
+      "global_position": 93534,
+      "timestamp": "2026-09-03T21:13:51.964514+00:00",
+      "type": "runtime_retry_scheduled",
+      "payload": {
+        "node_id": "worker-reliable-plan-semantic-revision",
+        "lease_id": "lease-dfe8486512d2415ea9524fb14a4355c9",
+        "generation": 1,
+        "policy": "v1_requeue_same_node_after_agent_death",
+        "reason": "runner_died"
+      }
+    },
+    {
+      "journal_line": 46907,
+      "global_position": 93684,
+      "timestamp": "2026-09-03T21:27:04.102598+00:00",
+      "type": "runtime_retry_scheduled",
+      "payload": {
+        "node_id": "worker-reliable-plan-semantic-revision",
+        "lease_id": "lease-ebf5d87be1a14c4bbc2b11ab02084e68",
+        "generation": 2,
+        "policy": "v1_requeue_same_node_after_agent_death",
+        "reason": "runner_died"
+      }
+    },
+    {
+      "journal_line": 47029,
+      "global_position": 93806,
+      "timestamp": "2026-09-03T21:37:35.821326+00:00",
+      "type": "runtime_retry_scheduled",
+      "payload": {
+        "node_id": "worker-reliable-plan-semantic-revision",
+        "lease_id": "lease-c2fd968e5556491881c8e26dd1a1108f",
+        "generation": 3,
+        "policy": "v1_requeue_same_node_after_agent_death",
+        "reason": "runner_died"
+      }
+    },
+    {
+      "journal_line": 47198,
+      "global_position": 93975,
+      "timestamp": "2026-09-03T21:51:20.714241+00:00",
+      "type": "runtime_retry_scheduled",
+      "payload": {
+        "node_id": "worker-reliable-plan-semantic-revision",
+        "lease_id": "lease-0072988d479441099875722bd4f3ea97",
+        "generation": 4,
+        "policy": "v1_requeue_same_node_after_agent_death",
+        "reason": "runner_died"
+      }
+    },
+    {
+      "journal_line": 47330,
+      "global_position": 94107,
+      "timestamp": "2026-09-03T22:01:39.971180+00:00",
+      "type": "runtime_retry_scheduled",
+      "payload": {
+        "node_id": "worker-reliable-plan-semantic-revision",
+        "lease_id": "lease-047f26497a3b43e2bebd16a84132c633",
+        "generation": 5,
+        "policy": "v1_requeue_same_node_after_agent_death",
+        "reason": "runner_died"
+      }
+    },
+    {
+      "journal_line": 47427,
+      "global_position": 94204,
+      "timestamp": "2026-09-03T22:11:04.115216+00:00",
+      "type": "runtime_retry_scheduled",
+      "payload": {
+        "node_id": "worker-reliable-plan-semantic-revision",
+        "lease_id": "lease-e849d0ee1f4a494385c701f0657431ca",
+        "generation": 6,
+        "policy": "v1_requeue_same_node_after_agent_death",
+        "reason": "runner_died"
+      }
+    },
+    {
+      "journal_line": 47548,
+      "global_position": 94325,
+      "timestamp": "2026-09-03T22:22:19.605672+00:00",
+      "type": "runtime_retry_scheduled",
+      "payload": {
+        "node_id": "worker-reliable-plan-semantic-revision",
+        "lease_id": "lease-131844571f4c4812be5f030e1525d725",
+        "generation": 7,
+        "policy": "v1_requeue_same_node_after_agent_death",
+        "reason": "runner_died"
+      }
+    },
+    {
+      "journal_line": 47700,
+      "global_position": 94477,
+      "timestamp": "2026-09-04T00:50:28.146334Z",
+      "type": "run_status_changed",
+      "payload": {
+        "timestamp": "2026-09-04T00:50:28.146334Z",
+        "run_id": "1bb308dc-4292-4a1b-a274-49fc4b238d33",
+        "event_type": "run_status_changed",
+        "old_status": "active",
+        "new_status": "paused",
+        "pause_reason": "graph_blocked",
+        "last_error": "graph quiescent with non-terminal node(s): planner-reliable-plan-successor-h1=planned: missing_required_input:verification_report (verification_report from verifier-reliable-plan=completed), verifier-reliable-plan-semantic-revision=planned: missing_required_input:semantic_artifact (semantic_artifact from worker-reliable-plan-semantic-revision=running)"
+      }
+    }
+  ],
+  "latest_server_log_path": "/Users/peter/code/task-world/.orchestrator/logs/server/20260903T203942.295134Z-92267/process.log",
+  "output_contract_preflight_warning_count": 17,
+  "reproduction": {
+    "required_declared_ports": [
+      "candidate",
+      "semantic_artifact"
+    ],
+    "submit_tool_allowed_ports": [
+      "semantic_artifact"
+    ],
+    "generated_ports": [
+      "semantic_artifact"
+    ],
+    "preflight_result": "missing required ports=['candidate']",
+    "attempt_to_author_candidate": "unknown output ports=['candidate']"
+  },
+  "review_test_results": {
+    "dynamic_e2e": {
+      "passed": 2,
+      "failed": 3,
+      "failure": "30-second timeouts; maxfail=3 prevented runner_e2e file execution"
+    },
+    "happy_path_diagnostic": {
+      "failed": 1,
+      "failure": "60-second timeout",
+      "initial_errors": [
+        "INFO     orchestrator.graph_runtime.dispatch:dispatch.py:2039 managed graph runner failed before finalization: planner nodes must have an accepted submit_graph_patch before submit; use patch rejection feedback to submit a corrected patch",
+        "INFO     orchestrator.graph_runtime.dispatch:dispatch.py:2039 managed graph runner failed before finalization: planner nodes must have an accepted submit_graph_patch before submit; use patch rejection feedback to submit a corrected patch",
+        "INFO     orchestrator.graph_runtime.dispatch:dispatch.py:2039 managed graph runner failed before finalization: planner nodes must have an accepted submit_graph_patch before submit; use patch rejection feedback to submit a corrected patch"
+      ],
+      "later_error": "INFO     orchestrator.graph_runtime.dispatch:dispatch.py:2039 managed graph runner failed before finalization: graph read model unavailable for run graph-dynamic-happy: graph_projection_checkpoint (recovery_tail_exceeds_bounded_cap)"
+    },
+    "focused_suite": {
+      "passed": 242,
+      "failed": 1,
+      "failure": "hatchling dependency download: DNS/network unavailable"
+    }
+  }
+}

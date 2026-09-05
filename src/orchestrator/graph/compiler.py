@@ -19,7 +19,7 @@ import hashlib
 import json
 import posixpath
 import re
-from typing import Any, cast
+from typing import Any
 
 from orchestrator.config.models import (
     AutoVerifyItemConfig,
@@ -50,6 +50,11 @@ from orchestrator.graph.models import (
     RoutineSnapshotRecord,
     RunContextRecord,
     SemanticSchemaDeclarationRecord,
+)
+from orchestrator.graph.reliable_plan_evaluation import (
+    ReliablePlanAssignmentCarrier,
+    ReliablePlanAssignmentRole,
+    reliable_plan_assignment_carrier,
 )
 
 
@@ -91,12 +96,46 @@ class _Compiler:
         self._source_path = source_path
         self._source_ref = source_ref
         self._run_config = dict(run_config or {})
+        self._reliable_plan_carrier = self._validated_reliable_plan_carrier()
         self._events: list[EventEnvelope] = []
         self._stem_counts = _task_stem_counts(routine)
         self._has_planner_step = any(step.kind == "planner" for step in routine.steps)
         self._dynamic_feature_inputs = _dynamic_feature_inputs(routine, self._run_config)
         self._cache_authority_policy = _cache_authority_policy(routine)
         self._cache_authority_hash = cache_authority_hash(self._cache_authority_policy)
+
+    def _validated_reliable_plan_carrier(self) -> ReliablePlanAssignmentCarrier | None:
+        skeleton_id = self._run_config.get("reliable_plan_skeleton_id")
+        if skeleton_id is None:
+            return None
+        selected_runner = self._run_config.get("reliable_plan_selected_runner_type")
+        if not isinstance(selected_runner, str):
+            raise ValueError("reliable-plan compilation requires controller-selected runner type")
+        return reliable_plan_assignment_carrier(
+            skeleton_id=str(skeleton_id),
+            arm=self._run_config.get("reliable_plan_model_assignments"),
+            selected_runner_type=selected_runner,
+        )
+
+    def _stamp_assignment(
+        self,
+        payload: dict[str, Any],
+        role: ReliablePlanAssignmentRole,
+    ) -> None:
+        carrier = self._reliable_plan_carrier
+        if carrier is None:
+            return
+        assignment = carrier.assignment_for(role)
+        payload.update(
+            {
+                "reliable_plan_assignment_carrier": carrier.model_dump(mode="json"),
+                "reliable_plan_assignment_role": role,
+                "reliable_plan_selected_runner_type": carrier.selected_runner_type,
+                "reliable_plan_skeleton_id": carrier.skeleton_id,
+                "runner_model_override": assignment.model,
+                "profile": assignment.profile.value,
+            }
+        )
 
     def compile(self) -> list[EventEnvelope]:
         self._create_root()
@@ -192,6 +231,21 @@ class _Compiler:
         }
         if self._has_planner_step:
             payload["planner_generation_budget"] = self._routine.planner_generation_budget
+        self._stamp_assignment(payload, "planner")
+        if self._reliable_plan_carrier is not None:
+            payload.update(
+                {
+                    "reliable_plan_one_horizon_authorized": bool(
+                        self._run_config.get("reliable_plan_one_horizon_authorized")
+                    ),
+                    "reliable_plan_remaining_horizons": self._run_config.get(
+                        "reliable_plan_remaining_horizons", 0
+                    ),
+                    "reliable_plan_qualification_evidence_hash": self._run_config.get(
+                        "reliable_plan_qualification_evidence_hash"
+                    ),
+                }
+            )
         self._node(payload)
         self._accept_record(run_context_record.model_dump(mode="json"))
 
@@ -409,39 +463,22 @@ class _Compiler:
         }
         skeleton_id = self._run_config.get("reliable_plan_skeleton_id")
         if isinstance(skeleton_id, str):
-            raw_assignments = self._run_config.get("reliable_plan_model_assignments")
-            assignments = (
-                cast(dict[str, object], raw_assignments)
-                if isinstance(raw_assignments, dict)
-                else {}
-            )
-            raw_planner_assignment = assignments.get("planner")
-            planner_assignment = (
-                cast(dict[str, object], raw_planner_assignment)
-                if isinstance(raw_planner_assignment, dict)
-                else {}
-            )
-            raw_successor_assignment = assignments.get("successor_planner")
-            successor_assignment = (
-                cast(dict[str, object], raw_successor_assignment)
-                if isinstance(raw_successor_assignment, dict)
-                else {}
-            )
             payload.update(
                 {
                     "reliable_plan_skeleton_id": skeleton_id,
                     "reliable_plan_one_horizon_authorized": bool(
                         self._run_config.get("reliable_plan_one_horizon_authorized")
                     ),
+                    "reliable_plan_remaining_horizons": self._run_config.get(
+                        "reliable_plan_remaining_horizons",
+                        1 if self._run_config.get("reliable_plan_one_horizon_authorized") else 0,
+                    ),
                     "reliable_plan_qualification_evidence_hash": self._run_config.get(
                         "reliable_plan_qualification_evidence_hash"
                     ),
-                    "runner_model_override": (planner_assignment.get("model")),
-                    "profile": (planner_assignment.get("profile")),
-                    "reliable_plan_successor_model": (successor_assignment.get("model")),
-                    "reliable_plan_successor_profile": (successor_assignment.get("profile")),
                 }
             )
+            self._stamp_assignment(payload, "planner")
         if self._dynamic_feature_inputs is not None:
             payload["dynamic_feature"] = self._dynamic_feature_inputs
         if step.child_routines:

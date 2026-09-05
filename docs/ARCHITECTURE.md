@@ -540,6 +540,14 @@ fence. A failed proof leaves the row in `STOPPING` with
 retry. Liveness replacement uses the same ordering, with runner-loss recovery
 instead of manual-cancellation recovery.
 
+Graceful server shutdown uses that same full fence rather than cancelling only
+the outer driver task. It binds `server_shutdown` recovery semantics before
+cancellation, awaits every runner-owned execution, drains the safe recovery and
+snapshot effects, proves owners and active leases absent, and only then records
+the recoverable `PAUSED/server_shutdown` workflow state. A replacement consumer
+can resume from the same database and worktree; recovery is complete before any
+new lease is granted.
+
 Controlled live recovery drills may arm one exact graph crash boundary through
 `ORCHESTRATOR_GRAPH_CRASH_BARRIER`. The value is a strict JSON object containing
 `schema_version: 1`, `authorization:
@@ -621,9 +629,12 @@ must pass before Luna successor planning may be enabled. Production issuance
 runs those scenarios server-side and stores an opaque, single-use qualification
 reference in `reliable_plan_qualifications`; `POST /api/runs` atomically binds
 that reference to one run, and the graph driver revalidates the binding before
-seeding the one-horizon capability into the initial planner. The created
-successor inherits the skeleton identity without the capability, so a second
-successor horizon is rejected by the controller. Caller-supplied authorization
+seeding the bounded sequential capability into the initial planner. The
+supported profile has a controller-owned two-horizon budget. Each successor
+inherits the skeleton and selected model/profile while the durable budget is
+decremented; each horizon may materialize exactly one effectful batch, and a
+successor may advance only to the next horizon after a passing predecessor
+report. A third successor is rejected by the controller. Caller-supplied authorization
 facts and copied, unknown, or already-consumed references cannot enable the
 gate. The validated arm assignments are also compiled into the trusted planner
 payload: the first planner receives its planner model and the authorized child
@@ -635,6 +646,21 @@ usage, and hydration facts independently of the bounded event tail. Live evaluat
 credential/server-gated API harness documented in
 `docs/dynamic-graph/dogfood-reliable-plan-evaluation.md`; it does not start a
 server or manufacture missing model evidence.
+
+The default-collected sequential product-path integration module enters through
+`POST /api/runs` and `POST /api/runs/{id}/start`, uses the durable event signal
+transport and consumer, and drives two serialized horizons through
+`GraphRunDriver`, `GraphController`, and `GraphDispatchExecutor` against a file
+SQLite database and real Git worktree. It asserts that the second effectful
+topology is absent until the first verifier and check are accepted, that the
+selected runner configuration reaches runtime construction unchanged, and that
+fresh verifier executions plus check receipts precede workflow completion. The
+same default-collected module covers an exact-evidence corrective cycle, public
+API cancellation while a runner is live, graceful shutdown and reconstruction
+before redispatch, and oversized semantic output exhausting exactly three
+attempts before a publicly observable `graph_blocked` pause. The superseded
+scripted dynamic-E2E module was removed so the merge gate has one authoritative
+joined product-path contract.
 
 ---
 

@@ -494,6 +494,7 @@ class RequestRunnerRecoveryCommand(StrictCommandPayload):
         "cancelled",
         "staged_artifact_missing",
         "staged_artifact_corrupt",
+        "submission_repair_exhausted",
     ]
     error_detail: str | None = Field(default=None, max_length=4_096)
     max_attempts: int = Field(default=0, ge=0)
@@ -659,7 +660,7 @@ class AgentDiedCommand(StrictCommandPayload):
     failure_class: Literal["infrastructure_failure", "invalid_plan_failure"] = (
         "infrastructure_failure"
     )
-    error_class: Literal["invalid_execution_contract"] | None = None
+    error_class: Literal["invalid_execution_contract", "submission_repair_exhausted"] | None = None
     # Set by the driver when its per-node orphan-recovery budget
     # (MAX_NODE_RECOVERIES_PER_DRIVE) is exhausted: the caller is stating that
     # it will not attempt recovery for this node again, so the kernel must

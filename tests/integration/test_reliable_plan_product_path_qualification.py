@@ -34,6 +34,7 @@ from orchestrator.graph import (
     leases_view,
     node_kinds_view,
     node_attempts_view,
+    node_payload_view,
     node_states_view,
     output_record_payloads_view,
     ready_nodes_view,
@@ -45,6 +46,7 @@ from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchExecutor,
     GraphEventStore,
+    OutboxDispatcher,
     OutboxItem,
     assemble_graph_dispatch_context,
     require_reliable_plan_qualification_for_run,
@@ -203,18 +205,7 @@ def _codex_messages(valid_content: dict[str, Any]) -> list[dict[str, Any]]:
         },
         tool_call(10, {"outputs": {}}),
         tool_call(11, {"outputs": {"semantic_artifact": {}}}),
-        tool_call(
-            12,
-            {
-                "outputs": {
-                    "semantic_artifact": {
-                        **valid_content,
-                        "producer_node_id": "spoofed-discovery",
-                    }
-                }
-            },
-        ),
-        tool_call(13, {"outputs": {"semantic_artifact": valid_content}}),
+        tool_call(12, {"outputs": {"semantic_artifact": valid_content}}),
         {
             "jsonrpc": "2.0",
             "method": "turn/completed",
@@ -228,6 +219,37 @@ def _codex_messages(valid_content: dict[str, Any]) -> list[dict[str, Any]]:
             },
         },
     ]
+
+
+def _codex_exhaustion_messages(valid_content: dict[str, Any]) -> list[dict[str, Any]]:
+    messages = _codex_messages(valid_content)[:3]
+
+    def tool_call(req_id: int, args: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "method": "item/tool/call",
+            "params": {"tool": "submit", "arguments": args},
+        }
+
+    messages.extend(
+        [
+            tool_call(10, {"outputs": {}}),
+            tool_call(11, {"outputs": {"semantic_artifact": {}}}),
+            tool_call(
+                12,
+                {
+                    "outputs": {
+                        "semantic_artifact": {
+                            **valid_content,
+                            "producer_node_id": "spoofed-discovery",
+                        }
+                    }
+                },
+            ),
+        ]
+    )
+    return messages
 
 
 def _init_git_repo(path: Path) -> None:
@@ -248,12 +270,432 @@ def _init_git_repo(path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_codex_product_seam_composes_mixed_owned_outputs_and_unblocks_verifier(
+    tmp_path: Path,
+) -> None:
+    engine = create_engine(tmp_path / "mixed-output-product-seam.db")
+    sessions = create_session_factory(engine)
+    await init_db(engine)
+    clock = FakeClock()
+    ids = SequentialIdGenerator()
+    controller = GraphController(sessions, clock, ids, auto_dispatch=False)
+    run_id = "mixed-output-product-seam"
+    worker_id = "worker-reliable-plan-semantic-revision"
+    verifier_id = "verifier-reliable-plan-semantic-revision"
+    candidate_id = "semantic-artifact-revision-40a6d711-semantic_artifact"
+    make_event = event_factory(run_id, "seed_compiled_events", clock, ids)
+    semantic_content = {
+        "batches": [
+            {
+                "batch_id": "batch-1",
+                "objective": "Revise the failed implementation plan.",
+                "acceptance": ["the failed grade is addressed"],
+            }
+        ]
+    }
+    worktree = tmp_path / "mixed-output-worktree"
+    _init_git_repo(worktree)
+    artifact_store = FilesystemArtifactStore(tmp_path / "mixed-output-artifacts")
+
+    async def observe_tool_response() -> None:
+        return None
+
+    try:
+        seeded = await controller.handle_command(
+            run_id,
+            0,
+            "seed_compiled_events",
+            {
+                "events": [
+                    make_event(
+                        "node_created",
+                        {
+                            "node_id": "routine-snapshot",
+                            "kind": "context",
+                            "state": "completed",
+                        },
+                    ),
+                    make_event(
+                        "output_record_accepted",
+                        {
+                            "record_id": "semantic-schema-plan-v1",
+                            "record_kind": "graph_record",
+                            "record_type": "semantic_schema_declaration",
+                            "producer_node_id": "routine-snapshot",
+                            "port": "semantic_schema_declaration",
+                            "schema": "SemanticSchemaDeclaration",
+                            "schema_version": 1,
+                            "value": {
+                                "schema_id": "reliable-plan-implementation-plan",
+                                "version": 1,
+                                "semantic_role": "implementation_plan",
+                                "json_schema": {
+                                    "type": "object",
+                                    "required": ["batches"],
+                                    "properties": {"batches": {"type": "array", "minItems": 1}},
+                                    "additionalProperties": False,
+                                },
+                                "authority": "routine_snapshot",
+                            },
+                        },
+                    ),
+                    make_event(
+                        "node_created",
+                        {
+                            "node_id": worker_id,
+                            "kind": "worker",
+                            "role": "fixer",
+                            "state": "planned",
+                            "task_region_id": "corrective_work_region",
+                            "attempt_number": 2,
+                            "candidate_id": candidate_id,
+                            "objective": "Revise the exact failed implementation-plan artifact.",
+                            "access_mode": "write",
+                            "effect_contract": "effectful_write",
+                            "acceptance": ["the failed plan-verification report is addressed"],
+                            "semantic_schema_id": "reliable-plan-implementation-plan",
+                            "semantic_schema_version": 1,
+                            "outputs": [
+                                {
+                                    "port": "candidate",
+                                    "direction": "output",
+                                    "schema": "ImplementationCandidate",
+                                    "required": True,
+                                },
+                                {
+                                    "port": "semantic_artifact",
+                                    "direction": "output",
+                                    "schema": "SemanticArtifact",
+                                    "required": True,
+                                },
+                            ],
+                        },
+                    ),
+                    make_event(
+                        "node_created",
+                        {
+                            "node_id": verifier_id,
+                            "kind": "verifier",
+                            "role": "verifier",
+                            "state": "planned",
+                            "task_region_id": "corrective_work_region",
+                            "inputs": [
+                                {
+                                    "port": "semantic_artifact",
+                                    "direction": "input",
+                                    "schema": "SemanticArtifact",
+                                    "required": True,
+                                }
+                            ],
+                            "outputs": [
+                                {
+                                    "port": "verification_report",
+                                    "direction": "output",
+                                    "schema": "VerificationReport",
+                                    "required": True,
+                                }
+                            ],
+                        },
+                    ),
+                    make_event(
+                        "edge_created",
+                        {
+                            "edge_id": "edge-revised-semantic-artifact-to-verifier",
+                            "from_node_id": worker_id,
+                            "from_port": "semantic_artifact",
+                            "to_node_id": verifier_id,
+                            "to_port": "semantic_artifact",
+                            "required": True,
+                            "accepted_record_selector": {
+                                "record_type": "semantic_artifact",
+                                "semantic_schema_id": "reliable-plan-implementation-plan",
+                                "semantic_schema_version": 1,
+                                "authority_status": "accepted",
+                            },
+                        },
+                    ),
+                ]
+            },
+        )
+        accepted = await controller.handle_command(run_id, seeded.projection_position, "accept_run")
+        started = await controller.handle_command(run_id, accepted.projection_position, "start")
+        scheduled = await controller.handle_command(
+            run_id,
+            started.projection_position,
+            "schedule_tick",
+            {
+                "max_grants": 1,
+                "lease_seconds": 60,
+                "base_snapshot_id": "baseline",
+                "priorities": {worker_id: 100},
+            },
+        )
+        dispatch_item = next(
+            item
+            for item in scheduled.outbox_items
+            if item.kind == "agent_dispatch" and item.payload.get("node_id") == worker_id
+        )
+        transport = _InjectedCodexTransport(
+            _codex_messages(semantic_content),
+            on_failed_tool_response=observe_tool_response,
+        )
+        executor = GraphDispatchExecutor(
+            sessions,
+            controller,
+            _SingleCodexFactory(CodexServerAgent(api_key=None, _transport=transport, _environ={})),
+            worktree_path=worktree,
+            artifact_store=artifact_store,
+        )
+
+        await executor.dispatch(dispatch_item)
+        await executor.wait_for_all()
+
+        async with sessions() as session:
+            events = await GraphEventStore(session).read_bounded_runtime_events(run_id)
+        assert transport.sent
+        thread_start = next(
+            message for message in transport.sent if message.get("method") == "thread/start"
+        )
+        submit_tool = next(
+            tool for tool in thread_start["params"]["dynamicTools"] if tool["name"] == "submit"
+        )
+        outputs_schema = submit_tool["inputSchema"]["properties"]["outputs"]
+        assert outputs_schema["required"] == ["semantic_artifact"]
+        assert set(outputs_schema["properties"]) == {"semantic_artifact"}
+
+        projection = await controller.read_projection(run_id)
+        records = [
+            record
+            for record in output_record_payloads_view(projection).values()
+            if record.producer_node_id == worker_id
+        ]
+        assert sorted(record.port for record in records) == ["candidate", "semantic_artifact"]
+        candidate = next(record for record in records if record.port == "candidate")
+        semantic = next(record for record in records if record.port == "semantic_artifact")
+        assert candidate.record_id == candidate_id
+        assert candidate.candidate_id == candidate_id
+        assert semantic.value.content == semantic_content
+        assert node_states_view(projection)[worker_id] == "completed"
+        assert node_states_view(projection)[verifier_id] in {"planned", "ready"}
+        assert input_bindings_view(projection)[verifier_id]["semantic_artifact"].record_ids == [
+            semantic.record_id
+        ]
+        assert not any(
+            lease.node_id == worker_id and lease.state == "active"
+            for lease in leases_view(projection).values()
+        )
+        attempts = [
+            attempt
+            for attempt in execution_attempts_view(projection).values()
+            if attempt.node_id == worker_id
+        ]
+        assert len(attempts) == 1
+        assert attempts[0].state == "finalized"
+        assert sum(event.event_type == "runner_submission_staged" for event in events) == 1
+        assert sum(event.event_type == "runner_execution_finalized" for event in events) == 1
+        assert not any(
+            event.event_type in {"runner_recovery_requested", "runtime_retry_scheduled"}
+            for event in events
+        )
+        verifier_scheduled = await controller.handle_command(
+            run_id,
+            await controller.current_position(run_id),
+            "schedule_tick",
+            {
+                "max_grants": 1,
+                "lease_seconds": 60,
+                "base_snapshot_id": "baseline",
+                "priorities": {verifier_id: 100},
+            },
+        )
+        assert any(
+            event.event_type == "lease_granted" and event.payload.get("node_id") == verifier_id
+            for event in verifier_scheduled.events
+        )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_codex_submit_repair_exhaustion_recovers_then_terminalizes(
+    tmp_path: Path,
+) -> None:
+    engine = create_engine(tmp_path / "codex-submit-repair-exhaustion.db")
+    sessions = create_session_factory(engine)
+    await init_db(engine)
+    clock = FakeClock()
+    ids = SequentialIdGenerator()
+    controller = GraphController(sessions, clock, ids, auto_dispatch=False)
+    run_id = "codex-submit-repair-exhaustion"
+    worker_id = "worker-discovery"
+    make_event = event_factory(run_id, "seed_compiled_events", clock, ids)
+    semantic_content = {
+        "batches": [
+            {
+                "batch_id": "batch-1",
+                "objective": "Produce a valid plan.",
+                "acceptance": ["plan is valid"],
+            }
+        ]
+    }
+    worktree = tmp_path / "codex-submit-repair-exhaustion-worktree"
+    _init_git_repo(worktree)
+    artifact_store = FilesystemArtifactStore(tmp_path / "codex-submit-repair-artifacts")
+
+    async def observe_rejection() -> None:
+        return None
+
+    try:
+        seeded = await controller.handle_command(
+            run_id,
+            0,
+            "seed_compiled_events",
+            {
+                "events": [
+                    make_event(
+                        "node_created",
+                        {
+                            "node_id": "routine-snapshot",
+                            "kind": "context",
+                            "state": "completed",
+                        },
+                    ),
+                    make_event(
+                        "output_record_accepted",
+                        {
+                            "record_id": "semantic-schema-plan-v1",
+                            "record_kind": "graph_record",
+                            "record_type": "semantic_schema_declaration",
+                            "producer_node_id": "routine-snapshot",
+                            "port": "semantic_schema_declaration",
+                            "schema": "SemanticSchemaDeclaration",
+                            "schema_version": 1,
+                            "value": {
+                                "schema_id": "reliable-plan-implementation-plan",
+                                "version": 1,
+                                "semantic_role": "implementation_plan",
+                                "json_schema": {
+                                    "type": "object",
+                                    "required": ["batches"],
+                                    "properties": {"batches": {"type": "array", "minItems": 1}},
+                                    "additionalProperties": False,
+                                },
+                                "authority": "routine_snapshot",
+                            },
+                        },
+                    ),
+                    make_event(
+                        "node_created",
+                        {
+                            "node_id": worker_id,
+                            "kind": "worker",
+                            "role": "discovery",
+                            "state": "planned",
+                            "attempt_number": 1,
+                            "max_attempts": 3,
+                            "objective": "Discover a bounded implementation plan.",
+                            "access_mode": "read_only",
+                            "effect_contract": "read_only_semantic",
+                            "acceptance": ["plan is valid"],
+                            "semantic_schema_id": "reliable-plan-implementation-plan",
+                            "semantic_schema_version": 1,
+                            "outputs": [
+                                {
+                                    "port": "semantic_artifact",
+                                    "direction": "output",
+                                    "schema": "SemanticArtifact",
+                                    "required": True,
+                                }
+                            ],
+                        },
+                    ),
+                ]
+            },
+        )
+        accepted = await controller.handle_command(run_id, seeded.projection_position, "accept_run")
+        started = await controller.handle_command(run_id, accepted.projection_position, "start")
+        scheduled = await controller.handle_command(
+            run_id,
+            started.projection_position,
+            "schedule_tick",
+            {
+                "max_grants": 1,
+                "lease_seconds": 60,
+                "base_snapshot_id": "baseline",
+                "priorities": {worker_id: 100},
+            },
+        )
+        dispatch_item = next(
+            item for item in scheduled.outbox_items if item.kind == "agent_dispatch"
+        )
+        transport = _InjectedCodexTransport(
+            _codex_exhaustion_messages(semantic_content),
+            on_failed_tool_response=observe_rejection,
+        )
+        executor = GraphDispatchExecutor(
+            sessions,
+            controller,
+            _SingleCodexFactory(CodexServerAgent(api_key=None, _transport=transport, _environ={})),
+            worktree_path=worktree,
+            artifact_store=artifact_store,
+        )
+
+        await executor.dispatch(dispatch_item)
+        await executor.wait_for_all()
+        before_recovery = await controller.read_projection(run_id)
+        attempt = next(iter(execution_attempts_view(before_recovery).values()))
+        assert attempt.state == "recovery_requested"
+        assert attempt.recovery_reason == "submission_repair_exhausted"
+        assert attempt.recovery_error_detail is not None
+        assert "first_cause=" in attempt.recovery_error_detail
+        assert "missing required output port semantic_artifact" in attempt.recovery_error_detail
+        assert "last_cause=" in attempt.recovery_error_detail
+        assert "trusted identity fields are not authorable" in attempt.recovery_error_detail
+        assert "operator_action=" in attempt.recovery_error_detail
+
+        dispatcher = OutboxDispatcher(sessions, executor, clock)
+        completed = await dispatcher.dispatch_pending(
+            run_id=run_id,
+            allowed_kinds=frozenset({"runner_recovery"}),
+        )
+        assert [item.kind for item in completed] == ["runner_recovery"]
+
+        projection = await controller.read_projection(run_id)
+        recovered_attempt = execution_attempts_view(projection)[attempt.execution_id]
+        assert recovered_attempt.state == "recovered"
+        assert node_states_view(projection)[worker_id] == "failed"
+        assert all(lease.state != "active" for lease in leases_view(projection).values())
+        async with sessions() as session:
+            events = await GraphEventStore(session).read_run(run_id)
+        terminal = next(
+            event
+            for event in events
+            if event.event_type == "node_state_changed"
+            and event.payload.get("trigger") == "submission_repair_exhausted"
+        )
+        assert terminal.payload["new_state"] == "failed"
+        failure = next(
+            event
+            for event in events
+            if event.event_type == "output_record_accepted"
+            and event.payload.get("record_type") == "failure_record"
+            and event.payload.get("value", {}).get("error_class") == "submission_repair_exhausted"
+        )
+        assert failure.payload["value"]["retryable"] is False
+        assert not any(event.event_type == "runtime_retry_scheduled" for event in events)
+        assert sum(event.event_type == "agent_dispatch_requested" for event in events) == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.timeout(60)
 async def test_production_reliable_plan_controller_path_gates_first_effectful_lease(
     tmp_path: Path,
 ) -> None:
     routine_path = Path("routines/dynamic-graph-feature/routine.yaml")
     routine = load_routine_from_path(routine_path)
+    evaluation = ReliablePlanEvaluationConfig.model_validate_json(FIXTURE.read_text())
 
     async def run_arm(
         outcome: str,
@@ -276,7 +718,9 @@ async def test_production_reliable_plan_controller_path_gates_first_effectful_le
             run_config={
                 "feature_spec_path": "docs/spec.md",
                 "acceptance_command": "uv run pytest",
-                "reliable_plan_skeleton_id": "reliable-plan-v1",
+                "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
+                "reliable_plan_selected_runner_type": "codex_server",
+                "reliable_plan_model_assignments": evaluation.luna_arm.model_dump(mode="json"),
                 "reliable_plan_one_horizon_authorized": True,
             },
         )
@@ -355,6 +799,24 @@ async def test_production_reliable_plan_controller_path_gates_first_effectful_le
             .get("planner-successor", {})
             .get("verification_report")
         )
+        assignment_expectations = {
+            "worker-discovery": ("discovery_worker", "gpt-5.6-luna", "summarizer"),
+            "verifier-plan": ("verifier", "gpt-5.6-sol", "coder"),
+            "planner-successor": ("successor_planner", "gpt-5.6-luna", "architect"),
+        }
+        planner_assignment = node_payload_view(projection, "planner-s-01")
+        assert planner_assignment is not None
+        for node_id, (role, model, profile) in assignment_expectations.items():
+            assigned = node_payload_view(projection, node_id)
+            assert assigned is not None
+            assert assigned["reliable_plan_assignment_role"] == role
+            assert assigned["runner_model_override"] == model
+            assert assigned["profile"] == profile
+            assert assigned["reliable_plan_selected_runner_type"] == "codex_server"
+            assert (
+                assigned["reliable_plan_assignment_carrier"]
+                == (planner_assignment["reliable_plan_assignment_carrier"])
+            )
 
         async def lease(node_id: str) -> tuple[int, dict[str, object]]:
             nonlocal position
@@ -617,7 +1079,7 @@ async def test_production_reliable_plan_controller_path_gates_first_effectful_le
                     "discovery_lease_released_events": 0,
                 }
             ]
-            * 3
+            * 2
         )
         if staged_payload_fault is not None:
             assert staged_fault_snapshots == [
@@ -674,7 +1136,7 @@ async def test_production_reliable_plan_controller_path_gates_first_effectful_le
         tool_responses = {
             message["id"]: message["result"]
             for message in transport.sent
-            if message.get("id") in {10, 11, 12, 13}
+            if message.get("id") in {10, 11, 12}
         }
         assert tool_responses[10]["success"] is False
         assert (
@@ -683,11 +1145,7 @@ async def test_production_reliable_plan_controller_path_gates_first_effectful_le
             "reliable-plan-implementation-plan@1" in tool_responses[10]["contentItems"][0]["text"]
         )
         assert "content validation failed" in tool_responses[11]["contentItems"][0]["text"]
-        assert (
-            "trusted identity fields are not authorable: ['producer_node_id']"
-            in tool_responses[12]["contentItems"][0]["text"]
-        )
-        assert tool_responses[13]["success"] is True
+        assert tool_responses[12]["success"] is True
         thread_start = next(
             message for message in transport.sent if message.get("method") == "thread/start"
         )
@@ -1078,8 +1536,10 @@ async def test_real_appeal_dispatch_context_and_callback_accept_recovery_plan(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("historical_max_attempts", ["omitted", 0])
 async def test_reconstructed_controller_honors_durable_three_attempt_retry_budget(
     tmp_path: Path,
+    historical_max_attempts: str | int,
 ) -> None:
     """The persistent controller boundary survives the same reconstruction as a driver restart.
 
@@ -1088,12 +1548,13 @@ async def test_reconstructed_controller_honors_durable_three_attempt_retry_budge
     controller command, so recreating that controller before every attempt is
     the closest deterministic file-backed proof of the restart invariant.
     """
-    engine = create_engine(tmp_path / "durable-retry-reconstruction.db")
+    suffix = str(historical_max_attempts)
+    engine = create_engine(tmp_path / f"durable-retry-reconstruction-{suffix}.db")
     sessions = create_session_factory(engine)
     await init_db(engine)
     clock = FakeClock()
     ids = SequentialIdGenerator()
-    run_id = "durable-retry-reconstruction"
+    run_id = f"durable-retry-reconstruction-{suffix}"
     make_event = event_factory(run_id, "seed_compiled_events", clock, ids)
     controller = GraphController(sessions, clock, ids, auto_dispatch=False)
     health_record = {
@@ -1127,6 +1588,18 @@ async def test_reconstructed_controller_honors_durable_three_attempt_retry_budge
         "evaluated_record_ids": [],
     }
     try:
+        worker_node: dict[str, object] = {
+            "node_id": "worker-retry",
+            "kind": "worker",
+            "role": "builder",
+            "state": "planned",
+            "attempt_number": 1,
+            "objective": "Exercise bounded runtime recovery.",
+            "access_mode": "read_only",
+            "acceptance": ["retry is bounded"],
+        }
+        if historical_max_attempts != "omitted":
+            worker_node["max_attempts"] = historical_max_attempts
         seeded = await controller.handle_command(
             run_id,
             0,
@@ -1137,20 +1610,7 @@ async def test_reconstructed_controller_honors_durable_three_attempt_retry_budge
                         "node_created",
                         {"node_id": "health-check", "kind": "check", "state": "completed"},
                     ),
-                    make_event(
-                        "node_created",
-                        {
-                            "node_id": "worker-retry",
-                            "kind": "worker",
-                            "role": "builder",
-                            "state": "planned",
-                            "attempt_number": 1,
-                            "max_attempts": 3,
-                            "objective": "Exercise bounded runtime recovery.",
-                            "access_mode": "read_only",
-                            "acceptance": ["retry is bounded"],
-                        },
-                    ),
+                    make_event("node_created", worker_node),
                     make_event("output_record_accepted", health_record),
                 ]
             },
@@ -1192,7 +1652,6 @@ async def test_reconstructed_controller_honors_durable_three_attempt_retry_budge
                     "execution_id": grant["execution_id"],
                     "reason": "callback contract conflict",
                     "health_evidence_record_id": "health-check-passed",
-                    "max_attempts": 3,
                 },
             )
             retry_events.extend(
@@ -1520,12 +1979,28 @@ async def test_run_api_consumes_server_qualification_once_and_rejects_forgery(
         "repo_name": git_repo.name,
         "branch": "main",
         "execution_mode": "graph",
+        "agent_runner_type": "codex_server",
         "config": {
             "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
             "reliable_plan_model_assignments": evaluation.luna_arm.model_dump(mode="json"),
         },
     }
 
+    mismatched = await client.post(
+        "/api/runs",
+        json={
+            **base_request,
+            "agent_runner_type": "cli_subprocess",
+            "reliable_plan_qualification_reference": reference,
+        },
+    )
+    assert mismatched.status_code == 422
+    assert mismatched.json()["detail"] == (
+        "reliable-plan assignments must match the selected runner"
+    )
+
+    # Runner validation happens before grant consumption, so the same grant
+    # remains valid for a corrected request.
     accepted = await client.post(
         "/api/runs",
         json={
@@ -1545,8 +2020,13 @@ async def test_run_api_consumes_server_qualification_once_and_rejects_forgery(
             session,
             run_id=run_id,
             run_config=run.config,
+            selected_runner_type=run.agent_runner_type.value,
         )
-    seed_config = verified_reliable_plan_seed_config(run.config, facts)
+    seed_config = verified_reliable_plan_seed_config(
+        run.config,
+        facts,
+        selected_runner_type=run.agent_runner_type.value,
+    )
     compiled = compile_routine(
         RoutineConfig.model_validate(run.routine_embedded),
         FakeClock(),
@@ -1661,7 +2141,8 @@ async def test_run_api_consumes_server_qualification_once_and_rejects_forgery(
     assert successor_created.payload["runner_model_override"] == (
         evaluation.luna_arm.successor_planner.model
     )
-    assert successor_created.payload["reliable_plan_one_horizon_authorized"] is False
+    assert successor_created.payload["reliable_plan_one_horizon_authorized"] is True
+    assert successor_created.payload["reliable_plan_remaining_horizons"] == 2
     second = await controller.handle_command(
         run_id,
         first.projection_position,
@@ -1677,7 +2158,7 @@ async def test_run_api_consumes_server_qualification_once_and_rejects_forgery(
                         "kind": "planner",
                         "role": "planner",
                         "state": "planned",
-                        "planning_horizon": 1,
+                        "planning_horizon": 2,
                     },
                 }
             ],
@@ -1691,7 +2172,8 @@ async def test_run_api_consumes_server_qualification_once_and_rejects_forgery(
     )
     assert any(
         event.event_type == "graph_patch_rejected"
-        and event.payload["reason"] == "reliable_plan_successor_planning_not_authorized"
+        and "cannot advance without materializing its bounded effectful batch"
+        in event.payload["reason"]
         for event in second.events
     )
 

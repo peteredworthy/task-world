@@ -52,11 +52,11 @@ repos:
         files: ^(src/orchestrator/config/enums\.py|ui/src/types/generated-enums\.ts)$
       - id: ui-lint
         name: ui-lint
-        entry: bash -c 'test -d ui/node_modules && npm --prefix ui run lint || echo "Skipping ui-lint (node_modules not installed)"'
+        entry: bash -c 'if test -d ui/node_modules; then npm --prefix ui run lint; else echo "Skipping ui-lint (node_modules not installed)"; fi'
         language: system
         pass_filenames: false
       - id: ui-typecheck
         name: ui-typecheck
-        entry: bash -c 'test -d ui/node_modules && npm --prefix ui run typecheck || echo "Skipping ui-typecheck (node_modules not installed)"'
+        entry: bash -c 'if test -d ui/node_modules; then npm --prefix ui run typecheck; else echo "Skipping ui-typecheck (node_modules not installed)"; fi'
         language: system
         pass_filenames: false

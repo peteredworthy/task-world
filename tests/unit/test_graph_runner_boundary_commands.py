@@ -676,6 +676,75 @@ def test_boundary_mismatch_recovery_fails_when_attempts_are_exhausted() -> None:
     assert node_states_view(projection).get("node") == "failed"
 
 
+def test_submission_repair_exhaustion_restores_then_fails_without_retry() -> None:
+    projection = _staged_projection(attempt_number=1)
+    detail = (
+        "submission repair exhausted after 3 attempts; first_cause=missing output; "
+        "last_cause=invalid value; operator_action=repair contract before explicit retry"
+    )
+    requested = _apply(
+        projection,
+        "request_runner_recovery",
+        {
+            "execution_id": "exec",
+            "node_id": "node",
+            "lease_id": "lease",
+            "lease_generation": 1,
+            "reason": "submission_repair_exhausted",
+            "error_detail": detail,
+            "final_tree_sha": OID,
+            "boundary_hash": boundary_manifest_hash(OID, []),
+            "boundary_entries": [],
+        },
+    )
+    assert [event.event_type for event in requested] == ["runner_recovery_requested"]
+    projection = reduce_event(projection, requested[0])
+    request = requested[0].payload
+    proof = recovery_proof_hash(
+        execution_id="exec",
+        recovery_id=request["recovery_id"],
+        node_id="node",
+        lease_id="lease",
+        lease_generation=1,
+        baseline_snapshot_id=request["baseline_snapshot_id"],
+        baseline_tree_sha=request["baseline_tree_sha"],
+        requested_paths=tuple(request["paths"]),
+        restored_paths=tuple(request["paths"]),
+        removed_paths=(),
+    )
+
+    completed = _apply(
+        projection,
+        "complete_runner_recovery",
+        {
+            "execution_id": "exec",
+            "recovery_id": request["recovery_id"],
+            "node_id": "node",
+            "lease_id": "lease",
+            "lease_generation": 1,
+            "baseline_snapshot_id": request["baseline_snapshot_id"],
+            "baseline_tree_sha": request["baseline_tree_sha"],
+            "requested_paths": request["paths"],
+            "proof_hash": proof,
+            "restored_paths": request["paths"],
+            "removed_paths": [],
+        },
+    )
+
+    assert not any(event.event_type == "runtime_retry_scheduled" for event in completed)
+    failure = next(
+        event
+        for event in completed
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "failure_record"
+    )
+    assert failure.payload["value"]["error_class"] == "submission_repair_exhausted"
+    assert failure.payload["value"]["reason"] == detail
+    terminal = next(event for event in completed if event.event_type == "node_state_changed")
+    assert terminal.payload["new_state"] == "failed"
+    assert terminal.payload["trigger"] == "submission_repair_exhausted"
+
+
 def test_runner_boundary_commands_stage_without_publication_then_request_proven_recovery() -> None:
     projection = _projection()
     baseline = _apply(

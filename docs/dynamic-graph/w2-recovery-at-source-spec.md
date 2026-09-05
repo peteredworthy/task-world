@@ -68,15 +68,24 @@ change — never weaken an assertion about which events exist. *Critical.*
 - Watch ordering hazards: emitting terminalization inside callback application changes
   the positions later commands see — `expected_position` flows in tests will shift.
 
-## Acceptance
+## Historical acceptance and current regression command
+
+The original W2 acceptance command named the now-retired
+`tests/integration/test_graph_dynamic_e2e.py`. W2 is closed; do not recreate
+that fixture. Its current joined and focused coverage is exercised with:
 
 ```
 uv run pytest tests/unit/test_graph_commands.py tests/unit/test_command_handlers.py \
   tests/unit/test_graph_recovery_selection.py tests/unit/test_scheduler.py \
+  tests/unit/test_graph_runner_boundary_commands.py::test_runner_recovery_completes_non_gap_planner_with_accepted_patch \
+  tests/unit/test_graph_dispatch_on_output.py::test_gap_planner_submit_emits_classified_gap_after_accepted_nonempty_patch \
+  tests/unit/test_graph_dispatch_on_output.py::test_gap_planner_submit_emits_no_gap_after_accepted_no_op_patch \
   tests/integration/test_graph_fr12_acceptance.py \
   tests/integration/test_graph_fr16_acceptance.py \
-  tests/integration/test_graph_dynamic_e2e.py -q
+  tests/integration/test_graph_sequential_product_path.py -q
 ```
 
-All pass, plus new R3 idempotency test and R5 no-reconcile assertion. Then run the full
-graph suite (`uv run pytest tests -k graph -q`) before merging.
+The retained tests establish source-command behavior, accepted-patch recovery,
+gap/no-gap output, and joined terminal behavior without depending on the stale
+scripted topology. Run the full graph suite (`uv run pytest tests -k graph -q`)
+before merging changes to this area.

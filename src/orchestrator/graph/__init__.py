@@ -125,6 +125,7 @@ from orchestrator.graph.reliable_plan_evaluation import (
     ReliablePlanComparisonDeltas,
     ReliablePlanCorrectnessMetrics,
     ReliablePlanEvaluationArm,
+    ReliablePlanAssignmentCarrier,
     ReliablePlanEvaluationConfig,
     ReliablePlanEvaluationResult,
     ReliablePlanGraphShapeMetrics,
@@ -148,6 +149,7 @@ from orchestrator.graph.reliable_plan_evaluation import (
     require_reliable_plan_one_horizon_authorization,
     run_reliable_plan_scenarios,
     serialize_authorized_reliable_plan_run_config,
+    reliable_plan_assignment_carrier,
 )
 from orchestrator.graph.models import (
     AcceptedOutputRecordPayload,
@@ -296,6 +298,7 @@ from orchestrator.graph.semantic_applicability import (
     WriteWorkerSemanticApplicability,
     accepted_declared_batch_ids,
     classify_write_worker_semantics,
+    correction_superseded_task_region_id,
 )
 from orchestrator.graph.projection_collections import (
     FrozenJsonValue,
@@ -497,6 +500,13 @@ from orchestrator.graph.scheduler import (
     claims_conflict,
     evaluate_readiness,
     schedule,
+)
+from orchestrator.graph.retry_policy import (
+    DEFAULT_EXECUTABLE_NODE_MAX_ATTEMPTS,
+    EXECUTABLE_NODE_KINDS,
+    effective_node_attempt_number,
+    effective_node_max_attempts,
+    is_executable_node_kind,
 )
 from orchestrator.graph.store import DuplicateEventError, InMemoryEventStore
 
@@ -750,6 +760,11 @@ __all__ = [
     "node_preconditions_view",
     "node_roles_view",
     "node_states_view",
+    "DEFAULT_EXECUTABLE_NODE_MAX_ATTEMPTS",
+    "EXECUTABLE_NODE_KINDS",
+    "effective_node_attempt_number",
+    "effective_node_max_attempts",
+    "is_executable_node_kind",
     "node_task_regions_view",
     "node_base_snapshot_selections_view",
     "node_resource_claims_view",
@@ -816,6 +831,7 @@ __all__ = [
     "ReliablePlanComparisonDeltas",
     "ReliablePlanCorrectnessMetrics",
     "ReliablePlanEvaluationArm",
+    "ReliablePlanAssignmentCarrier",
     "ReliablePlanEvaluationConfig",
     "ReliablePlanEvaluationResult",
     "ReliablePlanGraphShapeMetrics",
@@ -830,6 +846,7 @@ __all__ = [
     "ReliablePlanQualificationAuthorityFacts",
     "ReliablePlanQualificationGrant",
     "ReliablePlanQualificationReceipt",
+    "reliable_plan_assignment_carrier",
     "ReliablePlanUsageMetrics",
     "evaluate_reliable_plan_projection",
     "authorize_reliable_plan_one_horizon",
@@ -869,6 +886,7 @@ __all__ = [
     "WriteWorkerSemanticApplicability",
     "accepted_declared_batch_ids",
     "classify_write_worker_semantics",
+    "correction_superseded_task_region_id",
     "validate_semantic_artifact_content",
     "resource_claim_dicts",
     "AnalysisSummaryRecord",

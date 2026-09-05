@@ -225,7 +225,24 @@ class SignalConsumer:
             except asyncio.CancelledError:
                 pass
         for run_id in tuple(self._graph_driver_tasks):
-            await self._quiesce_graph_run(run_id, server_shutdown=True)
+            # Shutdown is a lifecycle transition, not merely cancellation of
+            # the outer driver task.  Fence new admission, cancel the exact
+            # runner-owned task, drain its durable recovery effects, and prove
+            # that no owner or active lease remains before exposing PAUSED.
+            await self._quiesce_graph_lifecycle(
+                run_id,
+                reason="server_shutdown",
+                runner_loss=True,
+                retry_after_recovery=True,
+            )
+            from orchestrator.workflow.graph_driver import apply_graph_server_shutdown_pause
+
+            await apply_graph_server_shutdown_pause(
+                self._session_factory,
+                self._create_service,
+                run_id,
+                journal_max_bytes=self._journal_max_bytes,
+            )
 
     async def _graph_reconcile_loop(self) -> None:
         """Periodically recover graph rows that lost their in-process driver."""

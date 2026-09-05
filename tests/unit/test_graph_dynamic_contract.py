@@ -4,7 +4,7 @@ These pin the patch-validation rules documented in
 ``docs/graph-approach/dynamic-graph-contract.md`` (§2-§5) so the structural
 contract the DG-5.1 saga discovered cannot silently regress. End-to-end binding,
 completion, and the task-region footgun (§7) are covered by
-``tests/integration/test_graph_dynamic_e2e.py``.
+``tests/integration/test_graph_sequential_product_path.py``.
 """
 
 from __future__ import annotations

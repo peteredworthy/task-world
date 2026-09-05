@@ -88,6 +88,7 @@ from orchestrator.graph import (
     ReliablePlanEvaluationArm,
     ReliablePlanQualificationGrant,
     canonical_reliable_plan_scenario_manifest,
+    reliable_plan_assignment_carrier,
 )
 from orchestrator.graph_runtime import (
     consume_reliable_plan_qualification,
@@ -721,6 +722,22 @@ async def create_run(
             **run.config,
             "reliable_plan_model_assignments": assignments.model_dump(mode="json"),
         }
+        if run.agent_runner_type is None:
+            raise HTTPException(
+                status_code=422,
+                detail="reliable-plan skeleton requires a selected runner",
+            )
+        try:
+            reliable_plan_assignment_carrier(
+                skeleton_id=skeleton_id,
+                arm=assignments,
+                selected_runner_type=run.agent_runner_type.value,
+            )
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail="reliable-plan assignments must match the selected runner",
+            ) from exc
         try:
             facts = await consume_reliable_plan_qualification(
                 session,
