@@ -34,6 +34,7 @@ from orchestrator.git import (
     get_agent_cache_write_paths,
     get_worktree_git_write_paths,
 )
+from orchestrator.runners.errors import SubmissionRejectedError
 from orchestrator.runners.agents.codex.common import (
     CODEX_SERVER_TOOL_ALLOWLIST,
     JsonRpcTransport,
@@ -110,7 +111,7 @@ def _sanitize_transport_diagnostic(text: str, tmp_codex_home: Path | None) -> st
 
 
 def _is_submit_callback_rejection(tool_name: str, exc: Exception) -> bool:
-    return tool_name == "submit" and str(exc).startswith("submit callback rejected:")
+    return tool_name == "submit" and isinstance(exc, SubmissionRejectedError)
 
 
 def _transport_failure_diagnostic(

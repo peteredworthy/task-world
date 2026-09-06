@@ -25,6 +25,7 @@ from orchestrator.runners.errors import (
     AgentExecutionError,
     AgentNotAvailableError,
     AgentRateLimitError,
+    SubmissionRejectedError,
 )
 from orchestrator.runners.mcp_scope import (
     resolve_mcp_server_cwd,
@@ -1086,15 +1087,11 @@ class CLIAgent:
             try:
                 acknowledgement = await empty_submit()
                 if acknowledgement is not None and acknowledgement.disposition == "rejected":
-                    raise ValueError(
-                        f"submit callback rejected: {acknowledgement.model_dump_json()}"
-                    )
+                    raise SubmissionRejectedError(acknowledgement)
                 return fix_lines
             except WorktreeCommitError as exc:
                 rejection = exc
-            except ValueError as exc:
-                if not str(exc).startswith("submit callback rejected:"):
-                    raise
+            except SubmissionRejectedError as exc:
                 rejection = exc
             if attempts >= self._max_commit_fix_attempts:
                 raise rejection

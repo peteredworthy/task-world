@@ -60,6 +60,7 @@ from orchestrator.graph.models import (
     SupportEvidencePayload,
     VerificationFailedPayload,
     VerificationPassedPayload,
+    ValidationEnvironmentBlockageResolutionPayload,
 )
 
 
@@ -126,6 +127,8 @@ INTERNAL_EVENT_TYPES_BY_PRODUCER: MappingProxyType[str, frozenset[str]] = Mappin
                 "support_evidence_recorded",
                 "verification_failed",
                 "verification_passed",
+                "validation_environment_blockage_resolution_requested",
+                "validation_environment_blockage_resolved",
             }
         ),
         "graph_runtime_controller": frozenset({"agent_dispatch_requested"}),
@@ -194,6 +197,12 @@ EVENT_PAYLOAD_MODELS: MappingProxyType[str, type[BaseModel]] = MappingProxyType(
         "support_evidence_recorded": SupportEvidencePayload,
         "verification_passed": VerificationPassedPayload,
         "verification_failed": VerificationFailedPayload,
+        "validation_environment_blockage_resolution_requested": (
+            ValidationEnvironmentBlockageResolutionPayload
+        ),
+        "validation_environment_blockage_resolved": (
+            ValidationEnvironmentBlockageResolutionPayload
+        ),
     }
 )
 

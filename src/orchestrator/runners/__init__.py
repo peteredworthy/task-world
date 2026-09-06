@@ -6,7 +6,11 @@ from typing import TYPE_CHECKING
 
 # Agent interface and types
 from orchestrator.runners.interface import AgentRunner
-from orchestrator.runners.errors import AgentNotAvailableError, SubmissionRepairExhaustedError
+from orchestrator.runners.errors import (
+    AgentNotAvailableError,
+    SubmissionRejectedError,
+    SubmissionRepairExhaustedError,
+)
 from orchestrator.runners.types import (
     AgentMetadataCallback,
     AgentRunnerInfo,
@@ -21,6 +25,8 @@ from orchestrator.runners.types import (
     RunnerRuntimeObservationCapability,
     SubmissionContract,
     SubmissionAcknowledgement,
+    SubmissionRejectionCategory,
+    SubmissionRejectionEvidence,
     SubmissionOutputContract,
     SubmitCallback,
 )
@@ -260,6 +266,7 @@ __all__ = [
     # Core
     "AgentRunner",
     "SubmissionRepairExhaustedError",
+    "SubmissionRejectedError",
     "AgentNotAvailableError",
     "AgentMetadataCallback",
     "AgentRunnerInfo",
@@ -269,6 +276,8 @@ __all__ = [
     "ExecutionContext",
     "SubmissionContract",
     "SubmissionAcknowledgement",
+    "SubmissionRejectionCategory",
+    "SubmissionRejectionEvidence",
     "SubmissionOutputContract",
     "submission_prompt_instruction",
     "submission_tool_input_schema",

@@ -10,12 +10,14 @@ from orchestrator.graph._commands import (
     failure_record_payload,
 )
 from orchestrator.graph.command_models import (
+    CompleteValidationEnvironmentBlockageResolutionCommand,
     CompleteRunnerRecoveryCommand,
     FinalizeRunnerExecutionCommand,
     GraphCommandContext,
     RecordRunnerBaselineCommand,
     RecordManagedSnapshotCleanupAppliedCommand,
     RequestRunnerRecoveryCommand,
+    ResolveValidationEnvironmentBlockageCommand,
     StageRunnerSubmissionCommand,
     WitnessRunnerCompletionCommand,
 )
@@ -24,6 +26,7 @@ from orchestrator.graph.projection_collections import thaw_json
 from orchestrator.graph.projection_models import GraphProjection
 from orchestrator.graph.projection_queries import (
     execution_attempts_view,
+    leases_view,
     node_attempts_view,
     node_max_attempts_view,
 )
@@ -653,6 +656,7 @@ def handle_request_runner_recovery(
                 attempt.recovery_id == recovery_id
                 and attempt.recovery_reason == payload.reason
                 and attempt.recovery_error_detail == payload.error_detail
+                and attempt.recovery_first_error_detail == payload.first_error_detail
                 and attempt.recovery_max_attempts == effective_max_attempts
                 and attempt.retry_after_recovery == payload.retry_after_recovery
                 and attempt.node_id == payload.node_id
@@ -687,6 +691,7 @@ def handle_request_runner_recovery(
                 "lease_generation": attempt.lease_generation,
                 "reason": payload.reason,
                 "error_detail": payload.error_detail,
+                "first_error_detail": payload.first_error_detail,
                 "max_attempts": effective_max_attempts,
                 "retry_after_recovery": payload.retry_after_recovery,
                 "recovery_snapshot_id": payload.recovery_snapshot_id,
@@ -796,8 +801,43 @@ def handle_complete_runner_recovery(
         "runner_died",
         "staged_artifact_missing",
         "staged_artifact_corrupt",
+        "submission_format_rejected",
+        "candidate_check_failed",
     } or (attempt.recovery_reason == "cancelled" and attempt.retry_after_recovery)
-    if attempt.recovery_reason == "submission_repair_exhausted":
+    if attempt.recovery_reason == "validation_environment_blocked":
+        reason = attempt.recovery_error_detail or "submission validation environment blocked"
+        lifecycle_events.extend(
+            [
+                make_event(
+                    "output_record_accepted",
+                    failure_record_payload(
+                        node_id=attempt.node_id,
+                        phase="submission",
+                        failure_class="infrastructure_failure",
+                        error_class="validation_environment_blocked",
+                        retryable=False,
+                        lease_id=attempt.lease_id,
+                        execution_id=attempt.execution_id,
+                        generation=attempt.lease_generation,
+                        reason=reason,
+                        metadata={
+                            "rejected_candidate_snapshot_id": attempt.recovery_snapshot_id,
+                            "rejected_candidate_snapshot_ref": attempt.recovery_snapshot_ref,
+                        },
+                    ),
+                ),
+                make_event(
+                    "node_state_changed",
+                    {
+                        "node_id": attempt.node_id,
+                        "new_state": "failed",
+                        "trigger": "validation_environment_blocked",
+                        "reason": reason,
+                    },
+                ),
+            ]
+        )
+    elif attempt.recovery_reason == "submission_repair_exhausted":
         reason = attempt.recovery_error_detail or "submission repair exhausted"
         lifecycle_events.extend(
             [
@@ -900,7 +940,18 @@ def handle_complete_runner_recovery(
         # A recovered candidate remains operator-inspectable. Its exact staged
         # ref and CAS identity are retained; only a later explicit disposition
         # policy may garbage-collect them.
-        *_snapshot_cleanup_events(make_event, attempt, retain_staged_snapshot=True),
+        *_snapshot_cleanup_events(
+            make_event,
+            attempt,
+            retain_staged_snapshot=True,
+            retain_recovery_snapshot=attempt.recovery_reason
+            in {
+                "submission_format_rejected",
+                "candidate_check_failed",
+                "validation_environment_blocked",
+            },
+            retain_baseline_snapshot=(attempt.recovery_reason == "validation_environment_blocked"),
+        ),
     ]
 
 
@@ -914,12 +965,191 @@ def _recovery_completion_disposition(attempt: Any) -> str:
     return "restored_unwitnessed"
 
 
+def handle_resolve_validation_environment_blockage(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    command_type: str,
+    payload: ResolveValidationEnvironmentBlockageCommand,
+    context: GraphCommandContext,
+    make_event: Any,
+    clock: Any,
+    id_gen: Any,
+) -> list[EventEnvelope]:
+    """Authorize one exact operator-selected continuation snapshot."""
+    del events, command_type, clock, id_gen
+    actor = context.actor
+    if actor is None or actor.kind.value != "human" or actor.role != "operator":
+        return _conflict(
+            make_event, "resolve_validation_environment_blockage", "operator authority required"
+        )
+    if payload.expected_graph_position != context.current_graph_position:
+        return _conflict(
+            make_event,
+            "resolve_validation_environment_blockage",
+            "expected graph position does not match current position",
+        )
+    attempt = execution_attempts_view(projection).get(payload.execution_id)
+    if (
+        attempt is None
+        or attempt.node_id != payload.node_id
+        or attempt.recovery_id != payload.recovery_id
+        or attempt.state != "recovered"
+        or attempt.recovery_reason != "validation_environment_blocked"
+    ):
+        return _conflict(
+            make_event,
+            "resolve_validation_environment_blockage",
+            "blocked execution recovery identity does not match",
+        )
+    if any(
+        lease.node_id == payload.node_id and lease.state in {"active", "suspended"}
+        for lease in leases_view(projection).values()
+    ):
+        return _conflict(
+            make_event,
+            "resolve_validation_environment_blockage",
+            "node still has an active or suspended lease",
+        )
+    resolution_id = f"validation-resolution:{payload.recovery_id}:{payload.snapshot_selection}"
+    if attempt.continuation_resolution_id is not None:
+        if (
+            attempt.continuation_resolution_id == resolution_id
+            and attempt.continuation_snapshot_selection == payload.snapshot_selection
+        ):
+            return []
+        return _conflict(
+            make_event,
+            "resolve_validation_environment_blockage",
+            "blockage already has a different resolution",
+        )
+    if payload.snapshot_selection == "baseline":
+        identity = (
+            attempt.baseline_snapshot_id,
+            attempt.baseline_snapshot_ref,
+            attempt.baseline_commit_sha,
+            attempt.baseline_tree_sha,
+        )
+    else:
+        identity = (
+            attempt.recovery_snapshot_id,
+            attempt.recovery_snapshot_ref,
+            attempt.recovery_commit_sha,
+            attempt.final_tree_sha,
+        )
+    if not all(isinstance(value, str) and value for value in identity):
+        return _conflict(
+            make_event,
+            "resolve_validation_environment_blockage",
+            "selected continuation snapshot is not durably retained",
+        )
+    snapshot_id, snapshot_ref, commit_sha, tree_sha = cast(tuple[str, str, str, str], identity)
+    return [
+        make_event(
+            "validation_environment_blockage_resolution_requested",
+            {
+                "resolution_id": resolution_id,
+                "node_id": payload.node_id,
+                "execution_id": payload.execution_id,
+                "recovery_id": payload.recovery_id,
+                "snapshot_selection": payload.snapshot_selection,
+                "snapshot_id": snapshot_id,
+                "snapshot_ref": snapshot_ref,
+                "commit_sha": commit_sha,
+                "tree_sha": tree_sha,
+            },
+        )
+    ]
+
+
+def handle_complete_validation_environment_blockage_resolution(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    command_type: str,
+    payload: CompleteValidationEnvironmentBlockageResolutionCommand,
+    context: GraphCommandContext,
+    make_event: Any,
+    clock: Any,
+    id_gen: Any,
+) -> list[EventEnvelope]:
+    """Make a restored, identity-checked continuation ready exactly once."""
+    del events, command_type, context, clock, id_gen
+    attempt = execution_attempts_view(projection).get(payload.execution_id)
+    identity = (
+        payload.resolution_id,
+        payload.snapshot_selection,
+        payload.snapshot_id,
+        payload.snapshot_ref,
+        payload.commit_sha,
+        payload.tree_sha,
+    )
+    if attempt is None or identity != (
+        attempt.continuation_resolution_id,
+        attempt.continuation_snapshot_selection,
+        attempt.continuation_snapshot_id,
+        attempt.continuation_snapshot_ref,
+        attempt.continuation_commit_sha,
+        attempt.continuation_tree_sha,
+    ):
+        return _conflict(
+            make_event,
+            "complete_validation_environment_blockage_resolution",
+            "continuation restoration identity does not match",
+        )
+    if attempt.continuation_resolution_status == "completed":
+        return []
+    node = projection.nodes.get(payload.node_id)
+    if node is None:
+        return _conflict(
+            make_event,
+            "complete_validation_environment_blockage_resolution",
+            "continuation node is missing",
+        )
+    next_attempt = (
+        effective_node_attempt_number(node_attempts_view(projection).get(payload.node_id)) + 1
+    )
+    return [
+        make_event(
+            "validation_environment_blockage_resolved",
+            payload.model_dump(mode="json"),
+        ),
+        make_event(
+            "node_authority_changed",
+            {
+                "node_id": payload.node_id,
+                "authority": (
+                    node.spec.authority.model_dump(mode="json")
+                    if node.spec.authority is not None
+                    else None
+                ),
+                "resource_claims": [
+                    item.model_dump(mode="json") for item in node.spec.resource_claims
+                ],
+                "allowed_actions": list(node.spec.allowed_actions),
+                "preconditions": list(node.spec.preconditions),
+                "base_snapshot_selection": "explicit_snapshot",
+                "base_snapshot_candidate_id": payload.snapshot_id,
+            },
+        ),
+        make_event(
+            "node_state_changed",
+            {
+                "node_id": payload.node_id,
+                "new_state": "ready",
+                "trigger": "validation_environment_blockage_resolved",
+                "attempt_number": next_attempt,
+            },
+        ),
+    ]
+
+
 def _snapshot_cleanup_events(
     make_event: Any,
     attempt: Any,
     *,
     final_snapshot: tuple[str, str | None, str, str | None] | None = None,
     retain_staged_snapshot: bool = False,
+    retain_recovery_snapshot: bool = False,
+    retain_baseline_snapshot: bool = False,
 ) -> list[EventEnvelope]:
     """Plan exact owned-ref deletion after its last recovery use.
 
@@ -928,15 +1158,17 @@ def _snapshot_cleanup_events(
     expected tree, allowing the worker to delete only the ref this execution
     created even when another execution captured an identical commit.
     """
-    snapshots: list[tuple[str, str, str | None, str | None, str | None]] = [
-        (
-            "baseline",
-            attempt.baseline_snapshot_id,
-            attempt.baseline_snapshot_ref,
-            attempt.baseline_tree_sha,
-            attempt.baseline_commit_sha,
-        ),
-    ]
+    snapshots: list[tuple[str, str, str | None, str | None, str | None]] = []
+    if not retain_baseline_snapshot:
+        snapshots.append(
+            (
+                "baseline",
+                attempt.baseline_snapshot_id,
+                attempt.baseline_snapshot_ref,
+                attempt.baseline_tree_sha,
+                attempt.baseline_commit_sha,
+            )
+        )
     if not retain_staged_snapshot:
         snapshots.append(
             (
@@ -963,7 +1195,7 @@ def _snapshot_cleanup_events(
     # baseline remains available to the restorer until that same transaction.
     recovery_id = getattr(attempt, "recovery_snapshot_id", None)
     recovery_ref = getattr(attempt, "recovery_snapshot_ref", None)
-    if recovery_id is not None:
+    if recovery_id is not None and not retain_recovery_snapshot:
         snapshots.append(
             (
                 "recovery",

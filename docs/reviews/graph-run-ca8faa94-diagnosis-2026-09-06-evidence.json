@@ -1,0 +1,403 @@
+{
+  "run_id": "ca8faa94-f22c-4645-aab6-b5d6aca56d4b",
+  "source_commit": "08c8cd5e6f1d9e60098cba468e30c80d6c081334",
+  "status": "paused",
+  "pause_reason": "graph_blocked",
+  "last_error": "graph has failed node(s): worker-deterministic-region-compiler",
+  "usage": {
+    "total_tokens_read": 55389323,
+    "total_tokens_cache": 53819392,
+    "total_tokens_write": 313709,
+    "total_num_actions": 600
+  },
+  "activity_event_count": 1089,
+  "patch_rejections": 25,
+  "command_rejections": 5,
+  "audits": [
+    {
+      "event_id": 94628,
+      "timestamp": "2026-09-05T18:36:10.895498Z",
+      "phase": "baseline",
+      "node_id": "worker-discovery-description-first",
+      "execution_id": "exec-34522d387f504b62a3c18e8c8fa33ac8",
+      "base_tree_sha": "a1a52407c1605be0e0a0d1fd9c8e211b99f727ee",
+      "candidate_tree_sha": null,
+      "status": "no_configured_commands",
+      "feedback_message_chars": 0,
+      "feedback_contains_failed_test_summary": false,
+      "results": []
+    },
+    {
+      "event_id": 94688,
+      "timestamp": "2026-09-05T18:40:37.757082Z",
+      "phase": "submission",
+      "node_id": "worker-discovery-description-first",
+      "execution_id": "exec-34522d387f504b62a3c18e8c8fa33ac8",
+      "base_tree_sha": "a1a52407c1605be0e0a0d1fd9c8e211b99f727ee",
+      "candidate_tree_sha": "a1a52407c1605be0e0a0d1fd9c8e211b99f727ee",
+      "status": "no_configured_commands",
+      "feedback_message_chars": 0,
+      "feedback_contains_failed_test_summary": false,
+      "results": []
+    },
+    {
+      "event_id": 95161,
+      "timestamp": "2026-09-05T19:04:08.222637Z",
+      "phase": "baseline",
+      "node_id": "worker-description-first-plan-discovery",
+      "execution_id": "exec-a7b087f33a984b91830b60a9eb6e52cc",
+      "base_tree_sha": "a1a52407c1605be0e0a0d1fd9c8e211b99f727ee",
+      "candidate_tree_sha": null,
+      "status": "no_configured_commands",
+      "feedback_message_chars": 0,
+      "feedback_contains_failed_test_summary": false,
+      "results": []
+    },
+    {
+      "event_id": 95242,
+      "timestamp": "2026-09-05T19:11:16.470860Z",
+      "phase": "submission",
+      "node_id": "worker-description-first-plan-discovery",
+      "execution_id": "exec-a7b087f33a984b91830b60a9eb6e52cc",
+      "base_tree_sha": "a1a52407c1605be0e0a0d1fd9c8e211b99f727ee",
+      "candidate_tree_sha": "a1a52407c1605be0e0a0d1fd9c8e211b99f727ee",
+      "status": "no_configured_commands",
+      "feedback_message_chars": 0,
+      "feedback_contains_failed_test_summary": false,
+      "results": []
+    },
+    {
+      "event_id": 95431,
+      "timestamp": "2026-09-05T19:20:26.090793Z",
+      "phase": "baseline",
+      "node_id": "worker-deterministic-region-compiler",
+      "execution_id": "exec-87b9241fecad4d98b942d967310a9b2a",
+      "base_tree_sha": "a1a52407c1605be0e0a0d1fd9c8e211b99f727ee",
+      "candidate_tree_sha": null,
+      "status": "failed",
+      "feedback_message_chars": 0,
+      "feedback_contains_failed_test_summary": false,
+      "results": [
+        {
+          "source": "dynamic_feature_acceptance",
+          "command": "uv run pytest -n 0 tests/unit/test_work_plan_compiler.py tests/unit/test_graph_compiler.py tests/unit/test_graph_macros.py tests/unit/test_graph_runner_boundary_commands.py",
+          "status": "failed",
+          "exit_code": 4,
+          "duration_ms": 4121,
+          "stdout_sha256": "5f1d0e2427023e7f5dd571c1fc82e182e98c48b3aa5cf6eb3b32632eaa2557b2",
+          "stderr_sha256": "f7cd1f9eb22b5c13768d2062b8c26b35baa97022644b3ed10c99d58c0c1456ea",
+          "failed_tests": [],
+          "summary": []
+        },
+        {
+          "source": "project_test_command",
+          "command": "uv run pytest tests/unit tests/integration --tb=no -q --ignore=tests/integration/test_full_persistence.py",
+          "status": "failed",
+          "exit_code": 1,
+          "duration_ms": 234429,
+          "stdout_sha256": "54c8e7c9c3db9c228fa41e6abda36d11c6aa729715eb8a6bdb174086c9c19146",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "failed_tests": [
+            "FAILED tests/unit/test_signal_consumer.py::test_processed_marker_is_exported_to_jsonl",
+            "FAILED tests/unit/test_graph_submission_gate.py::test_gate_unlocks_its_exact_checkout_before_cleanup",
+            "FAILED tests/integration/test_jsonl_rotation_recovery.py::test_graph_events_reach_the_committed_jsonl_journal",
+            "FAILED tests/integration/test_jsonl_rotation_recovery.py::test_graph_controller_rotates_at_its_injected_journal_limit",
+            "FAILED tests/integration/test_output_batching.py::test_output_batching_session_factory_writes_jsonl_outbox",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[0]",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[1]",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[2]"
+          ],
+          "summary": [
+            "8 failed, 5896 passed, 5 skipped, 4 warnings in 230.66s (0:03:50)"
+          ]
+        }
+      ]
+    },
+    {
+      "event_id": 95587,
+      "timestamp": "2026-09-05T19:33:39.126611Z",
+      "phase": "submission",
+      "node_id": "worker-deterministic-region-compiler",
+      "execution_id": "exec-87b9241fecad4d98b942d967310a9b2a",
+      "base_tree_sha": "a1a52407c1605be0e0a0d1fd9c8e211b99f727ee",
+      "candidate_tree_sha": "c3bbab0fbf8d4d92517965b37c66f6609dac0a9c",
+      "status": "failed",
+      "feedback_message_chars": 4096,
+      "feedback_contains_failed_test_summary": false,
+      "results": [
+        {
+          "source": "project_test_command",
+          "command": "uv run pytest tests/unit tests/integration --tb=no -q --ignore=tests/integration/test_full_persistence.py",
+          "status": "failed",
+          "exit_code": 1,
+          "duration_ms": 229092,
+          "stdout_sha256": "c3d88007dbc27e6c175604cf6268a31049599929f9f197080b7455fef563edbd",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "failed_tests": [
+            "FAILED tests/unit/test_signal_consumer.py::test_processed_marker_is_exported_to_jsonl",
+            "FAILED tests/unit/test_graph_submission_gate.py::test_gate_unlocks_its_exact_checkout_before_cleanup",
+            "FAILED tests/integration/test_jsonl_rotation_recovery.py::test_graph_events_reach_the_committed_jsonl_journal",
+            "FAILED tests/integration/test_jsonl_rotation_recovery.py::test_graph_controller_rotates_at_its_injected_journal_limit",
+            "FAILED tests/integration/test_output_batching.py::test_output_batching_session_factory_writes_jsonl_outbox",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[0]",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[1]",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[2]"
+          ],
+          "summary": [
+            "8 failed, 5902 passed, 5 skipped, 4 warnings in 225.42s (0:03:45)"
+          ]
+        }
+      ]
+    },
+    {
+      "event_id": 95626,
+      "timestamp": "2026-09-05T19:37:55.901135Z",
+      "phase": "submission",
+      "node_id": "worker-deterministic-region-compiler",
+      "execution_id": "exec-87b9241fecad4d98b942d967310a9b2a",
+      "base_tree_sha": "a1a52407c1605be0e0a0d1fd9c8e211b99f727ee",
+      "candidate_tree_sha": "c3bbab0fbf8d4d92517965b37c66f6609dac0a9c",
+      "status": "failed",
+      "feedback_message_chars": 4096,
+      "feedback_contains_failed_test_summary": false,
+      "results": [
+        {
+          "source": "project_test_command",
+          "command": "uv run pytest tests/unit tests/integration --tb=no -q --ignore=tests/integration/test_full_persistence.py",
+          "status": "failed",
+          "exit_code": 1,
+          "duration_ms": 179829,
+          "stdout_sha256": "9970101f02d20d4754f6d972c669889e3e0119e3887f4cff96b5c0dd5eac1565",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "failed_tests": [
+            "FAILED tests/unit/test_signal_consumer.py::test_processed_marker_is_exported_to_jsonl",
+            "FAILED tests/unit/test_graph_submission_gate.py::test_gate_unlocks_its_exact_checkout_before_cleanup",
+            "FAILED tests/integration/test_jsonl_rotation_recovery.py::test_graph_events_reach_the_committed_jsonl_journal",
+            "FAILED tests/integration/test_jsonl_rotation_recovery.py::test_graph_controller_rotates_at_its_injected_journal_limit",
+            "FAILED tests/integration/test_output_batching.py::test_output_batching_session_factory_writes_jsonl_outbox"
+          ],
+          "summary": [
+            "5 failed, 5905 passed, 5 skipped, 4 warnings in 175.91s (0:02:55)"
+          ]
+        }
+      ]
+    },
+    {
+      "event_id": 95651,
+      "timestamp": "2026-09-05T19:42:16.305169Z",
+      "phase": "baseline",
+      "node_id": "worker-deterministic-region-compiler",
+      "execution_id": "exec-b283538cfd20433aafa9e9587978be63",
+      "base_tree_sha": "a1a52407c1605be0e0a0d1fd9c8e211b99f727ee",
+      "candidate_tree_sha": null,
+      "status": "failed",
+      "feedback_message_chars": 0,
+      "feedback_contains_failed_test_summary": false,
+      "results": [
+        {
+          "source": "dynamic_feature_acceptance",
+          "command": "uv run pytest -n 0 tests/unit/test_work_plan_compiler.py tests/unit/test_graph_compiler.py tests/unit/test_graph_macros.py tests/unit/test_graph_runner_boundary_commands.py",
+          "status": "failed",
+          "exit_code": 4,
+          "duration_ms": 3867,
+          "stdout_sha256": "4443be29e55220773b0ac8d703eda33d4acee2d7dfdea38d8958a7f255bfa57c",
+          "stderr_sha256": "f7cd1f9eb22b5c13768d2062b8c26b35baa97022644b3ed10c99d58c0c1456ea",
+          "failed_tests": [],
+          "summary": []
+        },
+        {
+          "source": "project_test_command",
+          "command": "uv run pytest tests/unit tests/integration --tb=no -q --ignore=tests/integration/test_full_persistence.py",
+          "status": "failed",
+          "exit_code": 1,
+          "duration_ms": 235111,
+          "stdout_sha256": "d5277f2bfe924f95fd1e03c5249b32f69e39f2589b8ad2a55a52a9439418d6ee",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "failed_tests": [
+            "FAILED tests/unit/test_signal_consumer.py::test_processed_marker_is_exported_to_jsonl",
+            "FAILED tests/unit/test_graph_submission_gate.py::test_gate_unlocks_its_exact_checkout_before_cleanup",
+            "FAILED tests/integration/test_jsonl_rotation_recovery.py::test_graph_events_reach_the_committed_jsonl_journal",
+            "FAILED tests/integration/test_jsonl_rotation_recovery.py::test_graph_controller_rotates_at_its_injected_journal_limit",
+            "FAILED tests/integration/test_output_batching.py::test_output_batching_session_factory_writes_jsonl_outbox",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[0]",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[1]",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[2]"
+          ],
+          "summary": [
+            "8 failed, 5896 passed, 5 skipped, 4 warnings in 231.34s (0:03:51)"
+          ]
+        }
+      ]
+    },
+    {
+      "event_id": 95872,
+      "timestamp": "2026-09-05T20:01:11.429150Z",
+      "phase": "submission",
+      "node_id": "worker-deterministic-region-compiler",
+      "execution_id": "exec-b283538cfd20433aafa9e9587978be63",
+      "base_tree_sha": "a1a52407c1605be0e0a0d1fd9c8e211b99f727ee",
+      "candidate_tree_sha": "944a588f74ddf7622067f1430510de0fb99af840",
+      "status": "failed",
+      "feedback_message_chars": 4096,
+      "feedback_contains_failed_test_summary": false,
+      "results": [
+        {
+          "source": "project_test_command",
+          "command": "uv run pytest tests/unit tests/integration --tb=no -q --ignore=tests/integration/test_full_persistence.py",
+          "status": "failed",
+          "exit_code": 1,
+          "duration_ms": 233221,
+          "stdout_sha256": "e58c444c8b3e7dd322278292213b6ef3a2bb6294e251f0445a8461cf3cbda2e7",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "failed_tests": [
+            "FAILED tests/unit/test_signal_consumer.py::test_processed_marker_is_exported_to_jsonl",
+            "FAILED tests/unit/test_graph_submission_gate.py::test_gate_unlocks_its_exact_checkout_before_cleanup",
+            "FAILED tests/integration/test_jsonl_rotation_recovery.py::test_graph_events_reach_the_committed_jsonl_journal",
+            "FAILED tests/integration/test_jsonl_rotation_recovery.py::test_graph_controller_rotates_at_its_injected_journal_limit",
+            "FAILED tests/integration/test_output_batching.py::test_output_batching_session_factory_writes_jsonl_outbox",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[0]",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[1]",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[2]"
+          ],
+          "summary": [
+            "8 failed, 5904 passed, 5 skipped, 4 warnings in 229.42s (0:03:49)"
+          ]
+        }
+      ]
+    },
+    {
+      "event_id": 95928,
+      "timestamp": "2026-09-05T20:08:15.639978Z",
+      "phase": "baseline",
+      "node_id": "worker-deterministic-region-compiler",
+      "execution_id": "exec-e47c12dbc585447da927fedb730b5d5f",
+      "base_tree_sha": "a1a52407c1605be0e0a0d1fd9c8e211b99f727ee",
+      "candidate_tree_sha": null,
+      "status": "failed",
+      "feedback_message_chars": 0,
+      "feedback_contains_failed_test_summary": false,
+      "results": [
+        {
+          "source": "dynamic_feature_acceptance",
+          "command": "uv run pytest -n 0 tests/unit/test_work_plan_compiler.py tests/unit/test_graph_compiler.py tests/unit/test_graph_macros.py tests/unit/test_graph_runner_boundary_commands.py",
+          "status": "failed",
+          "exit_code": 4,
+          "duration_ms": 4588,
+          "stdout_sha256": "990aea031b26f19c4e20bd701246abccdf4fd66dc4e427ac3436d390f2b9dc00",
+          "stderr_sha256": "f7cd1f9eb22b5c13768d2062b8c26b35baa97022644b3ed10c99d58c0c1456ea",
+          "failed_tests": [],
+          "summary": []
+        },
+        {
+          "source": "project_test_command",
+          "command": "uv run pytest tests/unit tests/integration --tb=no -q --ignore=tests/integration/test_full_persistence.py",
+          "status": "failed",
+          "exit_code": 1,
+          "duration_ms": 242951,
+          "stdout_sha256": "ccab012e2b943ad1229ac92bb1ad06e023366daccfcf8390f0929e1093e47168",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "failed_tests": [
+            "FAILED tests/unit/test_signal_consumer.py::test_processed_marker_is_exported_to_jsonl",
+            "FAILED tests/unit/test_graph_submission_gate.py::test_gate_unlocks_its_exact_checkout_before_cleanup",
+            "FAILED tests/integration/test_jsonl_rotation_recovery.py::test_graph_events_reach_the_committed_jsonl_journal",
+            "FAILED tests/integration/test_jsonl_rotation_recovery.py::test_graph_controller_rotates_at_its_injected_journal_limit",
+            "FAILED tests/integration/test_output_batching.py::test_output_batching_session_factory_writes_jsonl_outbox",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[0]",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[1]",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[2]"
+          ],
+          "summary": [
+            "8 failed, 5896 passed, 5 skipped, 4 warnings in 238.99s (0:03:58)"
+          ]
+        }
+      ]
+    },
+    {
+      "event_id": 96197,
+      "timestamp": "2026-09-05T20:34:23.367789Z",
+      "phase": "submission",
+      "node_id": "worker-deterministic-region-compiler",
+      "execution_id": "exec-e47c12dbc585447da927fedb730b5d5f",
+      "base_tree_sha": "a1a52407c1605be0e0a0d1fd9c8e211b99f727ee",
+      "candidate_tree_sha": "95cbbfc6a944f51f3a701e6a76c1d49594b44a11",
+      "status": "failed",
+      "feedback_message_chars": 4096,
+      "feedback_contains_failed_test_summary": false,
+      "results": [
+        {
+          "source": "project_test_command",
+          "command": "uv run pytest tests/unit tests/integration --tb=no -q --ignore=tests/integration/test_full_persistence.py",
+          "status": "failed",
+          "exit_code": 1,
+          "duration_ms": 235500,
+          "stdout_sha256": "35b2ff6dd3419ecdc2d2fd9d6a6fc76c2cb738d3c67687470c16a9fd71409869",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "failed_tests": [
+            "FAILED tests/unit/test_signal_consumer.py::test_processed_marker_is_exported_to_jsonl",
+            "FAILED tests/unit/test_graph_submission_gate.py::test_gate_unlocks_its_exact_checkout_before_cleanup",
+            "FAILED tests/integration/test_jsonl_rotation_recovery.py::test_graph_events_reach_the_committed_jsonl_journal",
+            "FAILED tests/integration/test_jsonl_rotation_recovery.py::test_graph_controller_rotates_at_its_injected_journal_limit",
+            "FAILED tests/integration/test_output_batching.py::test_output_batching_session_factory_writes_jsonl_outbox",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[0]",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[1]",
+            "FAILED tests/integration/test_server_supervisor_process.py::test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill[2]"
+          ],
+          "summary": [
+            "8 failed, 5907 passed, 5 skipped, 4 warnings in 231.61s (0:03:51)"
+          ]
+        }
+      ]
+    }
+  ],
+  "diagnostic_reproductions": {
+    "journal_tests_without_override": "4 passed in 0.60s",
+    "journal_tests_with_gate_override": "4 failed in 0.69s; missing/redirected journals",
+    "cleanup_test_direct": "passed (part of 2 passed in 0.73s)",
+    "cleanup_test_nested_in_production_gate": "failed in 0.98s; outer TMPDIR contains orchestrator-submission-gate-",
+    "verifier_renderer": {
+      "declared_objective_rendered": false,
+      "declared_acceptance_rendered": false,
+      "semantic_stage_rendered": false,
+      "empty_rubric_rendered": true
+    },
+    "identical_failed_test_sets_have_identical_exemption_fingerprints": false
+  },
+  "repair_validation": {
+    "branch": "codex/graph-execution-repair",
+    "live_model_execution_performed": false,
+    "gate_environment": {
+      "direct_journal_and_cleanup_tests": "5 passed",
+      "direct_supervisor_relaunch_tests": "3 passed",
+      "nested_actual_gate_wrapper": "1 passed; all eight inner tests passed",
+      "classification": {
+        "journal_routing": "production gate environment defect repaired",
+        "nested_cleanup": "non-composable regression assertion repaired",
+        "supervisor": "no supervisor source defect established; cases pass direct and in the repaired gate environment"
+      }
+    },
+    "joined_product_path": {
+      "test": "tests/integration/test_graph_sequential_product_path.py::test_api_environment_blockage_restores_rejected_candidate_and_continues",
+      "result": "1 passed in 39.16s",
+      "adjacent_genuine_correction_result": "2 passed in 56.70s",
+      "implementation_executions": 2,
+      "implementation_mutations": 1,
+      "final_state": "completed and independently accepted"
+    },
+    "focused_suite": {
+      "result": "158 passed, 101 deselected, 1 warning in 226.51s",
+      "warning": "existing Pydantic serializer warning in recovery authority fixture"
+    },
+    "static_checks": {
+      "ruff": "passed",
+      "pyright": "0 errors, 0 warnings",
+      "graph_projection_boundaries": "passed",
+      "git_diff_check": "passed"
+    },
+    "full_default_suite": "5930 passed, 5 skipped, 4 warnings in 205.33s",
+    "configured_repository_gate": "pending final validation"
+  },
+  "limitations": [
+    "The historical run remains paused and its production database was not changed.",
+    "No live-model run was performed; live planner and runner reliability remains unproven."
+  ]
+}

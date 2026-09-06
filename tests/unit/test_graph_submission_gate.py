@@ -16,15 +16,18 @@ from orchestrator.graph import build_projection, node_payload_view
 from orchestrator.graph_runtime import (
     PROJECT_SUBMISSION_GATE_TIMEOUT_SECONDS,
     SUBMISSION_GATE_OUTPUT_BYTES,
+    SubmissionGateCommand,
     SubmissionQualityGateError,
     bind_submission_gate_witness,
     capture_submission_gate_baseline,
     cleanup_read_only_execution_workspace,
     enforce_submission_quality_gate,
+    gate_rejection_evidence,
     prepare_read_only_execution_workspace,
     resolve_submission_gate_commands,
     resolve_submission_gate_applicability,
     submission_gate_commands_from_baseline,
+    submission_gate_failure_fingerprint,
 )
 from tests.unit.graph_test_utils import event
 
@@ -499,7 +502,11 @@ async def test_unchanged_base_tree_failure_is_explicitly_exempted(tmp_path: Path
         "base_snapshot_id": "base-1",
         "base_tree_sha": tree,
     }
-    node_payload = {"acceptance_commands": ["printf 'known failure' >&2; exit 8"]}
+    node_payload = {
+        "acceptance_commands": [
+            "printf 'FAILED tests/unit/test_known.py::test_red - AssertionError\\n' >&2; exit 8"
+        ]
+    }
     baseline = await capture_submission_gate_baseline(
         **authority,
         node_payload=node_payload,
@@ -528,6 +535,56 @@ async def test_unchanged_base_tree_failure_is_explicitly_exempted(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_unchanged_project_failure_is_typed_as_environment_blockage(
+    tmp_path: Path,
+) -> None:
+    commit, tree = _snapshot_identity(tmp_path)
+    authority = {
+        "run_id": "run-project-blocked",
+        "node_id": "worker-project-blocked",
+        "execution_id": "exec-project-blocked",
+        "lease_id": "lease-project-blocked",
+        "lease_generation": 1,
+        "base_snapshot_id": "base-project-blocked",
+        "base_tree_sha": tree,
+    }
+    commands = (
+        SubmissionGateCommand(
+            command=(
+                "printf 'FAILED tests/integration/test_env.py::test_service - unavailable\\n' "
+                ">&2; exit 1"
+            ),
+            source="project_test_command",
+        ),
+    )
+    baseline = await capture_submission_gate_baseline(
+        **authority,
+        node_payload={},
+        dynamic_feature=None,
+        worktree_path=tmp_path,
+        snapshot_commit_sha=commit,
+        resolved_commands=commands,
+    )
+
+    with pytest.raises(SubmissionQualityGateError) as caught:
+        await enforce_submission_quality_gate(
+            **authority,
+            node_payload={},
+            dynamic_feature=None,
+            worktree_path=tmp_path,
+            baseline=baseline,
+            candidate_tree_sha=tree,
+            snapshot_commit_sha=commit,
+            resolved_commands=commands,
+        )
+
+    result = caught.value.report
+    assert result is not None
+    assert result.failure_category == "validation_environment_blockage"
+    assert result.failed_test_ids == ("tests/integration/test_env.py::test_service",)
+
+
+@pytest.mark.asyncio
 async def test_changed_failure_fingerprint_is_not_exempted(tmp_path: Path) -> None:
     commit, tree = _snapshot_identity(tmp_path)
     authority = {
@@ -541,7 +598,11 @@ async def test_changed_failure_fingerprint_is_not_exempted(tmp_path: Path) -> No
     }
     baseline = await capture_submission_gate_baseline(
         **authority,
-        node_payload={"acceptance_commands": ["printf before >&2; exit 8"]},
+        node_payload={
+            "acceptance_commands": [
+                "printf 'FAILED tests/unit/test_before.py::test_red - before\\n' >&2; exit 8"
+            ]
+        },
         dynamic_feature=None,
         worktree_path=tmp_path,
         snapshot_commit_sha=commit,
@@ -550,13 +611,155 @@ async def test_changed_failure_fingerprint_is_not_exempted(tmp_path: Path) -> No
     with pytest.raises(SubmissionQualityGateError, match="exit code 8"):
         await enforce_submission_quality_gate(
             **authority,
-            node_payload={"acceptance_commands": ["printf after >&2; exit 8"]},
+            node_payload={
+                "acceptance_commands": [
+                    "printf 'FAILED tests/unit/test_after.py::test_red - after\\n' >&2; exit 8"
+                ]
+            },
             dynamic_feature=None,
             worktree_path=tmp_path,
             baseline=baseline,
             candidate_tree_sha=tree,
             snapshot_commit_sha=commit,
         )
+
+
+@pytest.mark.asyncio
+async def test_semantic_failure_identity_ignores_incidental_pytest_output(tmp_path: Path) -> None:
+    commit, tree = _snapshot_identity(tmp_path)
+    authority = {
+        "run_id": "run-semantic",
+        "node_id": "worker-semantic",
+        "execution_id": "exec-semantic",
+        "lease_id": "lease-semantic",
+        "lease_generation": 1,
+        "base_snapshot_id": "base-semantic",
+        "base_tree_sha": tree,
+    }
+    baseline = await capture_submission_gate_baseline(
+        **authority,
+        node_payload={
+            "acceptance_commands": [
+                "printf '/tmp/pytest-1 .F 1.02s\\n"
+                "FAILED tests/unit/test_same.py::test_red - first details\\n' >&2; exit 1"
+            ]
+        },
+        dynamic_feature=None,
+        worktree_path=tmp_path,
+        snapshot_commit_sha=commit,
+    )
+    command = baseline.results[0].command
+    candidate = await capture_submission_gate_baseline(
+        **authority,
+        node_payload={
+            "acceptance_commands": [
+                command.replace(
+                    "/tmp/pytest-1 .F 1.02s", "/tmp/pytest-99 12 passed .F 8.77s"
+                ).replace("first details", "different assertion rendering")
+            ]
+        },
+        dynamic_feature=None,
+        worktree_path=tmp_path,
+        snapshot_commit_sha=commit,
+    )
+
+    assert baseline.results[0].stderr_sha256 != candidate.results[0].stderr_sha256
+    # Command identity remains an integrity/authority input, so compare parsed
+    # semantic evidence using otherwise identical command contracts.
+    adjusted = candidate.results[0].model_copy(
+        update={
+            "command": baseline.results[0].command,
+            "command_sha256": baseline.results[0].command_sha256,
+        }
+    )
+    assert submission_gate_failure_fingerprint(baseline.results[0]) == (
+        submission_gate_failure_fingerprint(adjusted)
+    )
+
+
+@pytest.mark.asyncio
+async def test_added_failure_changes_semantic_identity_and_missing_test_is_candidate(
+    tmp_path: Path,
+) -> None:
+    commit, tree = _snapshot_identity(tmp_path)
+    common = {
+        "run_id": "run-added",
+        "node_id": "worker-added",
+        "execution_id": "exec-added",
+        "lease_id": "lease-added",
+        "lease_generation": 1,
+        "base_snapshot_id": "base-added",
+        "base_tree_sha": tree,
+        "dynamic_feature": None,
+        "worktree_path": tmp_path,
+        "snapshot_commit_sha": commit,
+    }
+    one = await capture_submission_gate_baseline(
+        **common,
+        node_payload={
+            "acceptance_commands": ["printf 'FAILED tests/a.py::test_one - red\\n' >&2; exit 1"]
+        },
+    )
+    two = one.results[0].model_copy(
+        update={
+            "failed_test_ids": ("tests/a.py::test_one", "tests/b.py::test_two"),
+            "failed_test_evidence": (
+                "FAILED:tests/a.py::test_one",
+                "FAILED:tests/b.py::test_two",
+            ),
+        }
+    )
+    missing = await capture_submission_gate_baseline(
+        **common,
+        node_payload={
+            "acceptance_commands": [
+                "printf 'ERROR: file or directory not found: tests/new_feature.py\\n' >&2; exit 4"
+            ]
+        },
+    )
+    assert submission_gate_failure_fingerprint(one.results[0]) != (
+        submission_gate_failure_fingerprint(two)
+    )
+    assert missing.results[0].failure_category == "candidate_check_failure"
+    assert missing.results[0].failed_test_ids == ("tests/new_feature.py",)
+    assert missing.failure_fingerprints
+
+
+@pytest.mark.asyncio
+async def test_rejection_evidence_keeps_late_summary_and_integrity_hashes(tmp_path: Path) -> None:
+    commit, tree = _snapshot_identity(tmp_path)
+    with pytest.raises(SubmissionQualityGateError) as caught:
+        await enforce_submission_quality_gate(
+            run_id="run-feedback",
+            node_id="worker-feedback",
+            execution_id="exec-feedback",
+            lease_id="lease-feedback",
+            lease_generation=1,
+            base_snapshot_id="base-feedback",
+            base_tree_sha=tree,
+            node_payload={
+                "acceptance_commands": [
+                    "head -c 6000 /dev/zero | tr '\\0' .; "
+                    "printf '\\nFAILED tests/unit/test_late.py::test_summary - useful diagnostic\\n' "
+                    ">&2; exit 1"
+                ]
+            },
+            dynamic_feature=None,
+            worktree_path=tmp_path,
+            candidate_tree_sha=tree,
+            snapshot_commit_sha=commit,
+        )
+
+    assert caught.value.report is not None
+    evidence = gate_rejection_evidence(caught.value.report)
+    assert evidence.category == "candidate_check_failure"
+    assert evidence.exit_code == 1
+    assert evidence.failed_test_ids == ("tests/unit/test_late.py::test_summary",)
+    assert "useful diagnostic" in evidence.final_diagnostic
+    assert evidence.stdout_sha256
+    assert evidence.stderr_sha256
+    assert evidence.semantic_failure_fingerprint
+    assert evidence.durable_audit_reference is None
 
 
 @pytest.mark.asyncio
@@ -573,11 +776,10 @@ async def test_gate_uses_exact_snapshot_and_sanitized_disposable_environment(
         'test "$(cat version.txt)" = committed && '
         'test "$FEATURE_GATE_VALUE" = required-value && '
         'test -z "${GIT_DIR:-}" && '
-        'mkdir -p "$(dirname "$ORCHESTRATOR_EVENT_JOURNAL_PATH")" && '
-        'printf journal > "$ORCHESTRATOR_EVENT_JOURNAL_PATH" && '
+        'test -z "${ORCHESTRATOR_EVENT_JOURNAL_PATH:-}" && '
         "touch gate-created && "
         'printf \'%s\\n\' "$HOME" "$TMPDIR" "$UV_CACHE_DIR" '
-        '"$XDG_STATE_HOME" "$ORCHESTRATOR_EVENT_JOURNAL_PATH" "$VIRTUAL_ENV"'
+        '"$XDG_STATE_HOME" "$VIRTUAL_ENV"'
     )
     report = await enforce_submission_quality_gate(
         run_id="run-hermetic",
@@ -604,7 +806,7 @@ async def test_gate_uses_exact_snapshot_and_sanitized_disposable_environment(
 
     assert report.status == "passed"
     paths = [Path(value) for value in report.results[0].stdout_tail.splitlines()]
-    assert len(paths) == 6
+    assert len(paths) == 5
     runtime_root = paths[0].parent
     assert all(path.is_relative_to(runtime_root) for path in paths)
     assert all(not path.exists() for path in paths)
@@ -838,7 +1040,12 @@ async def test_gate_unlocks_its_exact_checkout_before_cleanup(tmp_path: Path) ->
         capture_output=True,
         text=True,
     ).stdout
-    assert "orchestrator-submission-gate-" not in registrations
+    registered_paths = {
+        Path(line.removeprefix("worktree ")).resolve()
+        for line in registrations.splitlines()
+        if line.startswith("worktree ")
+    }
+    assert registered_paths == {repo.resolve()}
 
 
 @pytest.mark.asyncio

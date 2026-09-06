@@ -46,13 +46,15 @@ EXPECTED_COMMANDS = {
     "finalize_runner_execution",
     "request_runner_recovery",
     "complete_runner_recovery",
+    "resolve_validation_environment_blockage",
+    "complete_validation_environment_blockage_resolution",
     "record_managed_snapshot_cleanup_applied",
 }
 
 
-def test_command_registry_has_exactly_31_strict_models() -> None:
+def test_command_registry_has_exactly_33_strict_models() -> None:
     assert set(COMMAND_SPECS) == EXPECTED_COMMANDS
-    assert len(COMMAND_SPECS) == 31
+    assert len(COMMAND_SPECS) == 33
     assert all(
         spec.payload_model.model_config["extra"] == "forbid" for spec in COMMAND_SPECS.values()
     )

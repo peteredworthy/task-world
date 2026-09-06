@@ -495,8 +495,12 @@ class RequestRunnerRecoveryCommand(StrictCommandPayload):
         "staged_artifact_missing",
         "staged_artifact_corrupt",
         "submission_repair_exhausted",
+        "submission_format_rejected",
+        "candidate_check_failed",
+        "validation_environment_blocked",
     ]
     error_detail: str | None = Field(default=None, max_length=4_096)
+    first_error_detail: str | None = Field(default=None, max_length=4_096)
     max_attempts: int = Field(default=0, ge=0)
     retry_after_recovery: StrictBool = False
     recovery_snapshot_id: CommandIdentifier | None = None
@@ -517,11 +521,11 @@ class RequestRunnerRecoveryCommand(StrictCommandPayload):
     def boundary_is_sha256(cls, value: str) -> str:
         return validate_sha256(value)
 
-    @field_validator("error_detail", mode="before")
+    @field_validator("error_detail", "first_error_detail", mode="before")
     @classmethod
     def canonical_error_detail(cls, value: object) -> str | None:
         if value is not None and not isinstance(value, str):
-            raise ValueError("error_detail must be a string")
+            raise ValueError("error detail must be a string")
         return sanitize_runner_error_detail(value)
 
     @field_validator("final_tree_sha")
@@ -618,6 +622,39 @@ class CompleteRunnerRecoveryCommand(StrictCommandPayload):
             raise ValueError(
                 "restored and removed paths must be disjoint and exactly cover requested_paths"
             )
+        return self
+
+
+class ResolveValidationEnvironmentBlockageCommand(StrictCommandPayload):
+    """Operator request to continue one exact blocked execution lineage."""
+
+    expected_graph_position: int = Field(ge=0)
+    node_id: CommandIdentifier
+    execution_id: CommandIdentifier
+    recovery_id: CommandIdentifier
+    snapshot_selection: Literal["baseline", "rejected_candidate"]
+
+
+class CompleteValidationEnvironmentBlockageResolutionCommand(StrictCommandPayload):
+    """Internal completion after exact selected-snapshot restoration."""
+
+    resolution_id: CommandIdentifier
+    node_id: CommandIdentifier
+    execution_id: CommandIdentifier
+    recovery_id: CommandIdentifier
+    snapshot_selection: Literal["baseline", "rejected_candidate"]
+    snapshot_id: CommandIdentifier
+    snapshot_ref: CommandIdentifier
+    commit_sha: CommandIdentifier
+    tree_sha: CommandIdentifier
+
+    @model_validator(mode="after")
+    def snapshot_identity_is_well_formed(
+        self,
+    ) -> "CompleteValidationEnvironmentBlockageResolutionCommand":
+        validate_snapshot_ref(self.snapshot_ref, self.snapshot_id)
+        validate_git_oid(self.commit_sha)
+        validate_git_oid(self.tree_sha)
         return self
 
 

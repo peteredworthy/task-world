@@ -340,7 +340,9 @@ def _assert_event_outcome(event_type: str, before: GraphProjection, after: Graph
         )
         assert callback is not None
         assert (callback.outcome, callback.payload) == ("callback_accepted", {"result": "ok"})
-    elif event_type.startswith("runner_"):
+    elif event_type.startswith("runner_") or event_type.startswith(
+        "validation_environment_blockage_"
+    ):
         attempts = projection_to_checkpoint(after)["state"]["execution"]["attempts_by_execution_id"]
         assert (
             attempts["execution-1"]["state"]
@@ -352,8 +354,19 @@ def _assert_event_outcome(event_type: str, before: GraphProjection, after: Graph
                 "runner_recovery_requested": "recovery_requested",
                 "runner_recovery_completed": "recovered",
                 "runner_execution_finalized": "finalized",
+                "validation_environment_blockage_resolution_requested": "recovered",
+                "validation_environment_blockage_resolved": "recovered",
             }[event_type]
         )
+        expected_resolution_status = {
+            "validation_environment_blockage_resolution_requested": "requested",
+            "validation_environment_blockage_resolved": "completed",
+        }.get(event_type)
+        if expected_resolution_status is not None:
+            assert (
+                attempts["execution-1"]["continuation_resolution_status"]
+                == expected_resolution_status
+            )
     else:
         raise AssertionError(f"missing direct outcome assertion for {event_type}")
 
@@ -1265,6 +1278,65 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
     runner_recovery_requested = _event(
         "runner_recovery_requested", runner_recovery_requested_payload, 2
     )
+    environment_recovery_requested_payload = {
+        **runner_recovery_requested_payload,
+        "reason": "validation_environment_blocked",
+        "recovery_snapshot_id": "snapshot-2",
+        "recovery_snapshot_ref": "refs/orchestrator/snapshots/snapshot-2",
+        "recovery_commit_sha": "b" * 40,
+    }
+    environment_recovery_requested = _event(
+        "runner_recovery_requested", environment_recovery_requested_payload, 4
+    )
+    environment_recovery_completed_payload = {
+        "execution_id": "execution-1",
+        "recovery_id": "recovery-1",
+        "node_id": "worker-1",
+        "lease_id": "lease-1",
+        "lease_generation": 1,
+        "baseline_snapshot_id": "snapshot-1",
+        "baseline_tree_sha": _RUNNER_TREE_SHA,
+        "requested_paths": list(
+            derive_recovery_paths(
+                _RUNNER_BASELINE_ENTRIES,
+                _RUNNER_STAGED_ENTRIES,
+                _RUNNER_FINAL_ENTRIES,
+                [],
+                [".cache"],
+            )
+        ),
+        "proof_hash": recovery_proof_hash(
+            execution_id="execution-1",
+            recovery_id="recovery-1",
+            node_id="worker-1",
+            lease_id="lease-1",
+            lease_generation=1,
+            baseline_snapshot_id="snapshot-1",
+            baseline_tree_sha=_RUNNER_TREE_SHA,
+            requested_paths=(".cache", "src/app.py"),
+            restored_paths=(".cache", "src/app.py"),
+            removed_paths=(),
+        ),
+        "restored_paths": [".cache", "src/app.py"],
+        "removed_paths": [],
+    }
+    environment_recovery_completed = _event(
+        "runner_recovery_completed", environment_recovery_completed_payload, 5
+    )
+    resolution_payload = {
+        "resolution_id": "resolution-1",
+        "node_id": "worker-1",
+        "execution_id": "execution-1",
+        "recovery_id": "recovery-1",
+        "snapshot_selection": "rejected_candidate",
+        "snapshot_id": "snapshot-2",
+        "snapshot_ref": "refs/orchestrator/snapshots/snapshot-2",
+        "commit_sha": "b" * 40,
+        "tree_sha": _RUNNER_TREE_SHA,
+    }
+    resolution_requested = _event(
+        "validation_environment_blockage_resolution_requested", resolution_payload, 6
+    )
     runner_names = (
         "runner_baseline_recorded",
         "runner_submission_staged",
@@ -1273,6 +1345,8 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
         "runner_recovery_requested",
         "runner_recovery_completed",
         "runner_execution_finalized",
+        "validation_environment_blockage_resolution_requested",
+        "validation_environment_blockage_resolved",
     )
     _CHANGING_QUERIES.update(
         {
@@ -1359,6 +1433,31 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
                 "boundary_hash": _RUNNER_STAGED_HASH,
                 "boundary_entries": _RUNNER_STAGED_ENTRIES,
             },
+            frozenset({"execution"}),
+        ),
+        (
+            "validation_environment_blockage_resolution_requested",
+            (
+                *runner_context,
+                runner_baseline,
+                runner_staged,
+                environment_recovery_requested,
+                environment_recovery_completed,
+            ),
+            resolution_payload,
+            frozenset({"execution"}),
+        ),
+        (
+            "validation_environment_blockage_resolved",
+            (
+                *runner_context,
+                runner_baseline,
+                runner_staged,
+                environment_recovery_requested,
+                environment_recovery_completed,
+                resolution_requested,
+            ),
+            resolution_payload,
             frozenset({"execution"}),
         ),
     )

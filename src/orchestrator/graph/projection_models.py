@@ -172,6 +172,7 @@ class NodeSpecProjection(ProjectionModel):
             "accepted_region",
             "rejected_candidate",
             "candidate_under_test",
+            "explicit_snapshot",
         ]
         | None
     ) = None
@@ -736,6 +737,7 @@ class ExecutionAttemptValue(ProjectionModel):
     recovery_id: StrictStr | None = None
     recovery_reason: StrictStr | None = None
     recovery_error_detail: StrictStr | None = None
+    recovery_first_error_detail: StrictStr | None = None
     recovery_max_attempts: StrictInt | None = None
     retry_after_recovery: StrictBool = False
     retry_scheduled: StrictBool = False
@@ -758,6 +760,13 @@ class ExecutionAttemptValue(ProjectionModel):
     recovery_observed_cache_roots: tuple[RunnerCacheRoot | StrictStr, ...] = ()
     recovery_authorized_cache_roots: tuple[RunnerCacheRoot, ...] = ()
     recovery_cache_status_evidence: tuple[CacheStatusEvidence, ...] = ()
+    continuation_resolution_id: StrictStr | None = None
+    continuation_resolution_status: Literal["requested", "completed"] | None = None
+    continuation_snapshot_selection: Literal["baseline", "rejected_candidate"] | None = None
+    continuation_snapshot_id: StrictStr | None = None
+    continuation_snapshot_ref: StrictStr | None = None
+    continuation_commit_sha: StrictStr | None = None
+    continuation_tree_sha: StrictStr | None = None
 
     @field_validator(
         "baseline_entries",

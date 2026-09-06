@@ -143,6 +143,7 @@ from orchestrator.graph_runtime.submission_gate import (
     capture_submission_gate_baseline,
     cleanup_read_only_execution_workspace,
     enforce_submission_quality_gate,
+    gate_rejection_evidence,
     prepare_read_only_execution_workspace,
     resolve_submission_gate_applicability,
     resolve_submission_gate_commands,
@@ -160,6 +161,9 @@ from orchestrator.runners import (
     SubmissionContract,
     SubmissionAcknowledgement,
     SubmissionOutputContract,
+    SubmissionRejectionCategory,
+    SubmissionRejectionEvidence,
+    SubmissionRejectedError,
     SubmissionRepairExhaustedError,
 )
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
@@ -1413,6 +1417,10 @@ class GraphDispatchExecutor(SideEffectExecutor):
             async with self._worktree_execution_lock:
                 await self._dispatch_runner_recovery(item, worktree_lock_held=True)
             return
+        if item.kind == "validation_environment_resolution":
+            async with self._worktree_execution_lock:
+                await self._dispatch_validation_environment_resolution(item)
+            return
         if item.kind != "agent_dispatch":
             return
 
@@ -1901,6 +1909,10 @@ class GraphDispatchExecutor(SideEffectExecutor):
             graph_patch_accepted = False
             submitted_callback = False
             submission_acknowledgement: SubmissionAcknowledgement | None = None
+            first_submission_rejection_category: SubmissionRejectionCategory | None = None
+            first_submission_rejection_detail: str | None = None
+            submission_rejection_categories: set[SubmissionRejectionCategory] = set()
+            latest_submission_rejection: SubmissionAcknowledgement | None = None
 
             async def on_checklist_update(
                 _req_id: str,
@@ -1913,6 +1925,8 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 submit_args: dict[str, Any] | None = None,
             ) -> SubmissionAcknowledgement:
                 nonlocal submitted_callback, submission_acknowledgement
+                nonlocal first_submission_rejection_category, latest_submission_rejection
+                nonlocal first_submission_rejection_detail
                 if submitted_callback:
                     # Managed callbacks must re-read canonical attempt state so
                     # reconnect delivery can observe later finalization or
@@ -1967,14 +1981,59 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     detail = str(exc)
                     if detail.startswith("submit callback rejected:"):
                         detail = detail.removeprefix("submit callback rejected:").strip()
+                    rejection_category: SubmissionRejectionCategory = "submission_format_rejected"
+                    rejection_evidence = SubmissionRejectionEvidence(
+                        category=rejection_category,
+                        final_diagnostic=detail[-2_048:] or "submission rejected",
+                        evidence_truncated=len(detail) > 2_048,
+                    )
+                    if isinstance(exc, SubmissionQualityGateError) and isinstance(
+                        exc.report, SubmissionGateCommandResult
+                    ):
+                        gate_evidence = gate_rejection_evidence(exc.report)
+                        rejection_category = (
+                            "validation_environment_blocked"
+                            if gate_evidence.category == "validation_environment_blockage"
+                            else "candidate_check_failed"
+                        )
+                        rejection_evidence = SubmissionRejectionEvidence(
+                            category=rejection_category,
+                            command=gate_evidence.command,
+                            command_source=gate_evidence.command_source,
+                            command_sha256=gate_evidence.command_sha256,
+                            exit_code=gate_evidence.exit_code,
+                            timed_out=gate_evidence.timed_out,
+                            failed_test_ids=gate_evidence.failed_test_ids,
+                            failed_test_ids_truncated=gate_evidence.failed_test_ids_truncated,
+                            final_diagnostic=(gate_evidence.final_diagnostic or detail[-2_048:]),
+                            stdout_sha256=gate_evidence.stdout_sha256,
+                            stderr_sha256=gate_evidence.stderr_sha256,
+                            stdout_bytes=gate_evidence.stdout_bytes,
+                            stderr_bytes=gate_evidence.stderr_bytes,
+                            stdout_truncated=gate_evidence.stdout_truncated,
+                            stderr_truncated=gate_evidence.stderr_truncated,
+                            evidence_truncated=gate_evidence.evidence_truncated,
+                            failure_identity_status=gate_evidence.failure_identity_status,
+                            semantic_failure_fingerprint=(
+                                gate_evidence.semantic_failure_fingerprint
+                            ),
+                            durable_audit_reference=getattr(exc, "durable_audit_reference", None),
+                        )
                     acknowledgement = SubmissionAcknowledgement(
                         disposition="rejected",
-                        message=detail[:4_096] or "submission rejected",
+                        message=(f"{rejection_category}: {rejection_evidence.final_diagnostic}")[
+                            -4_096:
+                        ],
                         execution_id=context.execution_id,
+                        rejection_category=rejection_category,
+                        rejection_evidence=rejection_evidence,
                     )
-                    raise ValueError(
-                        f"submit callback rejected: {acknowledgement.model_dump_json()}"
-                    ) from None
+                    if first_submission_rejection_category is None:
+                        first_submission_rejection_category = rejection_category
+                        first_submission_rejection_detail = rejection_evidence.final_diagnostic
+                    submission_rejection_categories.add(rejection_category)
+                    latest_submission_rejection = acknowledgement
+                    raise SubmissionRejectedError(acknowledgement) from None
                 submitted_callback = True
                 submission_acknowledgement = acknowledgement or SubmissionAcknowledgement(
                     disposition="durably_staged",
@@ -2090,6 +2149,34 @@ class GraphDispatchExecutor(SideEffectExecutor):
             if not managed:
                 if not submitted_callback:
                     await self._agent_died(context, "agent exited without submit")
+            elif not submitted_callback and latest_submission_rejection is not None:
+                rejection_reason = next(
+                    category
+                    for category in (
+                        "validation_environment_blocked",
+                        "candidate_check_failed",
+                        "submission_format_rejected",
+                    )
+                    if category in submission_rejection_categories
+                )
+                diagnostic = (
+                    latest_submission_rejection.rejection_evidence.final_diagnostic
+                    if latest_submission_rejection.rejection_evidence is not None
+                    else latest_submission_rejection.message
+                )
+                await self._request_runner_recovery(
+                    context,
+                    rejection_reason,
+                    error_detail=diagnostic,
+                    first_error_detail=(
+                        f"{first_submission_rejection_category}: "
+                        f"{first_submission_rejection_detail}"
+                        if first_submission_rejection_category is not None
+                        and first_submission_rejection_detail is not None
+                        else None
+                    ),
+                    worktree_lock_held=True,
+                )
             elif not result.success:
                 await self._request_runner_recovery(
                     context,
@@ -2158,6 +2245,12 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 )
             else:
                 await self._invalid_execution_contract(context, str(exc))
+        except InvalidExecutionContractError as exc:
+            # Prompt assembly is the final production preflight for semantic
+            # stage contracts.  A deterministic declaration defect is not a
+            # runner failure: runner.execute has not been called, and the
+            # lease must close through the typed invalid-contract outcome.
+            await self._invalid_execution_contract(context, str(exc))
         except Exception as exc:
             if managed:
                 # Record the runner exception before recovery mutates the
@@ -2750,12 +2843,13 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     resolved_commands=resolved_commands,
                 )
             except SubmissionQualityGateError as exc:
-                await self._persist_submission_gate_failure(
+                durable_audit_reference = await self._persist_submission_gate_failure(
                     context,
                     baseline=submission_gate_baseline,
                     candidate_tree_sha=staged.snapshot.tree_sha,
                     error=exc,
                 )
+                setattr(exc, "durable_audit_reference", durable_audit_reference)
                 raise
             await self._persist_submission_gate_audit(
                 context,
@@ -3017,7 +3111,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         baseline: SubmissionGateBaseline,
         candidate_tree_sha: str,
         error: SubmissionQualityGateError,
-    ) -> None:
+    ) -> str:
         failed_result = (
             error.report if isinstance(error.report, SubmissionGateCommandResult) else None
         )
@@ -3028,7 +3122,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 [failed_result.model_dump(mode="json")] if failed_result is not None else []
             ),
         }
-        await self._persist_submission_gate_audit(
+        return await self._persist_submission_gate_audit(
             context,
             phase="submission",
             base_tree_sha=baseline.base_tree_sha,
@@ -3052,7 +3146,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         status: str,
         failure_fingerprint: str | None,
         report: dict[str, Any],
-    ) -> None:
+    ) -> str:
         """Atomically append canonical provenance and its disposable read model."""
         from orchestrator.db import (
             GraphSubmissionGateAuditRepository,
@@ -3092,6 +3186,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 created_at=event.timestamp,
             )
             await commit_with_event_outbox(session)
+        return f"graph-event:{context.run_id}:{stored.position}"
 
     async def _record_runner_baseline(
         self, context: GraphDispatchContext, baseline: RunnerBoundaryCapture
@@ -3325,10 +3420,14 @@ class GraphDispatchExecutor(SideEffectExecutor):
             "staged_artifact_missing",
             "staged_artifact_corrupt",
             "submission_repair_exhausted",
+            "submission_format_rejected",
+            "candidate_check_failed",
+            "validation_environment_blocked",
         ],
         *,
         publish_snapshot_ref: bool = True,
         error_detail: str | None = None,
+        first_error_detail: str | None = None,
         retry_after_recovery: bool = False,
         worktree_lock_held: bool = False,
     ) -> None:
@@ -3339,6 +3438,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     reason,
                     publish_snapshot_ref=publish_snapshot_ref,
                     error_detail=error_detail,
+                    first_error_detail=first_error_detail,
                     retry_after_recovery=retry_after_recovery,
                     worktree_lock_held=True,
                 )
@@ -3358,6 +3458,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 context,
                 reason,
                 error_detail=error_detail,
+                first_error_detail=first_error_detail,
                 retry_after_recovery=retry_after_recovery,
             )
             return
@@ -3372,6 +3473,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 "lease_generation": context.lease_generation,
                 "reason": reason,
                 "error_detail": error_detail,
+                "first_error_detail": first_error_detail,
                 "recovery_snapshot_id": capture.snapshot.id,
                 "recovery_snapshot_ref": capture.snapshot.ref,
                 "recovery_commit_sha": capture.snapshot.commit_sha,
@@ -3402,9 +3504,13 @@ class GraphDispatchExecutor(SideEffectExecutor):
             "staged_artifact_missing",
             "staged_artifact_corrupt",
             "submission_repair_exhausted",
+            "submission_format_rejected",
+            "candidate_check_failed",
+            "validation_environment_blocked",
         ],
         *,
         error_detail: str | None = None,
+        first_error_detail: str | None = None,
         retry_after_recovery: bool = False,
     ) -> None:
         """Request restoration from the durable baseline without a partial scan.
@@ -3433,6 +3539,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 "lease_generation": context.lease_generation,
                 "reason": reason,
                 "error_detail": error_detail,
+                "first_error_detail": first_error_detail,
                 "max_attempts": _runtime_death_max_attempts(context) or 0,
                 "retry_after_recovery": retry_after_recovery,
                 "final_tree_sha": attempt.baseline_tree_sha,
@@ -3448,6 +3555,49 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 "cache_status_evidence": [],
                 "recovery_scope": "full_baseline",
             },
+        )
+
+    async def _dispatch_validation_environment_resolution(self, item: OutboxItem) -> None:
+        """Restore the operator-selected snapshot before making the node ready."""
+        payload = item.payload
+        required = (
+            "resolution_id",
+            "node_id",
+            "execution_id",
+            "recovery_id",
+            "snapshot_selection",
+            "snapshot_id",
+            "snapshot_ref",
+            "commit_sha",
+            "tree_sha",
+        )
+        if not all(isinstance(payload.get(key), str) and payload.get(key) for key in required):
+            raise RecoveryRestoreError("validation environment resolution identity is malformed")
+        snapshot_id = str(payload["snapshot_id"])
+        snapshot_ref = str(payload["snapshot_ref"])
+        commit_sha = str(payload["commit_sha"])
+        tree_sha = str(payload["tree_sha"])
+        await self._run_worktree_boundary(
+            ensure_snapshot_ref,
+            self._worktree_path,
+            snapshot_id,
+            expected_ref=snapshot_ref,
+            expected_commit_sha=commit_sha,
+            expected_tree_sha=tree_sha,
+            lock_held=True,
+        )
+        await self._run_worktree_boundary(
+            restore_baseline_worktree,
+            self._worktree_path,
+            snapshot_id,
+            expected_tree_sha=tree_sha,
+            lock_held=True,
+        )
+        await self._handle_command_retry_stale(
+            item.run_id,
+            await self._current_position(item.run_id),
+            "complete_validation_environment_blockage_resolution",
+            {key: payload[key] for key in required},
         )
 
     async def _dispatch_snapshot_publish(

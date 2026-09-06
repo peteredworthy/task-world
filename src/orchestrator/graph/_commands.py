@@ -5207,6 +5207,14 @@ def _base_snapshot_id_for_node(
             return None, f"missing_candidate_snapshot:{candidate_id}"
         return snapshot_id, ""
 
+    if selection == "explicit_snapshot":
+        snapshot_id = (
+            selection_contract.get("candidate_id") if selection_contract is not None else None
+        )
+        if isinstance(snapshot_id, str) and snapshot_id:
+            return snapshot_id, ""
+        return None, "missing_explicit_continuation_snapshot"
+
     # Historical nodes predate semantic selection. Preserve replay/runtime
     # compatibility while all newly compiled executable nodes declare a mode.
     if payload.base_snapshot_id:

@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -34,6 +35,8 @@ SUBMISSION_GATE_WORKSPACE_SETUP_TIMEOUT_SECONDS = 15.0
 SUBMISSION_GATE_WORKSPACE_CLEANUP_TIMEOUT_SECONDS = 15.0
 SUBMISSION_GATE_MAX_COMMANDS = 8
 SUBMISSION_GATE_MAX_COMMAND_CHARS = 8_192
+SUBMISSION_GATE_MAX_FAILED_TEST_IDS = 64
+SUBMISSION_GATE_DIAGNOSTIC_CHARS = 2_048
 
 
 class SubmissionGateCommand(BaseModel):
@@ -98,6 +101,40 @@ class SubmissionGateCommandResult(BaseModel):
     stderr_bytes: int = Field(ge=0)
     stdout_truncated: bool
     stderr_truncated: bool
+    failure_category: (
+        Literal["candidate_check_failure", "validation_environment_blockage"] | None
+    ) = None
+    failed_test_ids: tuple[str, ...] = ()
+    failed_test_evidence: tuple[str, ...] = ()
+    failed_test_ids_truncated: bool = False
+    failure_identity_status: Literal["established", "unknown"] = "unknown"
+
+
+class GateRejectionEvidence(BaseModel):
+    """Bounded runner-facing evidence for one rejected gate command."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: Literal[1] = 1
+    category: Literal["candidate_check_failure", "validation_environment_blockage"]
+    command: str
+    command_source: str
+    command_sha256: str
+    exit_code: int | None
+    timed_out: bool
+    failed_test_ids: tuple[str, ...] = ()
+    failed_test_ids_truncated: bool = False
+    final_diagnostic: str
+    stdout_sha256: str
+    stderr_sha256: str
+    stdout_bytes: int = Field(ge=0)
+    stderr_bytes: int = Field(ge=0)
+    stdout_truncated: bool
+    stderr_truncated: bool
+    evidence_truncated: bool
+    failure_identity_status: Literal["established", "unknown"]
+    semantic_failure_fingerprint: str | None = None
+    durable_audit_reference: str | None = None
 
 
 class SubmissionGateReport(BaseModel):
@@ -428,6 +465,18 @@ async def enforce_submission_quality_gate(
         and baseline.base_tree_sha == base_tree_sha
         else set[str]()
     )
+    baseline_failure_identities = (
+        {identity for identity in baseline.failure_fingerprints if identity}
+        if baseline is not None
+        and baseline.run_id == run_id
+        and baseline.node_id == node_id
+        and baseline.execution_id == execution_id
+        and baseline.lease_id == lease_id
+        and baseline.lease_generation == lease_generation
+        and baseline.base_snapshot_id == base_snapshot_id
+        and baseline.base_tree_sha == base_tree_sha
+        else set[str]()
+    )
     if commands:
         expected_tree_sha = candidate_tree_sha
         if snapshot_commit_sha is None or expected_tree_sha is None:
@@ -450,16 +499,33 @@ async def enforce_submission_quality_gate(
                     worktree_path=workspace.checkout,
                     environment=workspace.environment,
                 )
-                results.append(result)
                 if result.status != "passed":
                     fingerprint = submission_gate_failure_fingerprint(result)
+                    if (
+                        result.source == "project_test_command"
+                        and fingerprint is not None
+                        and fingerprint in baseline_failure_identities
+                        and not any(
+                            evidence.startswith("MISSING:")
+                            for evidence in result.failed_test_evidence
+                        )
+                    ):
+                        result = result.model_copy(
+                            update={"failure_category": "validation_environment_blockage"}
+                        )
+                    results.append(result)
                     # A killed command is an incomplete observation. Partial
                     # output identity is scheduling-dependent and can never
                     # authorize a baseline exemption.
-                    if result.status == "failed" and fingerprint in baseline_fingerprints:
+                    if (
+                        result.status == "failed"
+                        and fingerprint is not None
+                        and fingerprint in baseline_fingerprints
+                    ):
                         exempted = True
                         continue
                     raise SubmissionQualityGateError(_failure_message(result), report=result)
+                results.append(result)
         finally:
             await _cleanup_workspace_cancellation_safe(Path(worktree_path), workspace)
     return SubmissionGateReport(
@@ -532,9 +598,10 @@ async def capture_submission_gate_baseline(
         finally:
             await _cleanup_workspace_cancellation_safe(Path(worktree_path), workspace)
     failures = tuple(
-        submission_gate_failure_fingerprint(result)
+        fingerprint
         for result in results
         if result.status != "passed"
+        if (fingerprint := submission_gate_failure_fingerprint(result)) is not None
     )
     return SubmissionGateBaseline(
         run_id=run_id,
@@ -544,27 +611,65 @@ async def capture_submission_gate_baseline(
         lease_generation=lease_generation,
         base_snapshot_id=base_snapshot_id,
         base_tree_sha=base_tree_sha,
-        status="failed" if failures else "passed" if results else "no_configured_commands",
+        status=(
+            "failed"
+            if any(result.status != "passed" for result in results)
+            else "passed"
+            if results
+            else "no_configured_commands"
+        ),
         results=results,
         failure_fingerprints=failures,
     )
 
 
-def submission_gate_failure_fingerprint(result: SubmissionGateCommandResult) -> str:
-    """Return the exact stable identity used for unchanged-failure exemptions."""
+def submission_gate_failure_fingerprint(result: SubmissionGateCommandResult) -> str | None:
+    """Return semantic failure identity, separate from output-integrity hashes.
+
+    A timeout is incomplete evidence. Likewise, an arbitrary command failure
+    without parsed test evidence has no safe unchanged-failure comparison.
+    """
+    if result.status != "failed" or result.failure_identity_status != "established":
+        return None
     payload = {
         "command_sha256": result.command_sha256,
         "source": result.source,
-        "status": result.status,
-        "exit_code": result.exit_code,
-        "stdout_sha256": result.stdout_sha256,
-        "stderr_sha256": result.stderr_sha256,
-        "stdout_bytes": result.stdout_bytes,
-        "stderr_bytes": result.stderr_bytes,
+        "failed_test_evidence": sorted(result.failed_test_evidence),
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+def gate_rejection_evidence(result: SubmissionGateCommandResult) -> GateRejectionEvidence:
+    """Build compact structured feedback while retaining full audit integrity."""
+    diagnostic, diagnostic_truncated = _final_diagnostic(result)
+    return GateRejectionEvidence(
+        category=result.failure_category or "candidate_check_failure",
+        command=result.command[:512],
+        command_source=result.source,
+        command_sha256=result.command_sha256,
+        exit_code=result.exit_code,
+        timed_out=result.status == "timeout",
+        failed_test_ids=result.failed_test_ids,
+        failed_test_ids_truncated=result.failed_test_ids_truncated,
+        final_diagnostic=diagnostic,
+        stdout_sha256=result.stdout_sha256,
+        stderr_sha256=result.stderr_sha256,
+        stdout_bytes=result.stdout_bytes,
+        stderr_bytes=result.stderr_bytes,
+        stdout_truncated=result.stdout_truncated,
+        stderr_truncated=result.stderr_truncated,
+        evidence_truncated=(
+            diagnostic_truncated
+            or result.stdout_truncated
+            or result.stderr_truncated
+            or result.failed_test_ids_truncated
+            or len(result.command) > 512
+        ),
+        failure_identity_status=result.failure_identity_status,
+        semantic_failure_fingerprint=submission_gate_failure_fingerprint(result),
+    )
 
 
 def submission_gate_commands_from_baseline(
@@ -704,6 +809,11 @@ async def _run_command(
     status: Literal["passed", "failed", "timeout"] = (
         "timeout" if timed_out else "passed" if proc.returncode == 0 else "failed"
     )
+    stdout_text = stdout_bytes.decode("utf-8", errors="replace")
+    stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+    failed_test_ids, failed_test_evidence, failed_test_ids_truncated = _parse_failed_test_evidence(
+        f"{stdout_text}\n{stderr_text}"
+    )
     return SubmissionGateCommandResult(
         run_id=run_id,
         node_id=node_id,
@@ -715,15 +825,50 @@ async def _run_command(
         status=status,
         exit_code=None if timed_out else proc.returncode,
         duration_ms=max(0, int((perf_counter() - started) * 1000)),
-        stdout_tail=stdout_bytes.decode("utf-8", errors="replace"),
-        stderr_tail=stderr_bytes.decode("utf-8", errors="replace"),
+        stdout_tail=stdout_text,
+        stderr_tail=stderr_text,
         stdout_sha256=stdout_hash,
         stderr_sha256=stderr_hash,
         stdout_bytes=stdout_total,
         stderr_bytes=stderr_total,
         stdout_truncated=stdout_truncated,
         stderr_truncated=stderr_truncated,
+        failure_category="candidate_check_failure" if status != "passed" else None,
+        failed_test_ids=failed_test_ids,
+        failed_test_evidence=failed_test_evidence,
+        failed_test_ids_truncated=failed_test_ids_truncated,
+        failure_identity_status=(
+            "established"
+            if status == "failed" and failed_test_evidence and not failed_test_ids_truncated
+            else "unknown"
+        ),
     )
+
+
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_PYTEST_SUMMARY = re.compile(r"^(FAILED|ERROR)\s+([^\s]+?)(?:\s+-|$)", re.MULTILINE)
+_PYTEST_MISSING = re.compile(r"^ERROR:\s+file or directory not found:\s+(\S+)", re.MULTILINE)
+
+
+def _parse_failed_test_evidence(
+    output: str,
+) -> tuple[tuple[str, ...], tuple[str, ...], bool]:
+    clean = _ANSI_ESCAPE.sub("", output)
+    evidence = {f"{outcome}:{test_id}" for outcome, test_id in _PYTEST_SUMMARY.findall(clean)}
+    evidence.update(f"MISSING:{path}" for path in _PYTEST_MISSING.findall(clean))
+    ordered = sorted(evidence)
+    bounded = tuple(ordered[:SUBMISSION_GATE_MAX_FAILED_TEST_IDS])
+    identifiers = tuple(item.split(":", 1)[1] for item in bounded)
+    return identifiers, bounded, len(ordered) > len(bounded)
+
+
+def _final_diagnostic(result: SubmissionGateCommandResult) -> tuple[str, bool]:
+    combined = "\n".join(
+        value.strip() for value in (result.stdout_tail, result.stderr_tail) if value.strip()
+    )
+    if len(combined) <= SUBMISSION_GATE_DIAGNOSTIC_CHARS:
+        return combined, False
+    return combined[-SUBMISSION_GATE_DIAGNOSTIC_CHARS:], True
 
 
 async def _start_gate_process_cancellation_safe(
@@ -930,7 +1075,6 @@ def _isolated_gate_environment(
     environment.update({key: str(value) for key, value in directories.items()})
     environment.update(
         {
-            "ORCHESTRATOR_EVENT_JOURNAL_PATH": str(runtime / "state" / "history.jsonl"),
             "COVERAGE_FILE": str(runtime / "state" / ".coverage"),
             "PATH": _safe_gate_path(
                 virtual_environment / "bin",
@@ -1242,6 +1386,7 @@ __all__ = [
     "SUBMISSION_GATE_OUTPUT_BYTES",
     "SUBMISSION_GATE_TIMEOUT_SECONDS",
     "PROJECT_SUBMISSION_GATE_TIMEOUT_SECONDS",
+    "GateRejectionEvidence",
     "ReadOnlyExecutionWorkspace",
     "SubmissionGateApplicability",
     "SubmissionGateCommand",
@@ -1254,6 +1399,7 @@ __all__ = [
     "capture_submission_gate_baseline",
     "cleanup_read_only_execution_workspace",
     "enforce_submission_quality_gate",
+    "gate_rejection_evidence",
     "resolve_submission_gate_commands",
     "resolve_submission_gate_applicability",
     "prepare_read_only_execution_workspace",

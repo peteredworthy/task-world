@@ -745,6 +745,138 @@ def test_submission_repair_exhaustion_restores_then_fails_without_retry() -> Non
     assert terminal.payload["trigger"] == "submission_repair_exhausted"
 
 
+def test_validation_environment_blockage_releases_lease_without_retry() -> None:
+    projection = _staged_projection(attempt_number=1)
+    requested = _apply(
+        projection,
+        "request_runner_recovery",
+        {
+            "execution_id": "exec",
+            "node_id": "node",
+            "lease_id": "lease",
+            "lease_generation": 1,
+            "reason": "validation_environment_blocked",
+            "error_detail": "test tool cannot create its runtime directory",
+            "recovery_snapshot_id": "rejected-exec",
+            "recovery_snapshot_ref": "refs/orchestrator/snapshots/rejected-exec",
+            "recovery_commit_sha": OID,
+            "final_tree_sha": OID,
+            "boundary_hash": boundary_manifest_hash(OID, []),
+            "boundary_entries": [],
+        },
+    )
+    projection = reduce_event(projection, requested[0])
+    request = requested[0].payload
+    proof = recovery_proof_hash(
+        execution_id="exec",
+        recovery_id=request["recovery_id"],
+        node_id="node",
+        lease_id="lease",
+        lease_generation=1,
+        baseline_snapshot_id=request["baseline_snapshot_id"],
+        baseline_tree_sha=request["baseline_tree_sha"],
+        requested_paths=tuple(request["paths"]),
+        restored_paths=tuple(request["paths"]),
+        removed_paths=(),
+    )
+
+    completed = _apply(
+        projection,
+        "complete_runner_recovery",
+        {
+            "execution_id": "exec",
+            "recovery_id": request["recovery_id"],
+            "node_id": "node",
+            "lease_id": "lease",
+            "lease_generation": 1,
+            "baseline_snapshot_id": request["baseline_snapshot_id"],
+            "baseline_tree_sha": request["baseline_tree_sha"],
+            "requested_paths": request["paths"],
+            "proof_hash": proof,
+            "restored_paths": request["paths"],
+            "removed_paths": [],
+        },
+    )
+
+    assert any(event.event_type == "lease_revoked" for event in completed)
+    assert not any(event.event_type == "runtime_retry_scheduled" for event in completed)
+    failure = next(event for event in completed if event.event_type == "output_record_accepted")
+    assert failure.payload["value"] == {
+        "failed_node_id": "node",
+        "phase": "submission",
+        "failure_class": "infrastructure_failure",
+        "error_class": "validation_environment_blocked",
+        "retryable": False,
+        "lease_id": "lease",
+        "execution_id": "exec",
+        "lease_generation": 1,
+        "reason": "test tool cannot create its runtime directory",
+        "rejected_candidate_snapshot_id": "rejected-exec",
+        "rejected_candidate_snapshot_ref": "refs/orchestrator/snapshots/rejected-exec",
+    }
+    terminal = next(event for event in completed if event.event_type == "node_state_changed")
+    assert terminal.payload["new_state"] == "failed"
+    assert terminal.payload["trigger"] == "validation_environment_blocked"
+    assert not any(
+        event.event_type == "cleanup_requested" and event.payload.get("snapshot_role") == "recovery"
+        for event in completed
+    )
+    for event in completed:
+        projection = reduce_event(projection, event)
+    resolution = apply_command(
+        projection,
+        [],
+        "resolve_validation_environment_blockage",
+        {
+            "expected_graph_position": 99,
+            "node_id": "node",
+            "execution_id": "exec",
+            "recovery_id": request["recovery_id"],
+            "snapshot_selection": "rejected_candidate",
+        },
+        GraphCommandContext(
+            run_id="run",
+            current_graph_position=99,
+            actor=Actor(kind=ActorKind.HUMAN, id="operator", role="operator"),
+        ),
+        FakeClock(),
+        SequentialIdGenerator(),
+    )
+    assert [event.event_type for event in resolution] == [
+        "validation_environment_blockage_resolution_requested"
+    ]
+    projection = reduce_event(projection, resolution[0])
+    resolution_payload = resolution[0].payload
+    completed_resolution = _apply_raw(
+        projection,
+        "complete_validation_environment_blockage_resolution",
+        {
+            key: resolution_payload[key]
+            for key in (
+                "resolution_id",
+                "node_id",
+                "execution_id",
+                "recovery_id",
+                "snapshot_selection",
+                "snapshot_id",
+                "snapshot_ref",
+                "commit_sha",
+                "tree_sha",
+            )
+        },
+    )
+    assert [event.event_type for event in completed_resolution] == [
+        "validation_environment_blockage_resolved",
+        "node_authority_changed",
+        "node_state_changed",
+    ]
+    for event in completed_resolution:
+        projection = reduce_event(projection, event)
+    attempt = execution_attempts_view(projection)["exec"]
+    assert attempt.continuation_resolution_status == "completed"
+    assert node_states_view(projection)["node"] == "ready"
+
+
 def test_runner_boundary_commands_stage_without_publication_then_request_proven_recovery() -> None:
     projection = _projection()
     baseline = _apply(

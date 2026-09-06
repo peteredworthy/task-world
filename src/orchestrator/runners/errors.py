@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from orchestrator.runners.types import SubmissionAcknowledgement
+
 
 class AgentError(Exception):
     """Base class for agent runner errors."""
@@ -30,6 +32,16 @@ class AgentExecutionError(AgentError):
         self.agent_runner_type = agent_runner_type
         self.message = message
         super().__init__(f"Agent runner '{agent_runner_type}' execution failed: {message}")
+
+
+class SubmissionRejectedError(AgentError, ValueError):
+    """Typed callback rejection carrying the complete acknowledgement."""
+
+    def __init__(self, acknowledgement: SubmissionAcknowledgement) -> None:
+        if acknowledgement.disposition != "rejected":
+            raise ValueError("SubmissionRejectedError requires a rejected acknowledgement")
+        self.acknowledgement = acknowledgement
+        super().__init__(f"submit callback rejected: {acknowledgement.model_dump_json()}")
 
 
 class SubmissionRepairExhaustedError(AgentExecutionError):

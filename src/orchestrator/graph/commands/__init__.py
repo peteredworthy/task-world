@@ -51,7 +51,9 @@ from orchestrator.graph.command_models import (
     WitnessRunnerCompletionCommand,
     FinalizeRunnerExecutionCommand,
     CompleteRunnerRecoveryCommand,
+    CompleteValidationEnvironmentBlockageResolutionCommand,
     RequestRunnerRecoveryCommand,
+    ResolveValidationEnvironmentBlockageCommand,
 )
 from orchestrator.graph.commands.callbacks import (
     handle_acknowledge_start,
@@ -66,10 +68,12 @@ from orchestrator.graph.commands.callbacks import (
 )
 from orchestrator.graph.commands.boundary import (
     handle_complete_runner_recovery,
+    handle_complete_validation_environment_blockage_resolution,
     handle_finalize_runner_execution,
     handle_record_runner_baseline,
     handle_record_managed_snapshot_cleanup_applied,
     handle_request_runner_recovery,
+    handle_resolve_validation_environment_blockage,
     handle_stage_runner_submission,
     handle_witness_runner_completion,
 )
@@ -126,6 +130,14 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     ),
     "complete_runner_recovery": CommandSpec(
         CompleteRunnerRecoveryCommand, handle_complete_runner_recovery
+    ),
+    "resolve_validation_environment_blockage": CommandSpec(
+        ResolveValidationEnvironmentBlockageCommand,
+        handle_resolve_validation_environment_blockage,
+    ),
+    "complete_validation_environment_blockage_resolution": CommandSpec(
+        CompleteValidationEnvironmentBlockageResolutionCommand,
+        handle_complete_validation_environment_blockage_resolution,
     ),
     "submit_patch": CommandSpec(SubmitPatchCommand, handle_submit_patch),
     "acknowledge_start": CommandSpec(AcknowledgeStartCommand, handle_acknowledge_start),

@@ -115,6 +115,31 @@ class SubmitAgent:
         return None
 
 
+class RejectedSubmitThenReturnAgent(SubmitAgent):
+    """Receives real callback rejection feedback, then returns normally."""
+
+    def __init__(self) -> None:
+        self.rejection: str | None = None
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        del on_checklist_update, on_output, on_grade, on_agent_metadata, on_escalation
+        Path(context.working_dir, "README.md").write_text("candidate is broken\n")
+        try:
+            await on_submit()
+        except ValueError as exc:
+            self.rejection = str(exc)
+        return ExecutionResult(success=True)
+
+
 class RetainedAcknowledgementSubmitAgent(SubmitAgent):
     """Retains the production callback to model duplicate/reconnect delivery."""
 
@@ -1928,6 +1953,83 @@ async def test_graph_runner_unsuccessful_result_recovers_staged_submission_befor
             for lease in leases_view(projection_after_recovery).values()
             if lease.state == "active"
         )
+    )
+
+
+@pytest.mark.asyncio
+async def test_normal_return_after_gate_rejection_preserves_candidate_failure(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    _, session_factory = file_db
+    repo = tmp_path / "repo-rejected-submit"
+    _init_repo(repo)
+    (repo / "README.md").write_text("ready\n")
+    config_dir = repo / ".task-world"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        'test_command: "grep -q ready README.md"\n', encoding="utf-8"
+    )
+    subprocess.run(
+        ["git", "add", "README.md", ".task-world/config.yaml"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "configure gate",
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    clock = FixedClock()
+    ids = SequentialIds()
+    run_id = "graph-runner-rejected-submit"
+    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    agent = RejectedSubmitThenReturnAgent()
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        AgentFactory({"worker": agent, "verifier": GradingAgent("A")}),
+        worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+    )
+    dispatcher = OutboxDispatcher(session_factory, executor, clock)
+
+    await _schedule_dispatch_and_wait(controller, dispatcher, executor, run_id)
+
+    assert agent.rejection is not None
+    assert '"rejection_category":"candidate_check_failed"' in agent.rejection
+    assert '"durable_audit_reference":"graph-event:' in agent.rejection
+    events = await _read_events(session_factory, run_id)
+    request = next(event for event in events if event.event_type == "runner_recovery_requested")
+    assert request.payload["reason"] == "candidate_check_failed"
+    assert request.payload["reason"] != "runner_died"
+    execution_id = str(request.payload["execution_id"])
+    before = execution_attempts_view(await controller.read_projection(run_id))[execution_id]
+    assert before.recovery_snapshot_id is not None
+    assert before.recovery_snapshot_ref is not None
+
+    await dispatcher.dispatch_pending(run_id=run_id, allowed_kinds=frozenset({"runner_recovery"}))
+    after = execution_attempts_view(await controller.read_projection(run_id))[execution_id]
+    assert after.recovery_reason == "candidate_check_failed"
+    assert after.retry_scheduled is True
+    assert not any(
+        event.event_type == "cleanup_requested"
+        and event.payload.get("snapshot_role") == "recovery"
+        and event.payload.get("execution_id") == execution_id
+        for event in await _read_events(session_factory, run_id)
     )
 
 

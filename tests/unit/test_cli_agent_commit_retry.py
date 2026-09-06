@@ -19,7 +19,12 @@ from typing import Any
 import pytest
 
 from orchestrator.git import WorktreeCommitError
-from orchestrator.runners import CLIAgent, SubmissionAcknowledgement
+from orchestrator.runners import (
+    CLIAgent,
+    SubmissionAcknowledgement,
+    SubmissionRejectedError,
+    SubmissionRejectionEvidence,
+)
 from orchestrator.runners.errors import AgentExecutionError
 from orchestrator.runners.types import ExecutionContext
 
@@ -132,10 +137,21 @@ async def test_quality_gate_rejection_reprompts_with_actionable_output(
     async def on_submit() -> None:
         submit_calls.append(1)
         if len(submit_calls) == 1:
-            raise ValueError(
-                "submit callback rejected: submission quality gate failed with "
-                "exit code 7; command='uv run pytest'; Bounded output tail: "
-                "test_example failed"
+            detail = (
+                "submission quality gate failed with exit code 7; "
+                "command='uv run pytest'; Bounded output tail: test_example failed"
+            )
+            raise SubmissionRejectedError(
+                SubmissionAcknowledgement(
+                    disposition="rejected",
+                    message=detail,
+                    rejection_category="candidate_check_failed",
+                    rejection_evidence=SubmissionRejectionEvidence(
+                        category="candidate_check_failed",
+                        command="uv run pytest",
+                        final_diagnostic="test_example failed",
+                    ),
+                )
             )
 
     agent = CLIAgent(

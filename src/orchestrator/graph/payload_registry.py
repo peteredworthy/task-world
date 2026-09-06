@@ -341,6 +341,14 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
             "runtime_retry_scheduled",
             "generation lease_id node_id policy reason retry_not_before",
         ),
+        "validation_environment_blockage_resolution_requested": _same(
+            "validation_environment_blockage_resolution_requested",
+            "resolution_id node_id execution_id recovery_id snapshot_selection snapshot_id snapshot_ref commit_sha tree_sha",
+        ),
+        "validation_environment_blockage_resolved": _same(
+            "validation_environment_blockage_resolved",
+            "resolution_id node_id execution_id recovery_id snapshot_selection snapshot_id snapshot_ref commit_sha tree_sha",
+        ),
         "runner_baseline_recorded": _spec(
             "runner_baseline_recorded",
             projection="execution_id node_id lease_id lease_generation lease_base_snapshot_id baseline_snapshot_id baseline_snapshot_ref baseline_commit_sha baseline_tree_sha boundary_hash entries cache_authority_hash cache_roots cache_status_evidence",
@@ -371,7 +379,7 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         ),
         "runner_recovery_requested": _spec(
             "runner_recovery_requested",
-            projection="execution_id recovery_id node_id lease_id lease_generation reason error_detail max_attempts retry_after_recovery recovery_snapshot_id recovery_snapshot_ref recovery_commit_sha baseline_snapshot_id baseline_tree_sha final_tree_sha final_snapshot_id final_snapshot_ref final_commit_sha final_boundary_hash final_boundary_entries cache_authority_hash cache_roots observed_cache_roots authorized_cache_roots legacy_cache_root_paths cache_status_evidence paths recovery_scope",
+            projection="execution_id recovery_id node_id lease_id lease_generation reason error_detail first_error_detail max_attempts retry_after_recovery recovery_snapshot_id recovery_snapshot_ref recovery_commit_sha baseline_snapshot_id baseline_tree_sha final_tree_sha final_snapshot_id final_snapshot_ref final_commit_sha final_boundary_hash final_boundary_entries cache_authority_hash cache_roots observed_cache_roots authorized_cache_roots legacy_cache_root_paths cache_status_evidence paths recovery_scope",
             light="execution_id recovery_id node_id lease_id lease_generation reason error_detail",
             summary="execution_id recovery_id node_id lease_id lease_generation reason error_detail",
             node_detail="execution_id recovery_id node_id lease_id lease_generation reason error_detail",

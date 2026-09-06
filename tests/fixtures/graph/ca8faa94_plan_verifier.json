@@ -1,0 +1,200 @@
+{
+  "node": {
+    "node_id": "verifier-plan-description-first",
+    "kind": "verifier",
+    "role": "verifier",
+    "state": "planned",
+    "task_region_id": "description-first-work-plan-region",
+    "attempt_number": 1,
+    "base_snapshot_selection": "run_baseline",
+    "patch_id": "description-first-plan-skeleton",
+    "inputs": [
+      {
+        "port": "semantic_artifact",
+        "direction": "input",
+        "schema": "SemanticArtifact",
+        "required": true
+      },
+      {
+        "port": "requirement_1",
+        "direction": "input",
+        "schema": "Requirement",
+        "required": true
+      }
+    ],
+    "outputs": [
+      {
+        "port": "verification_report",
+        "direction": "output",
+        "schema": "VerificationReport",
+        "required": true
+      }
+    ],
+    "acceptance": [
+      "The discovery artifact covers the typed work-plan contract, requirement provenance, trusted runtime context, deterministic compilation, atomic validation, and required safeguards.",
+      "The discovery artifact is suitable input for successor planning."
+    ],
+    "bound_requirement_ids": [
+      "dynamic_feature_acceptance"
+    ],
+    "max_attempts": 3,
+    "objective": "Independently verify the discovery artifact against the feature specification and the reliable-plan contract before any effectful implementation work is scheduled.",
+    "profile": "coder",
+    "cache_authority_hash": "4dfbaf5a268d8e51c8ef183a024fcf4da01cc0c6a1774f5aa02f6c5533e90ba0",
+    "semantic_stage": "plan_verification",
+    "semantic_schema_id": "reliable-plan-implementation-plan",
+    "semantic_schema_version": 1,
+    "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
+    "reliable_plan_qualification_evidence_hash": "sha256:e1787e8944c969ac28861221d6c892ad1ec9d357f201eeda9b3d5419f05c37cd",
+    "reliable_plan_assignment_carrier": {
+      "skeleton_id": "reliable-plan-fff4f6b7-v1",
+      "arm": {
+        "arm_id": "description-first-luna-live-1",
+        "planner": {
+          "runner_type": "codex_server",
+          "model": "gpt-5.6-luna",
+          "profile": "architect"
+        },
+        "discovery_worker": {
+          "runner_type": "codex_server",
+          "model": "gpt-5.6-luna",
+          "profile": "coder"
+        },
+        "implementation_worker": {
+          "runner_type": "codex_server",
+          "model": "gpt-5.6-luna",
+          "profile": "coder"
+        },
+        "correction_worker": {
+          "runner_type": "codex_server",
+          "model": "gpt-5.6-luna",
+          "profile": "coder"
+        },
+        "verifier": {
+          "runner_type": "codex_server",
+          "model": "gpt-5.6-luna",
+          "profile": "coder"
+        },
+        "successor_planner": {
+          "runner_type": "codex_server",
+          "model": "gpt-5.6-luna",
+          "profile": "architect"
+        }
+      },
+      "selected_runner_type": "codex_server"
+    },
+    "reliable_plan_assignment_role": "verifier",
+    "reliable_plan_selected_runner_type": "codex_server",
+    "runner_model_override": "gpt-5.6-luna"
+  },
+  "requirement": {
+    "record_id": "requirement-dynamic-feature-acceptance",
+    "record_kind": "graph_record",
+    "record_type": "requirement_record",
+    "producer_node_id": "requirement-dynamic-feature-acceptance",
+    "port": "requirement",
+    "schema": "RequirementRecord",
+    "value": {
+      "id": "dynamic_feature_acceptance",
+      "text": "Implement the first small production slice of description-first planning.\n\nContext\n\nThe current planner must supply low-level graph mechanics that the orchestrator already knows: node and record IDs, ports, verifier wiring, snapshots, schema versions, and failure continuations. The intended architecture is for agents to describe substantive work while deterministic code constructs the execution machinery.\n\nThis task is deliberately limited to a typed work-plan contract and pure compilation of one standard implementation region. Do not implement the complete description-first workflow or replace the existing planner path.\n\nRequired outcome\n\n1. Introduce a frozen, extra-forbid Pydantic work-plan model containing:\n   - outcome\n   - source requirements, including their source references\n   - dependencies\n   - scope and constraints\n   - expected result\n   - acceptance obligations\n   - open questions\n\n2. Distinguish requirements extracted from a source from requirements inferred by the planner. Preserve that provenance in the typed model.\n\n3. The agent-authored work plan must not contain execution mechanics such as:\n   - graph node, edge, port, record, candidate, or snapshot IDs\n   - schema versions\n   - runner leases\n   - verifier/check node wiring\n   - correction continuations\n\n4. Add a pure deterministic compiler entry point that accepts:\n   - the typed work plan\n   - separately supplied trusted runtime context\n   - the existing execution policy/configuration\n\n   It must expand one standard effectful implementation region using existing graph macros and contracts. The generated region must include the existing builder, deterministic check, independent verifier, and bounded correction behavior.\n\n5. Allocate and bind all execution identities in code. Identical inputs and trusted context must produce equivalent output.\n\n6. Validate the complete generated region before returning it. Invalid input or generated output must fail atomically without returning a partial region.\n\n7. Export the new public models and compiler function through `orchestrator.graph`. Do not introduce imports through private graph submodules from other top-level modules.\n\nScope constraints\n\n- Keep the existing graph runtime and supported reliable-plan path unchanged.\n- Do not add an API endpoint, UI, database table, migration, dependency, or second execution engine.\n- Do not remove or weaken provenance, snapshot, evidence, replay, lease, or verification safeguards.\n- Do not modify qualification/admission behavior in this task.\n- Do not introduce generic abstractions for hypothetical future workflow policies.\n- Use existing macros and canonical graph command/model types.\n- Follow AGENTS.md, including no mocks or monkeypatching.\n\nTests\n\nCreate `tests/unit/test_work_plan_compiler.py` with focused real-object tests proving:\n\n1. Valid work-plan input compiles into one complete standard implementation region.\n2. The agent-facing model contains no low-level execution identity fields.\n3. Extracted and inferred requirement provenance survives compilation.\n4. Identical inputs produce equivalent compiled output.\n5. Trusted runtime context, rather than agent input, determines generated identities and bindings.\n6. Missing acceptance obligations are rejected.\n7. Unknown fields and attempted low-level graph fields are rejected.\n8. A compilation or validation failure returns no partial commands or patch.\n9. The compiled result satisfies the existing graph boundary validation.\n10. Existing reliable-plan compiler and macro tests remain unchanged and pass.\n\nDocumentation\n\nAdd a short section to `docs/ARCHITECTURE.md` describing the work-plan contract as an optional authoring layer above the existing graph runtime. Clearly mark the API/runtime integration and comparative experiment as future work.\n\nValidation\n\nRun the new focused tests, relevant existing graph compiler/macro/boundary tests, Ruff, Pyright, and the graph projection boundary check. Report exact results and any work deliberately left for a later slice.",
+      "desc": "Implement the first small production slice of description-first planning.\n\nContext\n\nThe current planner must supply low-level graph mechanics that the orchestrator already knows: node and record IDs, ports, verifier wiring, snapshots, schema versions, and failure continuations. The intended architecture is for agents to describe substantive work while deterministic code constructs the execution machinery.\n\nThis task is deliberately limited to a typed work-plan contract and pure compilation of one standard implementation region. Do not implement the complete description-first workflow or replace the existing planner path.\n\nRequired outcome\n\n1. Introduce a frozen, extra-forbid Pydantic work-plan model containing:\n   - outcome\n   - source requirements, including their source references\n   - dependencies\n   - scope and constraints\n   - expected result\n   - acceptance obligations\n   - open questions\n\n2. Distinguish requirements extracted from a source from requirements inferred by the planner. Preserve that provenance in the typed model.\n\n3. The agent-authored work plan must not contain execution mechanics such as:\n   - graph node, edge, port, record, candidate, or snapshot IDs\n   - schema versions\n   - runner leases\n   - verifier/check node wiring\n   - correction continuations\n\n4. Add a pure deterministic compiler entry point that accepts:\n   - the typed work plan\n   - separately supplied trusted runtime context\n   - the existing execution policy/configuration\n\n   It must expand one standard effectful implementation region using existing graph macros and contracts. The generated region must include the existing builder, deterministic check, independent verifier, and bounded correction behavior.\n\n5. Allocate and bind all execution identities in code. Identical inputs and trusted context must produce equivalent output.\n\n6. Validate the complete generated region before returning it. Invalid input or generated output must fail atomically without returning a partial region.\n\n7. Export the new public models and compiler function through `orchestrator.graph`. Do not introduce imports through private graph submodules from other top-level modules.\n\nScope constraints\n\n- Keep the existing graph runtime and supported reliable-plan path unchanged.\n- Do not add an API endpoint, UI, database table, migration, dependency, or second execution engine.\n- Do not remove or weaken provenance, snapshot, evidence, replay, lease, or verification safeguards.\n- Do not modify qualification/admission behavior in this task.\n- Do not introduce generic abstractions for hypothetical future workflow policies.\n- Use existing macros and canonical graph command/model types.\n- Follow AGENTS.md, including no mocks or monkeypatching.\n\nTests\n\nCreate `tests/unit/test_work_plan_compiler.py` with focused real-object tests proving:\n\n1. Valid work-plan input compiles into one complete standard implementation region.\n2. The agent-facing model contains no low-level execution identity fields.\n3. Extracted and inferred requirement provenance survives compilation.\n4. Identical inputs produce equivalent compiled output.\n5. Trusted runtime context, rather than agent input, determines generated identities and bindings.\n6. Missing acceptance obligations are rejected.\n7. Unknown fields and attempted low-level graph fields are rejected.\n8. A compilation or validation failure returns no partial commands or patch.\n9. The compiled result satisfies the existing graph boundary validation.\n10. Existing reliable-plan compiler and macro tests remain unchanged and pass.\n\nDocumentation\n\nAdd a short section to `docs/ARCHITECTURE.md` describing the work-plan contract as an optional authoring layer above the existing graph runtime. Clearly mark the API/runtime integration and comparative experiment as future work.\n\nValidation\n\nRun the new focused tests, relevant existing graph compiler/macro/boundary tests, Ruff, Pyright, and the graph projection boundary check. Report exact results and any work deliberately left for a later slice.",
+      "priority": "critical",
+      "source": "routine",
+      "version": "initial",
+      "must": true
+    }
+  },
+  "artifact": {
+    "port": "semantic_artifact",
+    "producer_node_id": "worker-discovery-description-first",
+    "record_id": "semantic-artifact-exec-34522d387f504b62a3c18e8c8fa33ac8-semantic_artifact",
+    "record_kind": "graph_record",
+    "record_type": "semantic_artifact",
+    "schema": "SemanticArtifact",
+    "schema_version": 1,
+    "value": {
+      "authority_status": "accepted",
+      "content": {
+        "batches": [
+          {
+            "acceptance": [
+              "Top-level model fields are the substantive planning contract listed in the bound specification; low-level execution identity/mechanics are not model fields.",
+              "Requirement entries retain source references and explicitly distinguish extracted requirements from planner-inferred requirements; compilation must not collapse that distinction.",
+              "Pydantic validation is frozen and extra-forbid, so unknown fields and attempted node/edge/port/record/candidate/snapshot IDs, schema versions, leases, verifier wiring, or correction continuations fail at the authoring boundary.",
+              "The model is an authoring layer only; existing compile_routine and reliable-plan behavior remain unchanged."
+            ],
+            "batch_id": "work-plan-contract",
+            "objective": "Add an optional frozen, extra-forbid Pydantic authoring contract above the graph runtime, with outcome; requirements (each requirement preserving source references and an extracted-versus-inferred provenance discriminator); dependencies; scope; constraints; expected_result; acceptance_obligations; and open_questions.",
+            "requirement_ids": [
+              "dynamic_feature_acceptance"
+            ],
+            "scope": [
+              "new public graph work-plan models",
+              "provenance-preserving requirement entries",
+              "orchestrator.graph exports"
+            ]
+          },
+          {
+            "acceptance": [
+              "Agent-authored substantive data supplies objective/outcome, scope/constraints, expected result, dependencies, acceptance obligations, open questions, and provenance; trusted context supplies run/region/batch/source-record/schema/binding identities and authoritative runtime configuration.",
+              "All node, edge, record, candidate, snapshot, and execution identities and bindings are allocated by deterministic code from trusted context; equal WorkPlan plus equal trusted context/policy yields equivalent output.",
+              "Compose the existing create_effectful_batch contract: one write builder/implementer with bounded objective, scope/acceptance and effectful-write authority; deterministic check node(s) with trusted command_definition or command_binding; candidate edge to the verifier; check-result edges to the verifier; and requirement/evidence bindings.",
+              "Use command_binding='dynamic_feature_hidden_oracle' for the hidden check path so the agent cannot inject the hidden command. Existing dynamic runtime inputs are feature_spec_path/content/source, acceptance_command, timeout (default 180 and max 3600), hidden-oracle binding, patch budget (default 8), and gap policy profile (default standard); the raw hidden command remains runtime-owned.",
+              "The independent verifier is read-only and consumes the generated candidate plus every check result and bound requirement/evidence; it must not declare candidate_id itself."
+            ],
+            "batch_id": "trusted-standard-region",
+            "objective": "Implement a pure deterministic compiler that translates one validated WorkPlan plus separately supplied trusted runtime context and existing execution policy into one complete standard effectful implementation region.",
+            "requirement_ids": [
+              "dynamic_feature_acceptance"
+            ],
+            "scope": [
+              "pure compiler entry point",
+              "trusted runtime identity and binding context",
+              "existing graph macros and canonical command/model contracts"
+            ]
+          },
+          {
+            "acceptance": [
+              "Build the complete local PatchEnvelope and macro expansion first; validate MacroInvocation, PatchOp, PatchEnvelope, node and edge port contracts, duplicate identities, stale/read-set rules, cycles, poisoned edges, topology, semantic-stage invariants, and reliable-plan topology before returning; any error returns no partial commands or patch.",
+              "The standard region uses accepted semantic plan and passed independent plan-verification lineage where required by the existing effectful-batch topology, binds requirement source records, and preserves semantic artifact schema id/version and source/provenance fields.",
+              "Correction is a separate bounded corrective region using create_corrective_region, exact failed verification and failed check record/source IDs, classified-gap evidence, and either accepted_region or rejected_candidate snapshot selection; preserve distinct regions, rejected-candidate lineage, and the existing max-attempts bound of 3.",
+              "Do not fabricate leases or runtime snapshots in the authoring compiler. Preserve scheduler lease acquisition, baseline/stage/witness/finalization runner-boundary commands, accepted/rejected evidence, replay, and immutable projection safeguards.",
+              "Export new public models/compiler through orchestrator.graph only; add the short architecture note marking API/runtime integration and comparative experiment as future work."
+            ],
+            "batch_id": "validation-correction-safeguards",
+            "checks": [
+              "Relevant contracts: src/orchestrator/graph/macros.py, patch_validator.py, contracts.py, command_bindings.py, models.py, and __init__.py; existing routine compiler remains in compiler.py.",
+              "A new test_work_plan_compiler.py must cover valid compilation, no low-level fields, provenance, determinism, trusted identity, missing acceptance, extra fields, atomic failure, and boundary validation.",
+              "Validation command intentionally not run in this discovery phase: uv run pytest -n 0 tests/unit/test_work_plan_compiler.py tests/unit/test_graph_compiler.py tests/unit/test_graph_macros.py tests/unit/test_graph_runner_boundary_commands.py."
+            ],
+            "objective": "Validate the whole generated region atomically and preserve existing failure, snapshot, provenance, lease, evidence, and runner-boundary safeguards.",
+            "requirement_ids": [
+              "dynamic_feature_acceptance"
+            ],
+            "scope": [
+              "expand_patch_macros",
+              "validate_patch and node/edge contract validation",
+              "projection/replay and runner boundary invariants",
+              "bounded corrective topology"
+            ]
+          }
+        ],
+        "summary": "Read-only discovery for the first description-first planning slice. The snapshot has no work-plan compiler/model or bound feature-spec file; existing reliable-plan/compiler/macro infrastructure is present and must remain compatible. Git worktree and index are unchanged. The downstream acceptance command was not run per the discovery-worker instruction."
+      },
+      "provenance": {
+        "execution_id": "exec-34522d387f504b62a3c18e8c8fa33ac8",
+        "source": "agent_submit"
+      },
+      "requirement_ids": [
+        "dynamic_feature_acceptance"
+      ],
+      "schema_id": "reliable-plan-implementation-plan",
+      "schema_version": 1,
+      "semantic_role": "implementation_plan",
+      "source_record_ids": [],
+      "task_region_id": "description-first-work-plan-region",
+      "validation_status": "validated"
+    }
+  }
+}
+

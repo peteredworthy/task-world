@@ -1311,8 +1311,12 @@ class RunnerRecoveryRequestedPayload(StrictEventPayload):
         "staged_artifact_missing",
         "staged_artifact_corrupt",
         "submission_repair_exhausted",
+        "submission_format_rejected",
+        "candidate_check_failed",
+        "validation_environment_blocked",
     ]
     error_detail: str | None = Field(default=None, max_length=4_096)
+    first_error_detail: str | None = Field(default=None, max_length=4_096)
     max_attempts: StrictInt = 0
     retry_after_recovery: StrictBool = False
     recovery_snapshot_id: str | None = None
@@ -1368,11 +1372,11 @@ class RunnerRecoveryRequestedPayload(StrictEventPayload):
             raise ValueError(str(exc)) from exc
         return self
 
-    @field_validator("error_detail", mode="before")
+    @field_validator("error_detail", "first_error_detail", mode="before")
     @classmethod
     def canonical_error_detail(cls, value: object) -> str | None:
         if value is not None and not isinstance(value, str):
-            raise ValueError("error_detail must be a string")
+            raise ValueError("error detail must be a string")
         return sanitize_runner_error_detail(value)
 
 
@@ -1410,6 +1414,18 @@ class RunnerRecoveryCompletedPayload(StrictEventPayload):
         elif self.requested_paths or self.restored_paths or self.removed_paths:
             raise ValueError("full-baseline recovery has no path accounting")
         return self
+
+
+class ValidationEnvironmentBlockageResolutionPayload(StrictEventPayload):
+    resolution_id: str
+    node_id: str
+    execution_id: str
+    recovery_id: str
+    snapshot_selection: Literal["baseline", "rejected_candidate"]
+    snapshot_id: str
+    snapshot_ref: str
+    commit_sha: str
+    tree_sha: str
 
 
 class RunnerCompletionWitnessedPayload(StrictEventPayload):
@@ -2057,6 +2073,18 @@ class NodeAuthorityChangedPayload(GraphEventPayloadBase):
     )
     allowed_actions: list[str] = Field(default_factory=list)
     preconditions: list[str] = Field(default_factory=list)
+    base_snapshot_selection: (
+        Literal[
+            "run_baseline",
+            "latest_accepted",
+            "accepted_region",
+            "rejected_candidate",
+            "candidate_under_test",
+            "explicit_snapshot",
+        ]
+        | None
+    ) = None
+    base_snapshot_candidate_id: str | None = None
 
 
 class NodeSuspectPayload(GraphEventPayloadBase):
@@ -2785,6 +2813,8 @@ class FailureRecordValue(StrictNestedModel):
     expires_at: str | None = None
     attempt_number: StrictInt | None = None
     max_attempts: StrictInt | None = None
+    rejected_candidate_snapshot_id: str | None = None
+    rejected_candidate_snapshot_ref: str | None = None
 
 
 class FailureRecord(TypedRecordBase):

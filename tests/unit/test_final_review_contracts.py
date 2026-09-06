@@ -331,6 +331,24 @@ COMMAND_EXAMPLES: dict[str, dict[str, Any]] = {
         "requested_paths": [],
         "proof_hash": "sha256:" + "0" * 64,
     },
+    "resolve_validation_environment_blockage": {
+        "expected_graph_position": 12,
+        "node_id": "worker-1",
+        "execution_id": "exec-1",
+        "recovery_id": "recovery-1",
+        "snapshot_selection": "rejected_candidate",
+    },
+    "complete_validation_environment_blockage_resolution": {
+        "resolution_id": "resolution-1",
+        "node_id": "worker-1",
+        "execution_id": "exec-1",
+        "recovery_id": "recovery-1",
+        "snapshot_selection": "rejected_candidate",
+        "snapshot_id": "staged-1",
+        "snapshot_ref": "refs/orchestrator/snapshots/staged-1",
+        "commit_sha": "b" * 40,
+        "tree_sha": "a" * 40,
+    },
     "record_managed_snapshot_cleanup_applied": {
         "cleanup_id": "cleanup-1",
         "snapshot_id": "baseline-1",
@@ -408,6 +426,21 @@ IDENTITY_FIELDS: dict[str, tuple[str, ...]] = {
         "staged_commit_sha",
         "staged_tree_sha",
         "staged_boundary_hash",
+    ),
+    "resolve_validation_environment_blockage": (
+        "node_id",
+        "execution_id",
+        "recovery_id",
+    ),
+    "complete_validation_environment_blockage_resolution": (
+        "resolution_id",
+        "node_id",
+        "execution_id",
+        "recovery_id",
+        "snapshot_id",
+        "snapshot_ref",
+        "commit_sha",
+        "tree_sha",
     ),
 }
 

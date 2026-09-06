@@ -30,6 +30,39 @@ ChecklistUpdateCallback = Callable[[str, ChecklistStatus, str | None], Awaitable
 SubmitArguments = dict[str, Any]
 
 
+SubmissionRejectionCategory = Literal[
+    "submission_format_rejected",
+    "candidate_check_failed",
+    "validation_environment_blocked",
+]
+
+
+class SubmissionRejectionEvidence(BaseModel):
+    """Bounded structured evidence explaining why a submit was rejected."""
+
+    model_config = {"frozen": True}
+
+    category: SubmissionRejectionCategory
+    command: str | None = Field(default=None, max_length=512)
+    command_source: str | None = Field(default=None, max_length=128)
+    command_sha256: str | None = Field(default=None, max_length=64)
+    exit_code: int | None = None
+    timed_out: bool = False
+    failed_test_ids: tuple[str, ...] = ()
+    failed_test_ids_truncated: bool = False
+    final_diagnostic: str = Field(min_length=1, max_length=2_048)
+    stdout_sha256: str | None = Field(default=None, max_length=64)
+    stderr_sha256: str | None = Field(default=None, max_length=64)
+    stdout_bytes: int | None = Field(default=None, ge=0)
+    stderr_bytes: int | None = Field(default=None, ge=0)
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+    evidence_truncated: bool = False
+    failure_identity_status: Literal["established", "unknown"] = "unknown"
+    semantic_failure_fingerprint: str | None = Field(default=None, max_length=64)
+    durable_audit_reference: str | None = Field(default=None, max_length=256)
+
+
 class SubmissionAcknowledgement(BaseModel):
     """Truthful durable state returned by a runner submission callback.
 
@@ -46,6 +79,12 @@ class SubmissionAcknowledgement(BaseModel):
     message: str = Field(min_length=1, max_length=4_096)
     execution_id: str | None = None
     graph_position: int | None = Field(default=None, ge=0)
+    rejection_category: SubmissionRejectionCategory | None = None
+    rejection_evidence: SubmissionRejectionEvidence | None = None
+
+    @property
+    def is_rejected(self) -> bool:
+        return self.disposition == "rejected"
 
 
 SubmitCallbackResult = SubmissionAcknowledgement | None

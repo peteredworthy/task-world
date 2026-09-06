@@ -481,6 +481,21 @@ class GraphRuntimeHealthResponse(ApiModel):
     next_gate_audit_cursor: int | None
 
 
+class ResolveValidationEnvironmentBlockageRequest(ApiModel):
+    expected_graph_position: int = Field(ge=0)
+    node_id: str = Field(min_length=1)
+    execution_id: str = Field(min_length=1)
+    recovery_id: str = Field(min_length=1)
+    snapshot_selection: Literal["baseline", "rejected_candidate"]
+
+
+class ResolveValidationEnvironmentBlockageResponse(ApiModel):
+    run_id: str
+    graph_position: int
+    resolution_id: str
+    status: Literal["restoration_pending"]
+
+
 class CrashBarrierStatusResponse(ApiModel):
     """Bounded file-backed crash-drill status for one exact run."""
 
@@ -3687,6 +3702,33 @@ async def get_graph_runtime_health(
             "completion_disposition": attempt.completion_disposition,
             "recovery_reason": attempt.recovery_reason,
             "recovery_error_detail": attempt.recovery_error_detail,
+            "recovery_first_error_detail": attempt.recovery_first_error_detail,
+            "recovery_id": attempt.recovery_id,
+            "recovery_max_attempts": attempt.recovery_max_attempts,
+            "retry_after_recovery": attempt.retry_after_recovery,
+            "retry_scheduled": attempt.retry_scheduled,
+            "recovery_scope": attempt.recovery_scope,
+            "continuation_resolution_id": attempt.continuation_resolution_id,
+            "continuation_resolution_status": attempt.continuation_resolution_status,
+            "continuation_snapshot_selection": attempt.continuation_snapshot_selection,
+            "continuation_snapshot_id": attempt.continuation_snapshot_id,
+            "rejected_candidate": (
+                {
+                    "snapshot_id": attempt.recovery_snapshot_id,
+                    "snapshot_ref": attempt.recovery_snapshot_ref,
+                    "commit_sha": attempt.recovery_commit_sha,
+                    "tree_sha": attempt.final_tree_sha,
+                    "boundary_hash": attempt.final_boundary_hash,
+                }
+                if attempt.recovery_snapshot_id is not None
+                and attempt.recovery_reason
+                in {
+                    "submission_format_rejected",
+                    "candidate_check_failed",
+                    "validation_environment_blocked",
+                }
+                else None
+            ),
         }
         for execution_id, attempt in sorted(attempts.items())
     ]
@@ -3734,6 +3776,9 @@ async def get_graph_runtime_health(
                     "stderr_bytes",
                     "stdout_truncated",
                     "stderr_truncated",
+                    "failure_category",
+                    "failed_test_ids",
+                    "failure_identity_status",
                 )
             }
             for command in commands[:8]
@@ -3749,6 +3794,7 @@ async def get_graph_runtime_health(
                 "candidate_tree_sha": audit.candidate_tree_sha,
                 "status": audit.status,
                 "failure_fingerprint": audit.failure_fingerprint,
+                "durable_audit_reference": f"graph-event:{run_id}:{audit.id}",
                 "created_at": audit.created_at.isoformat(),
                 "commands": bounded_commands,
             }
@@ -3823,6 +3869,65 @@ async def get_graph_runtime_health(
         dispositions=disposition_counts,
         gate_audits=audit_rows,
         next_gate_audit_cursor=(audits[-1].id if len(audits) == gate_limit else None),
+    )
+
+
+@router.post(
+    "/{run_id}/graph/runtime-health/resolve-validation-environment-blockage",
+    response_model=ResolveValidationEnvironmentBlockageResponse,
+)
+async def resolve_validation_environment_blockage(
+    run_id: str,
+    request: ResolveValidationEnvironmentBlockageRequest,
+    config: Annotated[GlobalConfig, Depends(get_global_config)],
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
+    graph_store: GraphEventStore = Depends(get_graph_store),
+) -> ResolveValidationEnvironmentBlockageResponse:
+    """Request identity-checked operator continuation from one retained snapshot."""
+    current_position = await graph_store.current_position(run_id)
+    if current_position == 0:
+        raise HTTPException(status_code=404, detail="Graph not found for run")
+    controller = GraphController(
+        session_factory,
+        _ApiGraphClock(),
+        _ApiGraphIdGenerator(),
+        auto_dispatch=False,
+        journal_max_bytes=config.journal.max_bytes,
+    )
+    try:
+        result = await controller.handle_command(
+            run_id,
+            current_position,
+            "resolve_validation_environment_blockage",
+            request.model_dump(mode="json"),
+            context=GraphCommandContext(
+                run_id=run_id,
+                current_graph_position=current_position,
+                actor=Actor(kind=ActorKind.HUMAN, id="human-operator", role="operator"),
+            ),
+        )
+    except StaleProjectionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    rejection = next(
+        (event for event in result.events if event.event_type == "command_rejected"), None
+    )
+    if rejection is not None:
+        raise HTTPException(status_code=409, detail=str(rejection.payload.get("reason")))
+    requested = next(
+        (
+            event
+            for event in result.events
+            if event.event_type == "validation_environment_blockage_resolution_requested"
+        ),
+        None,
+    )
+    if requested is None:
+        raise HTTPException(status_code=409, detail="blockage resolution was already requested")
+    return ResolveValidationEnvironmentBlockageResponse(
+        run_id=run_id,
+        graph_position=result.projection_position,
+        resolution_id=str(requested.payload["resolution_id"]),
+        status="restoration_pending",
     )
 
 

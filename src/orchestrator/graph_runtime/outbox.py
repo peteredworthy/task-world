@@ -101,6 +101,14 @@ def outbox_payload_for_event(event: EventEnvelope) -> tuple[str, dict[str, objec
         }
         payload.update(event.payload)
         return "runner_recovery", payload
+    if event.event_type == "validation_environment_blockage_resolution_requested":
+        payload = {
+            "event_id": event.event_id,
+            "run_id": event.run_id,
+            "classification": "validation_environment_resolution_pending",
+        }
+        payload.update(event.payload)
+        return "validation_environment_resolution", payload
     if event.event_type == "runner_completion_witnessed":
         return (
             "snapshot_publish",

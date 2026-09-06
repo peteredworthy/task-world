@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import shlex
 import subprocess
 from pathlib import Path
@@ -424,6 +425,7 @@ class ContractGateAgent:
     def __init__(self, mutation: str) -> None:
         self._mutation = mutation
         self.rejection: str | None = None
+        self.execute_count = 0
 
     @property
     def info(self) -> AgentRunnerInfo:
@@ -443,6 +445,7 @@ class ContractGateAgent:
         on_escalation: EscalationCallback | None = None,
     ) -> ExecutionResult:
         del on_checklist_update, on_output, on_grade, on_agent_metadata, on_escalation
+        self.execute_count += 1
         worktree = Path(context.working_dir)
         if self._mutation == "readme":
             (worktree / "README.md").write_text("candidate\n", encoding="utf-8")
@@ -458,6 +461,211 @@ class ContractGateAgent:
 
     async def cancel(self) -> None:
         return None
+
+
+@pytest.mark.asyncio
+async def test_dispatch_rejects_incomplete_incident_plan_verifier_before_runner_execute(
+    tmp_path: Path,
+) -> None:
+    fixture_path = Path(__file__).parents[1] / "fixtures/graph/ca8faa94_plan_verifier.json"
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    node_payload = dict(fixture["node"])
+    node_payload.pop("objective")
+    # Cache authority belongs to the incident's routine snapshot.  This focused
+    # dispatch graph has no snapshot record; omit only that unrelated carrier so
+    # execution reaches the verifier-contract preflight under test.
+    node_payload.pop("cache_authority_hash")
+    requirement = fixture["requirement"]
+    artifact = fixture["artifact"]
+
+    engine = create_engine(tmp_path / "invalid-plan-verifier-contract.db")
+    await init_db(engine)
+    sessions: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+    repo = tmp_path / "repo-invalid-plan-verifier-contract"
+    _init_repo(repo)
+    clock = FixedClock()
+    ids = SequentialIds()
+    run_id = "dispatch-invalid-plan-verifier-contract"
+    runner = ContractGateAgent("readme")
+    try:
+        async with sessions() as session:
+            session.add(
+                RunModel(
+                    id=run_id,
+                    repo_name="invalid-plan-verifier-contract-repo",
+                    status=RunStatus.ACTIVE.value,
+                    execution_mode="graph",
+                    source_branch="main",
+                    created_at=clock.now(),
+                    updated_at=clock.now(),
+                )
+            )
+            raw_events = [
+                (
+                    "run_lifecycle_changed",
+                    {"to_state": "active"},
+                ),
+                (
+                    "node_created",
+                    {
+                        "node_id": "requirement-dynamic-feature-acceptance",
+                        "kind": "requirement",
+                        "state": "completed",
+                    },
+                ),
+                (
+                    "output_record_accepted",
+                    requirement,
+                ),
+                (
+                    "node_created",
+                    {
+                        "node_id": "worker-discovery-description-first",
+                        "kind": "worker",
+                        "role": "discovery",
+                        "state": "completed",
+                        "access_mode": "read_only",
+                        "effect_contract": "read_only_semantic",
+                        "semantic_stage": "discovery",
+                    },
+                ),
+                (
+                    "output_record_accepted",
+                    artifact,
+                ),
+                (
+                    "node_created",
+                    node_payload,
+                ),
+                (
+                    "edge_created",
+                    {
+                        "edge_id": (
+                            "edge-requirement-dynamic-feature-acceptance-requirement-to-"
+                            "verifier-plan-description-first"
+                        ),
+                        "from_node_id": "requirement-dynamic-feature-acceptance",
+                        "from_port": "requirement",
+                        "to_node_id": "verifier-plan-description-first",
+                        "to_port": "requirement_1",
+                        "required": True,
+                        "accepted_record_selector": {
+                            "record_type": "requirement_record",
+                        },
+                    },
+                ),
+                (
+                    "edge_created",
+                    {
+                        "edge_id": (
+                            "edge-worker-discovery-description-first-semantic-plan-to-"
+                            "verifier-plan-description-first"
+                        ),
+                        "from_node_id": "worker-discovery-description-first",
+                        "from_port": "semantic_artifact",
+                        "to_node_id": "verifier-plan-description-first",
+                        "to_port": "semantic_artifact",
+                        "required": True,
+                        "accepted_record_selector": {
+                            "record_type": "semantic_artifact",
+                            "schema": "SemanticArtifact",
+                            "semantic_schema_id": "reliable-plan-implementation-plan",
+                            "semantic_schema_version": 1,
+                            "authority_status": "accepted",
+                        },
+                    },
+                ),
+                (
+                    "input_bound",
+                    {
+                        "edge_id": (
+                            "edge-requirement-dynamic-feature-acceptance-requirement-to-"
+                            "verifier-plan-description-first"
+                        ),
+                        "to_node_id": "verifier-plan-description-first",
+                        "to_port": "requirement_1",
+                        "record_ids": ["requirement-dynamic-feature-acceptance"],
+                    },
+                ),
+                (
+                    "input_bound",
+                    {
+                        "edge_id": (
+                            "edge-worker-discovery-description-first-semantic-plan-to-"
+                            "verifier-plan-description-first"
+                        ),
+                        "to_node_id": "verifier-plan-description-first",
+                        "to_port": "semantic_artifact",
+                        "record_ids": [
+                            "semantic-artifact-exec-34522d387f504b62a3c18e8c8fa33ac8-"
+                            "semantic_artifact"
+                        ],
+                    },
+                ),
+            ]
+            events = [
+                EventEnvelope(
+                    event_id=f"incident-{index}",
+                    run_id=run_id,
+                    position=-1,
+                    event_type=event_type,
+                    schema_version=1,
+                    actor=Actor(kind=ActorKind.CONTROLLER),
+                    timestamp=clock.now(),
+                    payload=canonical_event_payload(event_type, payload),
+                )
+                for index, (event_type, payload) in enumerate(raw_events)
+            ]
+            await GraphEventStore(session).append_events(run_id, 0, events)
+            await session.commit()
+
+        controller = GraphController(sessions, clock, ids, auto_dispatch=False)
+        executor = GraphDispatchExecutor(
+            sessions,
+            controller,
+            AgentFactory({"verifier": runner}),
+            worktree_path=repo,
+            artifact_store=FilesystemArtifactStore(
+                tmp_path / "artifacts-invalid-plan-verifier-contract"
+            ),
+        )
+        dispatcher = OutboxDispatcher(sessions, executor, clock)
+        scheduled = await controller.handle_command(
+            run_id,
+            await controller.current_position(run_id),
+            "schedule_tick",
+            {"lease_seconds": 60, "max_grants": 1, "base_snapshot_id": "baseline"},
+        )
+        assert any(event.event_type == "agent_dispatch_requested" for event in scheduled.events)
+
+        await dispatcher.dispatch_pending()
+        await executor.wait_for_all()
+
+        assert runner.execute_count == 0
+        events = await _read_events(sessions, run_id)
+        failures = [
+            event.payload
+            for event in events
+            if event.event_type == "output_record_accepted"
+            and event.payload.get("record_type") == "failure_record"
+        ]
+        assert len(failures) == 1
+        assert failures[0]["value"]["failure_class"] == "invalid_plan_failure"
+        assert failures[0]["value"]["error_class"] == "invalid_execution_contract"
+        assert failures[0]["value"]["retryable"] is False
+        assert "missing or empty fields: objective" in failures[0]["value"]["reason"]
+        assert not any(
+            event.event_type == "runtime_retry_scheduled"
+            or event.payload.get("record_type") == "recovery_plan"
+            or event.payload.get("reason") == "runner_died"
+            for event in events
+        )
+        projection = await controller.read_projection(run_id)
+        assert node_states_view(projection)["verifier-plan-description-first"] == "failed"
+        assert all(lease.state != "active" for lease in leases_view(projection).values())
+        assert (repo / "README.md").read_text(encoding="utf-8") != "candidate\n"
+    finally:
+        await engine.dispose()
 
 
 class HostileReadOnlySemanticAgent:
@@ -603,7 +811,8 @@ async def test_gate_rejects_before_stage_then_persists_exact_witness_after_corre
         assert agent.first_rejection is not None
         assert agent.first_rejection.startswith("submit callback rejected:")
         assert '"disposition":"rejected"' in agent.first_rejection
-        assert "submission quality gate failed with exit code 1" in agent.first_rejection
+        assert '"rejection_category":"candidate_check_failed"' in agent.first_rejection
+        assert '"exit_code":1' in agent.first_rejection
         assert "grep -q ready README.md" in agent.first_rejection
         events = await _read_events(session_factory, run_id)
         staged = [event for event in events if event.event_type == "runner_submission_staged"]
@@ -649,7 +858,8 @@ async def test_gate_rejects_before_stage_then_persists_exact_witness_after_corre
         assert [audit.status for audit in audits] == ["failed", "failed", "passed"]
         assert audits[0].base_tree_sha == witness["baseline"]["base_tree_sha"]
         assert audits[1].candidate_tree_sha is not None
-        assert audits[1].failure_fingerprint is not None
+        assert audits[1].failure_fingerprint is None
+        assert audits[1].report["results"][0]["failure_identity_status"] == "unknown"
         assert audits[2].candidate_tree_sha == witness["validated_boundary"]["tree_sha"]
 
         projection = await controller.read_projection(run_id)
@@ -690,13 +900,23 @@ async def test_compiled_gate_contract_survives_seed_and_controls_full_dispatch(
     marker = tmp_path / f"{scenario}-gate-executions"
     marker_arg = shlex.quote(str(marker))
     if scenario in {"unchanged_explicit", "unchanged_missing"}:
-        command = f"printf x >> {marker_arg}; printf unchanged-baseline-failure >&2; exit 8"
+        command = (
+            f"printf x >> {marker_arg}; "
+            "printf 'FAILED tests/unit/test_known.py::test_red - details\\n' >&2; exit 8"
+        )
     elif scenario == "changed_failure":
-        command = f"printf x >> {marker_arg}; cat README.md >&2; exit 8"
+        command = (
+            f"printf x >> {marker_arg}; "
+            "if grep -q candidate README.md; then "
+            "printf 'FAILED tests/unit/test_after.py::test_red - details\\n' >&2; "
+            "else printf 'FAILED tests/unit/test_before.py::test_red - details\\n' >&2; fi; "
+            "exit 8"
+        )
     else:
         command = (
             f"printf x >> {marker_arg}; "
-            "if test -f new-failure; then printf new-failure >&2; exit 9; fi"
+            "if test -f new-failure; then "
+            "printf 'FAILED tests/unit/test_new.py::test_red - details\\n' >&2; exit 9; fi"
         )
 
     probe_commit = subprocess.run(
@@ -860,7 +1080,7 @@ async def test_compiled_gate_contract_survives_seed_and_controls_full_dispatch(
             )
         else:
             assert agent.rejection is not None
-            assert "submission quality gate failed" in agent.rejection
+            assert '"rejection_category":"candidate_check_failed"' in agent.rejection
             assert counts == {event_type: 0 for event_type in terminal_types}
             failure = submission_audit.report["results"][0]
             assert failure["command"] == command

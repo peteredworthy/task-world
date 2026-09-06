@@ -15,6 +15,9 @@ from functools import partial
 import json
 from pathlib import Path
 import secrets
+import shlex
+import subprocess
+import sys
 from typing import Any
 
 import pytest
@@ -24,6 +27,7 @@ from sqlalchemy import select
 
 from orchestrator.api import create_app
 from orchestrator.api.deps import make_service_factory, make_workflow_preparer
+from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.config import AgentRunnerType, RoutineSource, load_routine_from_path
 from orchestrator.db import EventV2Model, RunRepository, commit_with_event_outbox, init_db
 from orchestrator.graph import (
@@ -43,13 +47,14 @@ from orchestrator.graph_runtime import (
     GraphDispatchContext,
     GraphDispatchExecutor,
     GraphEventStore,
+    OutboxDispatcher,
     RunnerOwnedProcessRegistry,
     SelectedRunnerGraphToolCatalog,
     StaticGraphAgentFactory,
     issue_reliable_plan_qualification,
     run_reliable_plan_product_path_scenarios,
 )
-from orchestrator.runners import AgentRunner
+from orchestrator.runners import AgentRunner, SubmissionRejectedError
 from orchestrator.runners.types import (
     AgentMetadataCallback,
     AgentRunnerInfo,
@@ -151,6 +156,9 @@ class _RecordingFactory:
         self.latched = asyncio.Event()
         self.cancelled = asyncio.Event()
         self.discovery_attempts = 0
+        self.environment_worker_executions = 0
+        self.environment_worker_mutations = 0
+        self.environment_rejection: Any | None = None
         self._building_context: GraphDispatchContext | None = None
         self._tool_catalog = SelectedRunnerGraphToolCatalog(
             AgentRunnerType.CODEX_SERVER,
@@ -224,6 +232,11 @@ class _RecordingFactory:
                     partial(_latch, factory=self),
                     self.execution_contexts,
                     cancel_callback=self.cancelled.set,
+                )
+            if self.scenario == "environment_blockage" and context.node_id == "worker-batch-1":
+                return _ScriptedAgent(
+                    partial(_build_across_environment_blockage, factory=self),
+                    self.execution_contexts,
                 )
             return _ScriptedAgent(_build, self.execution_contexts)
         if context.node_kind == "verifier":
@@ -658,6 +671,34 @@ async def _build(
     return ExecutionResult(success=True)
 
 
+async def _build_across_environment_blockage(
+    context: ExecutionContext,
+    on_submit: SubmitCallback,
+    _on_grade: GradeCallback | None,
+    *,
+    factory: _RecordingFactory,
+) -> ExecutionResult:
+    """Build once, then resubmit the exactly restored candidate after repair."""
+    factory.environment_worker_executions += 1
+    output = Path(context.working_dir) / "docs/graph-approach/dynamic-smoke-output.txt"
+    if factory.environment_worker_executions == 1:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("worker-batch-1: dynamic-smoke\n", encoding="utf-8")
+        factory.environment_worker_mutations += 1
+        try:
+            await on_submit()
+        except SubmissionRejectedError as exc:
+            factory.environment_rejection = exc.acknowledgement
+        else:
+            raise AssertionError("environment-blocked submission unexpectedly passed")
+        return ExecutionResult(success=True)
+
+    assert factory.environment_worker_executions == 2
+    assert output.read_text(encoding="utf-8") == "worker-batch-1: dynamic-smoke\n"
+    await on_submit()
+    return ExecutionResult(success=True)
+
+
 async def _verify(
     context: ExecutionContext,
     on_submit: SubmitCallback,
@@ -766,6 +807,40 @@ async def _make_joined_harness(
     repo = repos / "project"
     repo.mkdir()
     _init_repo(repo)
+    if scenario == "environment_blockage":
+        sentinel = tmp_path / "external-validation-ready"
+        environment_test = repo / "tests/integration/test_external_validation_environment.py"
+        environment_test.parent.mkdir(parents=True)
+        environment_test.write_text(
+            "from pathlib import Path\n\n"
+            "def test_external_validation_environment_is_ready() -> None:\n"
+            f"    assert Path({str(sentinel)!r}).is_file()\n",
+            encoding="utf-8",
+        )
+        config = repo / ".task-world/config.yaml"
+        config.parent.mkdir()
+        project_command = (
+            f"{shlex.quote(sys.executable)} -m pytest -n 0 -q "
+            "tests/integration/test_external_validation_environment.py"
+        )
+        config.write_text(f"test_command: {json.dumps(project_command)}\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "add external validation contract",
+            ],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
     from orchestrator.config.global_config import GlobalConfig, PathsConfig
 
@@ -1290,6 +1365,156 @@ async def test_api_correction_uses_exact_failure_evidence_then_completes_horizon
             record for record in records if record.record_type == "completion_decision"
         )
         assert getattr(completion.value, "status", None) == "passed"
+    finally:
+        await harness.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(180)
+async def test_api_environment_blockage_restores_rejected_candidate_and_continues(
+    tmp_path: Path,
+    canonical_qualification: Any,
+) -> None:
+    """Join API, prompt, gate, recovery, operator repair, and final acceptance."""
+    harness = await _make_joined_harness(
+        tmp_path,
+        canonical_qualification,
+        scenario="environment_blockage",
+    )
+    sentinel = tmp_path / "external-validation-ready"
+    try:
+        run_id = await harness.create_and_start()
+        await harness.drain_start(run_id)
+        await asyncio.wait_for(harness.wait_driver(run_id), timeout=60)
+
+        run_response = await harness.client.get(f"/api/runs/{run_id}")
+        assert run_response.status_code == 200
+        blocked_run = run_response.json()
+        assert blocked_run["status"] == "paused"
+        assert blocked_run["pause_reason"] == "graph_blocked"
+
+        contexts = harness.factory.execution_contexts
+        plan_index = next(
+            index for index, context in enumerate(contexts) if context.node_id == "verifier-plan"
+        )
+        implementation_index = next(
+            index for index, context in enumerate(contexts) if context.node_id == "worker-batch-1"
+        )
+        assert plan_index < implementation_index
+        plan_prompt = contexts[plan_index].prompt
+        assert "Semantic stage: plan_verification" in plan_prompt
+        assert "Objective: Verify the discovered implementation plan." in plan_prompt
+        assert "both batches cover the bound requirement" in plan_prompt
+        assert (
+            "Do not require completed implementation or completed downstream tests." in plan_prompt
+        )
+
+        acknowledgement = harness.factory.environment_rejection
+        assert acknowledgement is not None
+        assert acknowledgement.rejection_category == "validation_environment_blocked"
+        evidence = acknowledgement.rejection_evidence
+        assert evidence is not None
+        failed_id = (
+            "tests/integration/test_external_validation_environment.py::"
+            "test_external_validation_environment_is_ready"
+        )
+        assert evidence.command_source == "project_test_command"
+        assert evidence.failed_test_ids == (failed_id,)
+        assert failed_id in evidence.final_diagnostic
+        assert evidence.durable_audit_reference is not None
+        assert harness.factory.environment_worker_executions == 1
+        assert harness.factory.environment_worker_mutations == 1
+
+        health_response = await harness.client.get(f"/api/runs/{run_id}/graph/runtime-health")
+        assert health_response.status_code == 200
+        health = health_response.json()
+        blocked_attempt = next(
+            attempt
+            for attempt in health["attempts"]
+            if attempt["recovery_reason"] == "validation_environment_blocked"
+        )
+        assert blocked_attempt["rejected_candidate"]["snapshot_id"]
+        assert health["lease_counts"]["active"] == 0
+        assert not any(
+            event.event_type == "runtime_retry_scheduled"
+            and event.payload.get("node_id") == "worker-batch-1"
+            for event in await harness.events(run_id)
+        )
+
+        invalid = await harness.client.post(
+            f"/api/runs/{run_id}/graph/runtime-health/resolve-validation-environment-blockage",
+            json={
+                "expected_graph_position": health["graph_position"],
+                "node_id": "worker-batch-1",
+                "execution_id": blocked_attempt["execution_id"],
+                "recovery_id": "wrong-recovery-identity",
+                "snapshot_selection": "rejected_candidate",
+            },
+        )
+        assert invalid.status_code == 409
+
+        sentinel.write_text("ready\n", encoding="utf-8")
+        refreshed_health = (
+            await harness.client.get(f"/api/runs/{run_id}/graph/runtime-health")
+        ).json()
+        resolution = await harness.client.post(
+            f"/api/runs/{run_id}/graph/runtime-health/resolve-validation-environment-blockage",
+            json={
+                "expected_graph_position": refreshed_health["graph_position"],
+                "node_id": "worker-batch-1",
+                "execution_id": blocked_attempt["execution_id"],
+                "recovery_id": blocked_attempt["recovery_id"],
+                "snapshot_selection": "rejected_candidate",
+            },
+        )
+        assert resolution.status_code == 200, resolution.text
+        assert resolution.json()["status"] == "restoration_pending"
+
+        worktree = Path(blocked_run["worktree_path"])
+        controller = harness.controllers[-1]
+        continuation_executor = GraphDispatchExecutor(
+            harness.app.state.session_factory,
+            controller,
+            harness.factory,
+            worktree_path=worktree,
+            artifact_store=FilesystemArtifactStore(tmp_path / "continuation-artifacts"),
+            process_registry=harness.process_registry,
+        )
+        continuation_dispatcher = OutboxDispatcher(
+            harness.app.state.session_factory,
+            continuation_executor,
+            harness.driver._clock,
+        )
+        restored = await continuation_dispatcher.dispatch_pending(
+            run_id=run_id,
+            allowed_kinds=frozenset({"validation_environment_resolution"}),
+        )
+        assert [item.kind for item in restored] == ["validation_environment_resolution"]
+        assert (worktree / "docs/graph-approach/dynamic-smoke-output.txt").read_text(
+            encoding="utf-8"
+        ) == "worker-batch-1: dynamic-smoke\n"
+
+        resumed = await harness.client.post(f"/api/runs/{run_id}/resume")
+        assert resumed.status_code == 202, resumed.text
+        await harness.consumer._process_run(run_id)
+        await asyncio.wait_for(harness.wait_driver(run_id), timeout=60)
+
+        completed = await harness.client.get(f"/api/runs/{run_id}")
+        assert completed.json()["status"] == "completed", completed.text
+        assert harness.factory.environment_worker_executions == 2
+        assert harness.factory.environment_worker_mutations == 1
+        events = await harness.events(run_id)
+        assert any(
+            event.event_type == "validation_environment_blockage_resolved" for event in events
+        )
+        assert any(
+            event.event_type == "runner_execution_finalized"
+            and event.payload.get("node_id") == "worker-batch-1"
+            for event in events
+        )
+        projection = await harness.controllers[-1].read_projection(run_id)
+        assert all(lease.state != "active" for lease in leases_view(projection).values())
+        assert task_states_view(projection)["batch-1"] == "accepted"
     finally:
         await harness.close()
 

@@ -28,6 +28,8 @@ from orchestrator.runners import (
     RealStdioTransport,
 )
 from orchestrator.runners.errors import AgentNotAvailableError, SubmissionRepairExhaustedError
+from orchestrator.runners.errors import SubmissionRejectedError
+from orchestrator.runners import SubmissionAcknowledgement, SubmissionRejectionEvidence
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
 from orchestrator.config import ChecklistStatus
 from orchestrator.config.models import MCPServerConfig
@@ -675,7 +677,18 @@ async def test_execute_stops_after_three_rejected_submissions() -> None:
     agent, transport = _make_agent(notifications)
 
     async def reject_submit(args: dict[str, Any]) -> None:
-        raise ValueError(f"submit callback rejected: invalid payload {args['outputs']['attempt']}")
+        detail = f"invalid payload {args['outputs']['attempt']}"
+        raise SubmissionRejectedError(
+            SubmissionAcknowledgement(
+                disposition="rejected",
+                message=detail,
+                rejection_category="submission_format_rejected",
+                rejection_evidence=SubmissionRejectionEvidence(
+                    category="submission_format_rejected",
+                    final_diagnostic=detail,
+                ),
+            )
+        )
 
     with pytest.raises(SubmissionRepairExhaustedError) as raised:
         await agent.execute(
@@ -684,8 +697,10 @@ async def test_execute_stops_after_three_rejected_submissions() -> None:
             on_submit=reject_submit,
         )
 
-    assert "first_cause=submit callback rejected: invalid payload 0" in str(raised.value)
-    assert "last_cause=submit callback rejected: invalid payload 2" in str(raised.value)
+    assert "first_cause=submit callback rejected:" in str(raised.value)
+    assert "invalid payload 0" in str(raised.value)
+    assert "last_cause=submit callback rejected:" in str(raised.value)
+    assert "invalid payload 2" in str(raised.value)
     assert "operator_action=" in str(raised.value)
     responses = [sent for sent in transport.sent if sent.get("id") in {10, 11, 12}]
     assert [response["result"]["success"] for response in responses] == [False, False, False]

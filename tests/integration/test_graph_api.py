@@ -904,6 +904,7 @@ async def test_runtime_health_reads_bounded_canonical_facts_without_process_stat
     }
     assert len(health["gate_audits"]) == 1
     assert health["gate_audits"][0]["status"] == "failed"
+    assert health["gate_audits"][0]["durable_audit_reference"].startswith(f"graph-event:{run_id}:")
     assert health["gate_audits"][0]["commands"][0]["stdout_sha256"] == "e" * 64
     assert "sensitive bounded diagnostic" not in response.text
     assert health["runner_runtime"] == [

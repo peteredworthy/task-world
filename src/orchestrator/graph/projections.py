@@ -1241,6 +1241,16 @@ def _reduce_slice_a_node_update(state: GraphProjection, event: EventEnvelope) ->
             ),
             "allowed_actions": tuple(allowed_actions),
             "preconditions": tuple(preconditions),
+            "base_snapshot_selection": (
+                payload.base_snapshot_selection
+                if "base_snapshot_selection" in payload.model_fields_set
+                else node.spec.base_snapshot_selection
+            ),
+            "base_snapshot_candidate_id": (
+                payload.base_snapshot_candidate_id
+                if "base_snapshot_candidate_id" in payload.model_fields_set
+                else node.spec.base_snapshot_candidate_id
+            ),
         }
     )
     return _replace_node(state, _node_from_parts(spec, node.runtime, node.scheduling))
@@ -2255,6 +2265,8 @@ def _reduce_slice_c(state: GraphProjection, event: EventEnvelope) -> GraphProjec
         "runner_recovery_requested",
         "runner_recovery_completed",
         "runner_execution_finalized",
+        "validation_environment_blockage_resolution_requested",
+        "validation_environment_blockage_resolved",
     }:
         return _reduce_runner_execution(state, event)
     if event.event_type == "node_usage_recorded":
@@ -2406,11 +2418,56 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
         RunnerRecoveryCompletedPayload,
         RunnerRecoveryRequestedPayload,
         RunnerSubmissionStagedPayload,
+        ValidationEnvironmentBlockageResolutionPayload,
     )
     from orchestrator.graph.projection_models import ExecutionAttemptValue
 
     attempts = state.execution.attempts_by_execution_id
-    if event.event_type == "runner_baseline_recorded":
+    if event.event_type in {
+        "validation_environment_blockage_resolution_requested",
+        "validation_environment_blockage_resolved",
+    }:
+        payload = ValidationEnvironmentBlockageResolutionPayload.model_validate(event.payload)
+        existing = attempts.get(payload.execution_id)
+        if (
+            existing is None
+            or existing.node_id != payload.node_id
+            or existing.recovery_id != payload.recovery_id
+            or existing.state != "recovered"
+            or existing.recovery_reason != "validation_environment_blocked"
+        ):
+            raise ProjectionReplayConflictError(
+                "validation environment resolution conflicts with recovered execution"
+            )
+        identity = {
+            "continuation_resolution_id": payload.resolution_id,
+            "continuation_snapshot_selection": payload.snapshot_selection,
+            "continuation_snapshot_id": payload.snapshot_id,
+            "continuation_snapshot_ref": payload.snapshot_ref,
+            "continuation_commit_sha": payload.commit_sha,
+            "continuation_tree_sha": payload.tree_sha,
+        }
+        if existing.continuation_resolution_id is not None and any(
+            getattr(existing, key) != value for key, value in identity.items()
+        ):
+            raise ProjectionReplayConflictError(
+                "validation environment resolution identity conflicts during replay"
+            )
+        target_status = (
+            "requested"
+            if event.event_type == "validation_environment_blockage_resolution_requested"
+            else "completed"
+        )
+        if target_status == "completed" and existing.continuation_resolution_status != "requested":
+            if existing.continuation_resolution_status == "completed":
+                return state
+            raise ProjectionReplayConflictError(
+                "validation environment resolution completed before request"
+            )
+        candidate = existing.model_copy(
+            update={**identity, "continuation_resolution_status": target_status}
+        )
+    elif event.event_type == "runner_baseline_recorded":
         payload = RunnerBaselineRecordedPayload.model_validate(event.payload)
         _validate_replay_cache_authority(state, payload)
         _verify_boundary_hash(
@@ -2649,6 +2706,7 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
                 existing.recovery_id == payload.recovery_id
                 and existing.recovery_reason == payload.reason
                 and existing.recovery_error_detail == payload.error_detail
+                and existing.recovery_first_error_detail == payload.first_error_detail
                 and existing.node_id == payload.node_id
                 and existing.lease_id == payload.lease_id
                 and existing.lease_generation == payload.lease_generation
@@ -2707,6 +2765,7 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
                 "recovery_id": payload.recovery_id,
                 "recovery_reason": payload.reason,
                 "recovery_error_detail": payload.error_detail,
+                "recovery_first_error_detail": payload.first_error_detail,
                 "recovery_max_attempts": payload.max_attempts,
                 "retry_after_recovery": payload.retry_after_recovery,
                 "recovery_snapshot_id": payload.recovery_snapshot_id,

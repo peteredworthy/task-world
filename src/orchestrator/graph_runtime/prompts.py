@@ -39,6 +39,7 @@ from orchestrator.graph import (
     InputBindingProjection,
 )
 from orchestrator.graph import PLANNER_OPS
+from orchestrator.graph_runtime.errors import InvalidExecutionContractError
 from orchestrator.graph_runtime.horizon_templates import horizon_region_templates
 
 if TYPE_CHECKING:
@@ -97,17 +98,46 @@ def _bounded_text(value: object, *, max_chars: int = MAX_GRAPH_PROMPT_FIELD_CHAR
 
 def _verifier_packet(context: GraphDispatchContext) -> dict[str, Any]:
     node = context.node_payload
+    _validate_verifier_contract(node)
+    citations = _evaluated_record_citations(context)
+    candidate_record_ids = _bound_record_ids_for_ports(
+        context,
+        ("candidate_under_test", "candidate", "semantic_artifact"),
+    )
+    requirement_record_ids = _bound_record_ids_for_ports(
+        context,
+        tuple(
+            port
+            for port in sorted(
+                input_bindings_view(context.graph_projection).get(context.node_id, {})
+            )
+            if port == "requirement" or port.startswith("requirement_")
+        ),
+    )
     return {
         "node_id": context.node_id,
         "task_region_id": node.get("task_region_id", context.node_id),
         "candidate_id": _candidate_id_for_verifier(context),
+        "semantic_stage": node.get("semantic_stage"),
+        "semantic_schema_id": node.get("semantic_schema_id"),
+        "semantic_schema_version": node.get("semantic_schema_version"),
+        "objective": _verifier_objective(node),
+        "acceptance_obligations": _verifier_acceptance_obligations(node),
         "requirements": list(context.requirements),
-        "rubric": node.get("rubric") or [],
+        "rubric": _effective_verifier_rubric(node),
+        "candidate_evidence": {
+            "bound_candidate_or_artifact_record_ids": candidate_record_ids,
+        },
+        "requirement_evidence": {
+            "bound_requirement_ids": _string_list(node.get("bound_requirement_ids")),
+            "resolved_requirements": list(context.requirements),
+            "bound_requirement_record_ids": requirement_record_ids,
+        },
         "bound_records": _planner_evidence(
             context,
             context.graph_projection,
         )["bound_records"],
-        "evaluated_record_citations": _evaluated_record_citations(context),
+        "evaluated_record_citations": citations,
         "required_report_schema": {
             "record_kind": "verification",
             "port": "verification_report",
@@ -122,6 +152,56 @@ def _verifier_packet(context: GraphDispatchContext) -> dict[str, Any]:
             "outcome_values": ["passed", "failed"],
         },
     }
+
+
+def _validate_verifier_contract(node: dict[str, Any]) -> None:
+    if node.get("semantic_stage") != "plan_verification":
+        return
+    missing: list[str] = []
+    objective = node.get("objective")
+    if not isinstance(objective, str) or not objective.strip():
+        missing.append("objective")
+    acceptance = _verifier_acceptance_obligations(node)
+    if not acceptance or any(not obligation.strip() for obligation in acceptance):
+        missing.append("acceptance")
+    if missing:
+        fields = ", ".join(missing)
+        raise InvalidExecutionContractError(
+            "plan_verification verifier requires a complete stage contract; "
+            f"missing or empty fields: {fields}"
+        )
+
+
+def _verifier_objective(node: dict[str, Any]) -> str | None:
+    objective = node.get("objective")
+    if not isinstance(objective, str) or not objective.strip():
+        return None
+    return _bounded_text(objective)
+
+
+def _verifier_acceptance_obligations(node: dict[str, Any]) -> list[str]:
+    return _string_list(node.get("acceptance"))
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in cast(list[Any], value) if isinstance(item, str)]
+
+
+def _effective_verifier_rubric(node: dict[str, Any]) -> list[Any]:
+    authored = node.get("rubric")
+    if isinstance(authored, list) and authored:
+        return list(cast(list[Any], authored))
+    if node.get("semantic_stage") != "plan_verification":
+        return []
+    return [
+        "Coverage: the plan covers the stated objective and every bound requirement.",
+        "Feasibility: the proposed work is technically executable within the declared scope and constraints.",
+        "Obligations: the plan explicitly addresses every acceptance obligation.",
+        "Evidence: plan claims are grounded in the exact bound semantic artifact/candidate and requirement evidence.",
+        "Downstream implementation plan: the plan identifies implementable work and validation steps; assess the plan itself without requiring implementation or downstream tests to be complete at this stage.",
+    ]
 
 
 def _summarizer_packet(context: GraphDispatchContext) -> dict[str, Any]:
@@ -153,13 +233,28 @@ def _prompt_for_node(context: GraphDispatchContext) -> str:
     node = context.node_payload
     if context.node_kind == "verifier":
         packet = _verifier_packet(context)
-        rubric = node.get("rubric")
         return _bounded_prompt(
             "\n".join(
                 [
                     f"Verify task region {node.get('task_region_id', context.node_id)}.",
                     f"Candidate: {_candidate_id_for_verifier(context)}",
-                    f"Rubric: {_bounded_json(rubric or [])}",
+                    f"Semantic stage: {_bounded_text(packet['semantic_stage'])}",
+                    f"Objective: {_bounded_text(packet['objective'])}",
+                    "Acceptance obligations: "
+                    + _bounded_json(
+                        packet["acceptance_obligations"],
+                        max_chars=MAX_GRAPH_PROMPT_FIELD_CHARS,
+                    ),
+                    "Rubric: "
+                    + _bounded_json(
+                        packet["rubric"],
+                        max_chars=MAX_GRAPH_PROMPT_FIELD_CHARS,
+                    ),
+                    "Perform an independent review using only the exact bound candidate/artifact "
+                    "and requirement evidence in the packet.",
+                    "For plan_verification, grade the plan's coverage, feasibility, obligations, "
+                    "evidence, and downstream implementation plan. Do not require completed "
+                    "implementation or completed downstream tests.",
                     "",
                     "Verifier context packet:",
                     _bounded_json(packet),
