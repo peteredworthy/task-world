@@ -57,6 +57,7 @@ RECOVERY_SNAPSHOT = "4" * 32
 MANAGED_BOUNDARY_COMMANDS = {
     "record_runner_baseline",
     "stage_runner_submission",
+    "witness_runner_completion",
     "finalize_runner_execution",
     "request_runner_recovery",
 }
@@ -276,6 +277,33 @@ def _final_payload(
     }
 
 
+async def _witness_then_finalize(harness: Harness, final: dict[str, object]) -> Any:
+    attempt = execution_attempts_view(await harness.controller.read_projection(harness.run_id))[
+        harness.execution_id
+    ]
+    witnessed = await _trusted_boundary_command(
+        harness,
+        "witness_runner_completion",
+        {
+            **final,
+            "staged_payload_hash": attempt.payload_hash,
+            "staged_payload_size_bytes": attempt.payload_size_bytes,
+            "staged_snapshot_id": attempt.staged_snapshot_id,
+            "staged_snapshot_ref": attempt.staged_snapshot_ref,
+            "staged_commit_sha": attempt.staged_commit_sha,
+            "staged_tree_sha": attempt.staged_tree_sha,
+            "staged_boundary_hash": attempt.staged_boundary_hash,
+            "runner_return_kind": "successful_return",
+        },
+    )
+    if any(
+        event.event_type in {"runner_boundary_mismatch", "command_rejected"}
+        for event in witnessed.events
+    ):
+        return witnessed
+    return await _trusted_boundary_command(harness, "finalize_runner_execution", final)
+
+
 async def _run_case(harness: Harness, case: str) -> tuple[list[EventEnvelope], GraphProjection]:
     phase_roots = {
         "baseline": (["z-cache"], [], [], []),
@@ -317,8 +345,9 @@ async def _run_case(harness: Harness, case: str) -> tuple[list[EventEnvelope], G
         await _trusted_boundary_command(harness, "request_runner_recovery", recovery_payload)
     else:
         final = _final_payload(harness, final_roots, final_evidence)
-        mismatch = await _trusted_boundary_command(harness, "finalize_runner_execution", final)
+        mismatch = await _witness_then_finalize(harness, final)
         assert [event.event_type for event in mismatch.events] == [
+            "runner_completion_witnessed",
             "runner_boundary_mismatch",
             "runner_recovery_requested",
         ]
@@ -371,9 +400,9 @@ async def test_boundary_authority_schema_preserves_each_root_phase(
     expected_phase_roots = {
         "baseline": {("z-cache", "ignored")} if case == "baseline" else set(),
         "stage": {("z-cache", "ignored")} if case == "stage" else set(),
-        # A mismatched final boundary is not a finalized attempt phase; its
-        # roots are retained as recovery-observed evidence instead.
-        "final": set(),
+        # Completion witnessing durably records final-phase evidence before
+        # finalization detects the cross-phase boundary mismatch.
+        "final": {("z-cache", "ignored")} if case == "final" else set(),
         "recovery": set(),
     }
     expected_recovery_roots = (
@@ -465,7 +494,7 @@ async def test_checkpoint_round_trip_and_tail_replay_retain_root_evidence(
     expected_evidence = {
         "baseline": ({"z-cache/entry"}, set(), set(), set()),
         "stage": (set(), {"z-cache/entry"}, set(), set()),
-        "final": (set(), set(), set(), {"z-cache/entry"}),
+        "final": (set(), set(), {"z-cache/entry"}, {"z-cache/entry"}),
         "recovery": (set(), set(), set(), {"a-cache/entry"}),
     }[case]
     assert tuple(item.path for item in attempt.baseline_cache_status_evidence) == tuple(
@@ -495,8 +524,9 @@ async def test_z_root_then_a_root_is_canonicalized_in_authorized_recovery_order(
     stage["observed_graph_position"] = await harness.controller.current_position(harness.run_id)
     await _trusted_boundary_command(harness, "stage_runner_submission", stage)
     final = _final_payload(harness, [], [])
-    result = await _trusted_boundary_command(harness, "finalize_runner_execution", final)
+    result = await _witness_then_finalize(harness, final)
     assert [event.event_type for event in result.events] == [
+        "runner_completion_witnessed",
         "runner_boundary_mismatch",
         "runner_recovery_requested",
     ]
@@ -541,7 +571,7 @@ async def test_unauthorized_later_kind_cannot_replace_accepted_root_authority(
         harness.authority_hash,
     )
 
-    result = await _trusted_boundary_command(harness, "finalize_runner_execution", final)
+    result = await _witness_then_finalize(harness, final)
 
     assert [event.event_type for event in result.events] == ["command_rejected"]
     assert "not authorized for untracked" in result.events[0].payload["reason"]
@@ -667,6 +697,7 @@ def test_graph_api_enumeration_has_no_arbitrary_managed_boundary_ingress() -> No
     paths = sorted(route.path for route in graph_routes)
     assert set(paths) == {
         "/api/runs/{run_id}/graph",
+        "/api/runs/{run_id}/graph/crash-barrier",
         "/api/runs/{run_id}/graph/decisions",
         "/api/runs/{run_id}/graph/events",
         "/api/runs/{run_id}/graph/file-state",
@@ -676,6 +707,8 @@ def test_graph_api_enumeration_has_no_arbitrary_managed_boundary_ingress() -> No
         "/api/runs/{run_id}/graph/patch",
         "/api/runs/{run_id}/graph/patches",
         "/api/runs/{run_id}/graph/regions",
+        "/api/runs/{run_id}/graph/runtime-health",
+        "/api/runs/{run_id}/graph/runtime-health/resolve-validation-environment-blockage",
         "/api/runs/{run_id}/graph/scheduler",
         "/api/runs/{run_id}/graph/topology",
     }
@@ -687,6 +720,7 @@ def test_graph_api_enumeration_has_no_arbitrary_managed_boundary_ingress() -> No
     assert post_paths == {
         "/api/runs/{run_id}/graph/decisions",
         "/api/runs/{run_id}/graph/patch",
+        "/api/runs/{run_id}/graph/runtime-health/resolve-validation-environment-blockage",
     }
     forbidden_names = {
         "command_type",

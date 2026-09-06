@@ -44,7 +44,7 @@ class CompromisedFileStateError(GraphRuntimeError):
 
 
 class CacheScanBudgetExceededError(GraphRuntimeError):
-    """Raised before cache descendant inspection exceeds compiled authority."""
+    """Historical v1 cache-scan failure retained for durable replay/readback."""
 
     def __init__(
         self,

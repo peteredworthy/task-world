@@ -25,6 +25,7 @@ from orchestrator.db import (
 from orchestrator.graph import (
     EventEnvelope,
     accepted_output_records_by_node_port_view,
+    cache_authority_binding,
     leases_view,
     node_states_view,
     execution_attempts_view,
@@ -203,6 +204,30 @@ class CacheBudgetSubmitAgent(SubmitAgent):
         cache = Path(context.working_dir, "node_modules", "dependency")
         cache.mkdir(parents=True)
         (cache / "id_rsa").write_text("secret", encoding="utf-8")
+        await on_submit()
+        return ExecutionResult(success=True)
+
+
+class PlannerSubmitAgent(SubmitAgent):
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        assert context.graph_patch_callback is not None
+        feedback = await context.graph_patch_callback(
+            {
+                "patch_id": f"{context.node_id}-noop",
+                "base_graph_position": 0,
+                "ops": [],
+            }
+        )
+        assert "accepted" in feedback
         await on_submit()
         return ExecutionResult(success=True)
 
@@ -1543,11 +1568,11 @@ async def test_managed_runner_transport_failure_persists_before_recovery(
 
 
 @pytest.mark.asyncio
-async def test_cache_budget_exhaustion_rejects_submission_and_recovers_after_restart(
+async def test_cache_descendants_are_opaque_to_tiny_byte_budget_across_restart(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
 ) -> None:
-    """A compiled byte budget survives replay and cannot strand a managed lease."""
+    """Cache contents stay opaque while the compiled byte budget survives replay."""
     _, session_factory = file_db
     repo = tmp_path / "repo-cache-budget"
     _init_repo(repo)
@@ -1579,61 +1604,75 @@ async def test_cache_budget_exhaustion_rejects_submission_and_recovers_after_res
         event for event in events_before_restart if event.event_type == "runner_baseline_recorded"
     )
     execution_id = str(baseline.payload["execution_id"])
-    recovery = next(
+    staged = next(
         event
         for event in events_before_restart
-        if event.event_type == "runner_recovery_requested"
+        if event.event_type == "runner_submission_staged"
         and event.payload.get("execution_id") == execution_id
     )
-    assert recovery.payload["recovery_scope"] == "full_baseline"
-    assert recovery.payload["final_boundary_entries"] == []
-    assert recovery.payload["paths"] == []
-    assert not any(
-        event.event_type
-        in {"runner_submission_staged", "runner_execution_finalized", "callback_accepted"}
-        and event.payload.get("execution_id") == execution_id
+    finalized = next(
+        event
         for event in events_before_restart
+        if event.event_type == "runner_execution_finalized"
+        and event.payload.get("execution_id") == execution_id
     )
+    expected_root = [{"path": "node_modules", "kind": "ignored"}]
+    expected_evidence = [{"path": "node_modules", "kind": "ignored"}]
+    assert baseline.payload["cache_status_evidence"] == []
+    assert staged.payload["cache_status_evidence"] == expected_evidence
+    assert staged.payload["boundary_entries"] == []
+    assert finalized.payload["cache_status_evidence"] == expected_evidence
+    assert finalized.payload["boundary_entries"] == []
+    execution_event_types = {
+        event.event_type
+        for event in events_before_restart
+        if event.payload.get("execution_id") == execution_id
+    }
+    assert {
+        "runner_baseline_recorded",
+        "runner_submission_staged",
+        "runner_completion_witnessed",
+        "runner_execution_finalized",
+        "callback_accepted",
+    }.issubset(execution_event_types)
+    assert not {
+        "agent_died",
+        "runner_recovery_requested",
+        "runner_recovery_completed",
+        "runtime_retry_scheduled",
+    }.intersection(execution_event_types)
     projection_before_restart = await controller.read_projection(run_id)
-    assert (
-        accepted_output_records_by_node_port_view(projection_before_restart)
-        .get(str(recovery.payload["node_id"]), {})
-        .get("candidate", [])
-        == []
-    )
+    attempt_before_restart = execution_attempts_view(projection_before_restart)[execution_id]
+    assert attempt_before_restart.state == "finalized"
+    assert attempt_before_restart.baseline_cache_roots == ()
+    assert [(root.path, root.kind) for root in attempt_before_restart.staged_cache_roots] == [
+        (root["path"], root["kind"]) for root in expected_root
+    ]
+    assert [(root.path, root.kind) for root in attempt_before_restart.final_cache_roots] == [
+        (root["path"], root["kind"]) for root in expected_root
+    ]
+    assert node_states_view(projection_before_restart)["worker-step-1-task-1"] == "completed"
+    assert accepted_output_records_by_node_port_view(projection_before_restart)[
+        "worker-step-1-task-1"
+    ]["candidate"]
+    authority_before_restart = cache_authority_binding(projection_before_restart)
+    assert authority_before_restart.policy.scan_budget.max_entries == 10
+    assert authority_before_restart.policy.scan_budget.max_bytes == 1
     assert (repo / "node_modules" / "dependency" / "id_rsa").exists()
 
-    # A fresh runtime reconstructs policy/attempt state from durable events;
-    # recovery needs no process-local scan or baseline cache.
+    # A fresh runtime reconstructs the tiny policy and finalized cache evidence
+    # from durable events without inspecting cache descendants.
     restarted = GraphController(session_factory, clock, ids, auto_dispatch=False)
-    restarted_executor = GraphDispatchExecutor(
-        session_factory,
-        restarted,
-        AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("A")}),
-        worktree_path=repo,
-        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts-restarted"),
-    )
-    restarted_dispatcher = OutboxDispatcher(session_factory, restarted_executor, clock)
-    completed = await restarted_dispatcher.dispatch_pending(
-        run_id=run_id, allowed_kinds=frozenset({"runner_recovery"})
-    )
-
-    assert [item.kind for item in completed] == ["runner_recovery"]
-    assert not (repo / "node_modules").exists()
-    events = await _read_events(session_factory, run_id)
-    assert any(
-        event.event_type == "runner_recovery_completed"
-        and event.payload.get("execution_id") == execution_id
-        for event in events
-    )
-    assert any(
-        event.event_type == "lease_revoked" and event.payload.get("execution_id") == execution_id
-        for event in events
-    )
+    replayed_projection = await restarted.read_projection(run_id)
+    replayed_authority = cache_authority_binding(replayed_projection)
+    assert replayed_authority.policy.scan_budget == authority_before_restart.policy.scan_budget
+    replayed_attempt = execution_attempts_view(replayed_projection)[execution_id]
+    assert replayed_attempt == attempt_before_restart
+    assert (repo / "node_modules" / "dependency" / "id_rsa").exists()
 
 
 @pytest.mark.asyncio
-async def test_prebaseline_cache_budget_failure_terminates_root_planner_without_retry(
+async def test_prebaseline_cache_descendants_are_opaque_to_tiny_entry_budget(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
 ) -> None:
@@ -1665,7 +1704,7 @@ async def test_prebaseline_cache_budget_failure_terminates_root_planner_without_
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
-        AgentFactory({"planner": SubmitAgent()}),
+        AgentFactory({"planner": PlannerSubmitAgent()}),
         worktree_path=repo,
         artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
@@ -1682,20 +1721,56 @@ async def test_prebaseline_cache_budget_failure_terminates_root_planner_without_
     await executor.wait_for_all()
 
     events = await _read_events(session_factory, run_id)
-    deaths = [event for event in events if event.event_type == "agent_died"]
-    assert len(deaths) == 1
-    assert str(deaths[0].payload["reason"]).startswith("cache scan entries budget exceeded at ")
-    assert not any(event.event_type == "runner_baseline_recorded" for event in events)
-    assert not any(event.event_type == "runtime_retry_scheduled" for event in events)
-    failure = next(
+    baseline = next(
         event
         for event in events
-        if event.event_type == "output_record_accepted"
-        and event.payload.get("record_type") == "failure_record"
+        if event.event_type == "runner_baseline_recorded"
+        and event.payload.get("node_id") == "planner-plan"
     )
-    assert failure.payload["value"]["error_class"] == "runtime_configuration_error"
-    assert failure.payload["value"]["retryable"] is False
-    assert node_states_view(await controller.read_projection(run_id))["planner-plan"] == "failed"
+    execution_id = str(baseline.payload["execution_id"])
+    expected_root = [{"path": "ui/node_modules", "kind": "ignored"}]
+    expected_evidence = [{"path": "ui/node_modules", "kind": "ignored"}]
+    assert baseline.payload["cache_status_evidence"] == expected_evidence
+    assert baseline.payload["entries"] == []
+    for event_type in (
+        "runner_submission_staged",
+        "runner_completion_witnessed",
+        "runner_execution_finalized",
+    ):
+        boundary = next(
+            event
+            for event in events
+            if event.event_type == event_type and event.payload.get("execution_id") == execution_id
+        )
+        assert boundary.payload["cache_status_evidence"] == expected_evidence
+    execution_event_types = {
+        event.event_type for event in events if event.payload.get("execution_id") == execution_id
+    }
+    assert "callback_accepted" in execution_event_types
+    assert not {
+        "agent_died",
+        "runner_recovery_requested",
+        "runner_recovery_completed",
+        "runtime_retry_scheduled",
+    }.intersection(execution_event_types)
+    projection = await controller.read_projection(run_id)
+    assert node_states_view(projection)["planner-plan"] == "completed"
+    attempt = execution_attempts_view(projection)[execution_id]
+    assert attempt.state == "finalized"
+    for roots in (
+        attempt.baseline_cache_roots,
+        attempt.staged_cache_roots,
+        attempt.final_cache_roots,
+    ):
+        assert [(root.path, root.kind) for root in roots] == [
+            (root["path"], root["kind"]) for root in expected_root
+        ]
+    authority = cache_authority_binding(projection)
+    assert authority.policy.scan_budget.max_entries == 10
+    assert authority.policy.scan_budget.max_bytes == 1_073_741_824
+    checkpoint_projection = projection_from_checkpoint(projection_to_checkpoint(projection))
+    assert cache_authority_binding(checkpoint_projection) == authority
+    assert execution_attempts_view(checkpoint_projection)[execution_id] == attempt
 
 
 @pytest.mark.asyncio

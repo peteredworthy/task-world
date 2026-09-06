@@ -22,7 +22,6 @@ from orchestrator.graph import (
     project_residue_report,
 )
 from orchestrator.graph_runtime import (
-    CacheScanBudgetExceededError,
     GraphController,
     GraphDispatchContext,
     GraphDispatchExecutor,
@@ -453,7 +452,7 @@ def test_symlinked_dir_inside_ignored_dir_is_classified_and_escape_rejected(
     assert any(entry.path == "scratch/escape" for entry in classification.rejected_paths)
 
 
-def test_large_ui_node_modules_respects_compiled_budget_and_keeps_security_visible(
+def test_large_ui_node_modules_is_opaque_under_compiled_historical_budget(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo-large-ui-node-modules"
@@ -486,7 +485,7 @@ def test_large_ui_node_modules_respects_compiled_budget_and_keeps_security_visib
     security.mkdir()
     (security / "id_rsa").write_bytes(bytes(range(256)))
     (security / "outside").symlink_to(tmp_path / "outside", target_is_directory=True)
-    rejected = capture_file_state_boundary(
+    captured = capture_file_state_boundary(
         worktree_path=repo,
         run_id="large-ui-cache",
         node_id="planner-1",
@@ -494,30 +493,17 @@ def test_large_ui_node_modules_respects_compiled_budget_and_keeps_security_visib
         base_snapshot_id="base-1",
         policy=policy,
     )
-    rejected_by_path = {entry.path: entry for entry in rejected.classification.paths}
+    captured_by_path = {entry.path: entry for entry in captured.classification.paths}
 
-    assert set(rejected_by_path) == {
-        "ui/node_modules",
-        "ui/node_modules/00-security/id_rsa",
-        "ui/node_modules/00-security/outside",
-    }
-    assert rejected_by_path["ui/node_modules"].classification == "tool_cache"
-    assert rejected_by_path["ui/node_modules/00-security/id_rsa"].classification == "secret"
-    assert rejected_by_path["ui/node_modules/00-security/outside"].reason == "repo_escape"
-    assert rejected.classification.verdict == "rejected"
+    assert set(captured_by_path) == {"ui/node_modules"}
+    assert captured_by_path["ui/node_modules"].classification == "tool_cache"
+    assert captured.classification.verdict == "captured"
 
     over_limit = FileStatePolicy(
         scan_budget=FileStateScanBudget(max_entries=10_000, max_bytes=1_073_741_824)
     )
-    failures: list[tuple[str, int, int, str]] = []
-    for _ in range(2):
-        with pytest.raises(CacheScanBudgetExceededError) as raised:
-            capture_worktree_file_state_baseline(repo, over_limit)
-        error = raised.value
-        failures.append((error.metric, error.limit, error.observed, error.path))
-
-    assert failures[0] == failures[1]
-    assert failures[0][:3] == ("entries", 10_000, 10_001)
+    over_limit_baseline = capture_worktree_file_state_baseline(repo, over_limit)
+    assert [entry.path for entry in over_limit_baseline.status.ignored] == ["ui/node_modules"]
 
 
 async def _seed_active_run(

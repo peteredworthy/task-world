@@ -25,7 +25,6 @@ from orchestrator.graph import (
 )
 from orchestrator.graph_runtime import (
     CompromisedFileStateError,
-    CacheScanBudgetExceededError,
     capture_file_state_boundary,
     capture_worktree_file_state_baseline,
     collect_worktree_status,
@@ -598,7 +597,7 @@ def test_mixed_cache_root_preserves_tracked_source_and_drops_cache_residue(tmp_p
     assert not residue.exists()
 
 
-def test_cache_policy_roots_do_not_hide_sources_or_security_descendants(tmp_path: Path) -> None:
+def test_cache_policy_roots_are_opaque_without_hiding_sibling_sources(tmp_path: Path) -> None:
     repo = _init_file_state_repo(tmp_path)
     (repo / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
     subprocess.run(["git", "add", ".gitignore"], cwd=repo, check=True)
@@ -624,12 +623,12 @@ def test_cache_policy_roots_do_not_hide_sources_or_security_descendants(tmp_path
     by_path = {entry.path: entry for entry in boundary.classification.paths}
 
     assert by_path["cache_notes/source.py"].classification == "unknown_untracked"
-    assert by_path["node_modules/dependency/id_rsa"].classification == "secret"
-    assert by_path["node_modules/dependency/outside"].reason == "repo_escape"
-    assert boundary.classification.verdict == "rejected"
+    assert set(by_path) == {"cache_notes/source.py", "node_modules"}
+    assert by_path["node_modules"].classification == "tool_cache"
+    assert boundary.classification.verdict == "captured"
 
 
-def test_large_ignored_cache_is_one_root_plus_security_evidence(tmp_path: Path) -> None:
+def test_large_ignored_cache_emits_only_root_evidence(tmp_path: Path) -> None:
     repo = _init_file_state_repo(tmp_path)
     (repo / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
     subprocess.run(["git", "add", ".gitignore"], cwd=repo, check=True)
@@ -655,14 +654,9 @@ def test_large_ignored_cache_is_one_root_plus_security_evidence(tmp_path: Path) 
     )
     by_path = {entry.path: entry for entry in boundary.classification.paths}
 
-    assert set(by_path) == {
-        "node_modules",
-        "node_modules/dependency/id_rsa",
-        "node_modules/dependency/outside",
-    }
+    assert set(by_path) == {"node_modules"}
     assert by_path["node_modules"].classification == "tool_cache"
-    assert by_path["node_modules/dependency/id_rsa"].classification == "secret"
-    assert by_path["node_modules/dependency/outside"].reason == "repo_escape"
+    assert boundary.classification.verdict == "captured"
 
 
 def test_worktree_venv_is_opaque_cache_root(tmp_path: Path) -> None:
@@ -696,7 +690,7 @@ def test_worktree_venv_is_opaque_cache_root(tmp_path: Path) -> None:
     assert boundary.classification.paths[0].classification == "tool_cache"
 
 
-def test_cache_security_scan_entry_budget_is_stable_and_charges_symlinks(tmp_path: Path) -> None:
+def test_cache_descendants_do_not_spend_entry_budget(tmp_path: Path) -> None:
     repo = _init_file_state_repo(tmp_path)
     (repo / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
     subprocess.run(["git", "add", ".gitignore"], cwd=repo, check=True)
@@ -708,20 +702,15 @@ def test_cache_security_scan_entry_budget_is_stable_and_charges_symlinks(tmp_pat
     (cache / "a-link").symlink_to(tmp_path / "outside")
     (cache / "id_rsa").write_text("secret", encoding="utf-8")
 
-    policy = FileStatePolicy(scan_budget=FileStateScanBudget(max_entries=2, max_bytes=100))
-    failures: list[CacheScanBudgetExceededError] = []
-    for _ in range(2):
-        with pytest.raises(CacheScanBudgetExceededError) as raised:
-            collect_worktree_status(repo, policy)
-        failures.append(raised.value)
+    policy = FileStatePolicy(scan_budget=FileStateScanBudget(max_entries=1, max_bytes=1))
+    status = collect_worktree_status(repo, policy)
 
-    assert [(error.metric, error.limit, error.observed, error.path) for error in failures] == [
-        ("entries", 2, 3, (cache / "id_rsa").as_posix()),
-        ("entries", 2, 3, (cache / "id_rsa").as_posix()),
-    ]
+    assert [entry.path for entry in status.ignored] == ["node_modules"]
 
 
-def test_cache_security_scan_byte_budget_stops_before_secret_content_read(tmp_path: Path) -> None:
+def test_cache_secret_descendant_does_not_spend_byte_budget_or_emit_evidence(
+    tmp_path: Path,
+) -> None:
     repo = _init_file_state_repo(tmp_path)
     (repo / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
     subprocess.run(["git", "add", ".gitignore"], cwd=repo, check=True)
@@ -732,17 +721,46 @@ def test_cache_security_scan_byte_budget_stops_before_secret_content_read(tmp_pa
     secret.parent.mkdir()
     secret.write_bytes(b"12345")
 
-    policy = FileStatePolicy(scan_budget=FileStateScanBudget(max_entries=10, max_bytes=4))
-    with pytest.raises(CacheScanBudgetExceededError) as raised:
-        collect_worktree_status(repo, policy)
+    policy = FileStatePolicy(scan_budget=FileStateScanBudget(max_entries=1, max_bytes=1))
+    status = collect_worktree_status(repo, policy)
 
-    error = raised.value
-    assert (error.metric, error.limit, error.observed, error.path) == (
-        "bytes",
-        4,
-        5,
-        secret.as_posix(),
+    assert [entry.path for entry in status.ignored] == ["node_modules"]
+
+
+def test_declared_root_and_nested_untracked_caches_are_opaque(tmp_path: Path) -> None:
+    repo = _init_file_state_repo(tmp_path)
+    for root in (repo / "vendor-cache", repo / "generated" / "vendor-cache"):
+        root.mkdir(parents=True)
+        (root / "id_rsa").write_bytes(bytes(range(256)))
+        (root / "outside").symlink_to(tmp_path / "outside")
+    policy = FileStatePolicy(
+        declarations=(
+            FileStateDeclaration("vendor-cache/**", "tool_cache"),
+            FileStateDeclaration("**/vendor-cache/**", "tool_cache"),
+        ),
+        scan_budget=FileStateScanBudget(max_entries=1, max_bytes=1),
     )
+
+    status = collect_worktree_status(repo, policy)
+    by_path = {entry.path: entry for entry in status.untracked}
+
+    assert set(by_path) == {"vendor-cache", "generated/vendor-cache"}
+    result = classify_file_state(status, policy)
+    assert result.verdict == "captured"
+    assert {entry.classification for entry in result.paths} == {"tool_cache"}
+
+
+def test_cache_root_symlink_itself_is_checked(tmp_path: Path) -> None:
+    repo = _init_file_state_repo(tmp_path)
+    (repo / "node_modules").symlink_to(tmp_path / "outside", target_is_directory=True)
+
+    status = collect_worktree_status(repo)
+    entry = next(item for item in status.untracked if item.path == "node_modules")
+
+    assert entry.symlink_escape is True
+    result = classify_file_state(status, default_file_state_policy())
+    assert result.verdict == "rejected"
+    assert result.rejected_paths[0].path == "node_modules"
 
 
 @pytest.mark.parametrize("field", ["max_entries", "max_bytes"])

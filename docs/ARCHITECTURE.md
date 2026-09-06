@@ -86,7 +86,7 @@ npm run dev   # starts on port 5173
 ## Cache-authority routine binding
 
 Graph routines may declare `file_state_policy` with bounded `declarations` and
-`scan_budget` (`max_entries`, `max_bytes`). Compilation canonicalizes this
+the historical `scan_budget` (`max_entries`, `max_bytes`). Compilation canonicalizes this
 policy, stores its versioned preimage and SHA-256 digest only in the routine snapshot,
 and copies the digest to every node, lease, and dispatch intent. Runtime
 dispatch verifies all copies against the projected snapshot before it accesses
@@ -100,11 +100,13 @@ only custom declarations and scan budgets. Runtime materializes boundary
 policy from the verified snapshot, never from mutable defaults. Older facts
 with all three fields absent resolve to `LEGACY_CACHE_AUTHORITY_V1`.
 
-The production `dynamic-graph-feature` routine compiles a 50,000-entry,
-1-GiB scan budget so normal ignored frontend dependency trees fit within its
-immutable authority. A deterministic cache scan-budget failure before runner
-baseline capture is a terminal runtime-configuration failure: the lease is
-revoked and the node fails without scheduling a runtime retry.
+Recognized built-in and routine-declared tool-cache directories are opaque:
+collection records and checks the cache root itself, then prunes the directory
+without walking, stating, hashing, reading, or charging any descendant. Git
+status still reports tracked changes inside mixed cache roots, while unknown
+directories retain recursive secret and symlink checks. The v1 scan-budget
+fields and historical terminal cache-budget error remain supported for durable
+replay compatibility, but new cache-root collection does not spend that budget.
 
 Runner snapshot boundaries persist `RunnerCacheRoot` objects (`path` plus
 `untracked` or `ignored` source kind), not bare path strings. Roots are sorted,

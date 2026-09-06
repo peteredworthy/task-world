@@ -85,7 +85,12 @@ class FileStateDeclaration:
 
 @dataclass(frozen=True)
 class FileStateScanBudget:
-    """Immutable cache-descendant inspection limits compiled into authority."""
+    """Historical v1 cache-scan authority retained for replay compatibility.
+
+    Recognized cache roots are opaque at runtime, so new collection does not
+    spend this budget. The validated fields remain part of the immutable
+    ``cache-authority-v1`` preimage and old event/error replay contracts.
+    """
 
     max_entries: int = 10_000
     max_bytes: int = 1_073_741_824

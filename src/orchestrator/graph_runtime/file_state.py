@@ -30,7 +30,6 @@ from orchestrator.graph import (
     default_file_state_policy,
     secret_name_matches,
 )
-from orchestrator.graph_runtime.errors import CacheScanBudgetExceededError
 
 
 @dataclass(frozen=True)
@@ -57,44 +56,6 @@ class WorktreeFileStateBaseline:
     fingerprints: dict[tuple[str, str], str]
 
 
-@dataclass
-class _CacheScanAccounting:
-    """One deterministic budget shared by every cache subtree in one collection.
-
-    An entry is charged when its directory entry is inspected, before any
-    symlink metadata/target check. Bytes are charged before a secret-candidate
-    content read using the observed regular-file size. This makes exhaustion
-    fail closed without returning a partial status manifest.
-    """
-
-    max_entries: int
-    max_bytes: int
-    entries: int = 0
-    bytes: int = 0
-
-    def inspect_entry(self, path: Path) -> None:
-        observed = self.entries + 1
-        if observed > self.max_entries:
-            raise CacheScanBudgetExceededError(
-                metric="entries",
-                limit=self.max_entries,
-                observed=observed,
-                path=path.as_posix(),
-            )
-        self.entries = observed
-
-    def inspect_bytes(self, path: Path, size: int) -> None:
-        observed = self.bytes + size
-        if observed > self.max_bytes:
-            raise CacheScanBudgetExceededError(
-                metric="bytes",
-                limit=self.max_bytes,
-                observed=observed,
-                path=path.as_posix(),
-            )
-        self.bytes = observed
-
-
 def collect_worktree_status(
     worktree_path: str | Path,
     policy: FileStatePolicy | None = None,
@@ -102,10 +63,6 @@ def collect_worktree_status(
     """Collect git worktree status plus metadata needed by the pure classifier."""
     path = Path(worktree_path)
     active_policy = policy or default_file_state_policy()
-    cache_scan = _CacheScanAccounting(
-        max_entries=active_policy.scan_budget.max_entries,
-        max_bytes=active_policy.scan_budget.max_bytes,
-    )
     result = _run_git(path, ["status", "--porcelain=v2", "-z", "--ignored=matching"])
     tracked: list[FileStatePath] = []
     untracked: list[FileStatePath] = []
@@ -114,14 +71,10 @@ def collect_worktree_status(
         prefix = line[0]
         if prefix == "?":
             relpath = line[2:]
-            untracked.extend(
-                _paths_with_metadata(path, relpath, "untracked", active_policy, cache_scan)
-            )
+            untracked.extend(_paths_with_metadata(path, relpath, "untracked", active_policy))
         elif prefix == "!":
             relpath = line[2:]
-            ignored.extend(
-                _paths_with_metadata(path, relpath, "ignored", active_policy, cache_scan)
-            )
+            ignored.extend(_paths_with_metadata(path, relpath, "ignored", active_policy))
         elif prefix in {"1", "2", "u"}:
             status, relpath = _tracked_status_and_path(line)
             if prefix == "2" and original_path is None and "\t" in relpath:
@@ -412,7 +365,6 @@ def _path_with_metadata(
     policy: FileStatePolicy,
     *,
     status: str | None = None,
-    cache_scan: _CacheScanAccounting | None = None,
 ) -> FileStatePath:
     normalized = relpath.rstrip("/")
     full_path = worktree_path / normalized
@@ -426,8 +378,6 @@ def _path_with_metadata(
     if not is_link and full_path.is_file():
         size_bytes = full_path.stat().st_size
         if secret_name_matches(normalized, policy):
-            if cache_scan is not None:
-                cache_scan.inspect_bytes(full_path, size_bytes)
             data = full_path.read_bytes()
             entropy = _shannon_entropy(data)
         if _declared_external_artifact(normalized, policy):
@@ -514,20 +464,16 @@ def _paths_with_metadata(
     relpath: str,
     kind: FileStatePathKind,
     policy: FileStatePolicy,
-    cache_scan: _CacheScanAccounting,
 ) -> list[FileStatePath]:
     normalized = relpath.rstrip("/")
     full_path = worktree_path / normalized
     if not full_path.is_dir() or full_path.is_symlink():
         return [_path_with_metadata(worktree_path, normalized, kind, policy)]
-    # Git commonly reports the cache root itself as one ignored status entry.
-    # Treat it exactly like a nested cache root: keep the bounded root evidence
-    # and perform the one security traversal under the same shared budget.
+    # A recognized cache is an opaque boundary. Preserve evidence for the root
+    # itself (including a root symlink's escape metadata), but never enumerate,
+    # stat, hash, read, or budget any descendant.
     if _is_declared_tool_cache(normalized, kind, policy):
-        paths = [_path_with_metadata(worktree_path, normalized, kind, policy)]
-        if _cache_root_requires_security_scan(normalized):
-            paths.extend(_cache_security_paths(worktree_path, full_path, kind, policy, cache_scan))
-        return paths
+        return [_path_with_metadata(worktree_path, normalized, kind, policy)]
 
     # Git may report an untracked or ignored directory as one status entry. The
     # boundary must classify every file so nested secret-like paths cannot be
@@ -541,14 +487,7 @@ def _paths_with_metadata(
             if not _is_declared_tool_cache(relative, kind, policy):
                 continue
             paths.append(_path_with_metadata(worktree_path, relative, kind, policy))
-            # Do not materialize an unbounded dependency/cache tree in the
-            # normal boundary manifest.  Still inspect every descendant that
-            # could be security-relevant: tool-cache precedence must never hide
-            # a secret-like file or an escaping symlink.
-            if _cache_root_requires_security_scan(relative):
-                paths.extend(
-                    _cache_security_paths(worktree_path, dir_path, kind, policy, cache_scan)
-                )
+            # Prune before os.walk can observe anything below the cache root.
             dirs.remove(dirname)
         # Symlinked directories appear in `dirs` but are never descended
         # (followlinks=False). Classify the symlink entry itself so a
@@ -591,56 +530,6 @@ def _is_declared_tool_cache(path: str, kind: FileStatePathKind, policy: FileStat
     return declaration is not None or any(
         _pattern_matches(path, pattern) for pattern in policy.tool_cache_patterns
     )
-
-
-def _cache_root_requires_security_scan(path: str) -> bool:
-    """Return whether an ignored cache may contain run-owned output.
-
-    Worktree setup creates ``.venv`` before a runner lease begins. Its package
-    tree contains ordinary credential-named modules, CA certificates, and
-    interpreter symlinks outside the worktree, all of which intentionally trip
-    the stricter scan used for agent-owned caches. The environment is excluded
-    from snapshots and cannot be accepted as output, so retain only its bounded
-    root evidence. Other cache roots still receive the full secret/symlink scan.
-    """
-    normalized = path.replace("\\", "/").strip("/")
-    return normalized != ".venv" and not normalized.endswith("/.venv")
-
-
-def _cache_security_paths(
-    worktree_path: Path,
-    cache_root: Path,
-    kind: FileStatePathKind,
-    policy: FileStatePolicy,
-    cache_scan: _CacheScanAccounting,
-) -> list[FileStatePath]:
-    """Collect only security-relevant descendants of an otherwise bounded cache.
-
-    Names and symlink targets are cheap metadata checks; cache file bytes are
-    read only for a secret-like name.  This keeps ordinary cache collection
-    bounded while preserving the security classification guarantee.
-    """
-    paths: list[FileStatePath] = []
-    for root, dirs, files in os.walk(cache_root, followlinks=False):
-        dirs.sort()
-        # os.walk supplies directory and file lists separately. Sort their
-        # combined names so which limit is reached never depends on filesystem
-        # enumeration order or entry type grouping.
-        for name in sorted([*dirs, *files]):
-            candidate = Path(root) / name
-            cache_scan.inspect_entry(candidate)
-            relative = candidate.relative_to(worktree_path).as_posix()
-            if candidate.is_symlink() or secret_name_matches(relative, policy):
-                paths.append(
-                    _path_with_metadata(
-                        worktree_path,
-                        relative,
-                        kind,
-                        policy,
-                        cache_scan=cache_scan,
-                    )
-                )
-    return paths
 
 
 def _declared_external_artifact(path: str, policy: FileStatePolicy) -> bool:
