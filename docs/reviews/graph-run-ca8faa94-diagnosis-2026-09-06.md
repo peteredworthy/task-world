@@ -81,7 +81,7 @@ exercised.
 
 | Incident finding | Resolution | Exact product-path/regression evidence | Result |
 |---|---|---|---|
-| Four journal failures | The gate no longer overrides `ORCHESTRATOR_EVENT_JOURNAL_PATH`; test-owned per-database journal routing is preserved while HOME, XDG, cache, temp, and checkout isolation remain. | `test_configured_project_gate_runs_journal_and_cleanup_regressions_nested` runs the four named journal tests through `enforce_submission_quality_gate`. | All four pass directly and inside the actual gate. |
+| Four journal failures | The gate no longer overrides `ORCHESTRATOR_EVENT_JOURNAL_PATH`; test-owned per-database journal routing is preserved while HOME, XDG, cache, temp, and checkout isolation remain. | `test_configured_project_gate_runs_journal_and_cleanup_regressions_nested` runs the four named journal tests through `enforce_submission_quality_gate`. The production gate also auto-resolved task-world's unchanged checked-in command against commit `999bb360b`. | All four pass directly and nested; the exact configured gate passes 5,930 tests with five skips. |
 | Nested cleanup failure | The cleanup assertion examines parsed registered worktree paths, not an outer temporary directory substring. This was a test-composition defect, not a leaked checkout. | The same nested production-gate test includes `test_gate_unlocks_its_exact_checkout_before_cleanup`. | Passes nested; disposable checkout is removed. |
 | Three supervisor failures | No supervisor source change was justified by the original evidence. The same three parametrized relaunch cases were instead exercised in the repaired gate environment. | The nested production-gate test includes all `[0]`, `[1]`, and `[2]` supervisor cases; they also run directly. | `3 passed` direct and all three pass nested. Earlier sandbox-specific process restrictions are classified as runner-environment observations, not application defects. |
 | Rejection detail truncated before the failure summary | Submission acknowledgement now carries a typed category and structured bounded evidence: command/source, exit or timeout, failed IDs/evidence, tail diagnostic, explicit truncation and byte counts, full-output hashes, semantic fingerprint, and durable graph-event reference. | `test_codex_execute_retains_late_real_gate_failure_and_durable_audit` drives a concrete Codex JSON-RPC transport through the actual callback and gate with the summary after 4,096 characters. | The tool response retains the late failed ID/diagnostic and the durable audit reference. |
@@ -94,9 +94,10 @@ Static validation passed: `uv run ruff check .`, `uv run pyright` (zero errors
 and warnings), `uv run python scripts/check_graph_projection_boundaries.py`, and
 `git diff --check`. The focused graph execution suite passed 158 tests with one
 existing Pydantic serializer warning. The final default-collected suite passed
-5,930 tests with five credential-dependent skips and four warnings. The
-checked-in repository project command is recorded in the evidence JSON after its
-exact committed submission-gate run.
+5,930 tests with five credential-dependent skips and four warnings. The exact
+checked-in repository command also passed through the production gate against
+the committed repair tree: exit 0, 5,930 passed, five skipped, and four warnings
+in 229.95 seconds.
 
 The remaining qualification is deliberately narrow: no live-model execution was
 performed. A future paid run may establish live planner/runner reliability, but
