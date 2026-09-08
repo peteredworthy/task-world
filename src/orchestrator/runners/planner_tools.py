@@ -10,12 +10,7 @@ from jsonschema import Draft202012Validator, SchemaError
 from orchestrator.graph import DEFAULT_NODE_CONTRACTS
 from orchestrator.runners.errors import AgentConfigError
 
-RELIABLE_PLAN_REQUIRED_TOOL_NAMES: tuple[str, ...] = (
-    "create_discovery_region",
-    "create_plan_verification",
-    "create_successor_planner",
-    "create_effectful_batch",
-)
+RELIABLE_PLAN_REQUIRED_TOOL_NAMES: tuple[str, ...] = ("construct_reliable_plan_region",)
 
 # This is the single stable ordering used by every graph-capable runner.  The
 # reliable-plan macros intentionally retain their contract order as one block.
@@ -29,60 +24,29 @@ GRAPH_PLANNER_TOOL_ORDER: tuple[str, ...] = (
     "request_gate",
     "retire_or_supersede",
     *RELIABLE_PLAN_REQUIRED_TOOL_NAMES,
+    # Retained as compatibility authoring surfaces. Reliable-plan planners use
+    # the composite semantic constructor above.
+    "create_discovery_region",
+    "create_plan_verification",
+    "create_successor_planner",
+    "create_effectful_batch",
     "submit_graph_patch",
 )
 REGISTERED_GRAPH_PLANNER_TOOL_NAMES: frozenset[str] = frozenset(GRAPH_PLANNER_TOOL_ORDER)
 
 _RELIABLE_PLAN_REQUIRED_SCHEMA_FIELDS: dict[str, frozenset[str]] = {
-    "create_discovery_region": frozenset(
+    "construct_reliable_plan_region": frozenset(
         {
             "patch_id",
             "base_graph_position",
-            "region_id",
-            "semantic_schema_id",
-            "semantic_schema_version",
+            "operation_key",
+            "scope",
             "objective",
-            "acceptance",
-        }
-    ),
-    "create_plan_verification": frozenset(
-        {
-            "patch_id",
-            "base_graph_position",
-            "region_id",
-            "artifact_source_node_id",
-            "semantic_schema_id",
-            "semantic_schema_version",
-            "objective",
-            "acceptance",
-            "rubric",
-        }
-    ),
-    "create_successor_planner": frozenset(
-        {
-            "patch_id",
-            "base_graph_position",
-            "region_id",
-            "evidence_source_node_id",
-            "evidence_source_port",
-            "planning_horizon",
-        }
-    ),
-    "create_effectful_batch": frozenset(
-        {
-            "patch_id",
-            "base_graph_position",
-            "region_id",
-            "batch_id",
-            "plan_source_node_id",
-            "plan_verification_source_node_id",
-            "semantic_schema_id",
-            "semantic_schema_version",
-            "objective",
+            "requirement_ids",
+            "dependencies",
             "acceptance",
             "checks",
             "rubric",
-            "planning_horizon",
         }
     ),
 }

@@ -51,6 +51,7 @@ from orchestrator.graph_runtime.errors import (
     RecoveryEventError,
     RecoveryRestoreError,
     StaleProjectionError,
+    PatchOperationConflictError,
     SubmissionQualityGateError,
 )
 from orchestrator.graph_runtime.file_state import (
@@ -215,6 +216,7 @@ __all__ = [
     "SeedRunResult",
     "SideEffectExecutor",
     "StaleProjectionError",
+    "PatchOperationConflictError",
     "SubmissionQualityGateError",
     "GateRejectionEvidence",
     "SUBMISSION_GATE_MAX_COMMANDS",

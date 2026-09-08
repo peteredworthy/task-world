@@ -4,7 +4,9 @@ Each query owns the physical projection access and returns values that cannot
 mutate projection containers.
 """
 
-from typing import Any, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
+
+from pydantic import BaseModel, ConfigDict
 
 from orchestrator.graph.models import (
     AcceptedOutputRecordPayload,
@@ -44,8 +46,11 @@ from orchestrator.graph.projection_collections import (
     JsonValue,
     thaw_json,
 )
-from orchestrator.graph.projection_models import ExecutionAttemptValue
-from orchestrator.graph.projection_models import GraphRecordSummaryProjection
+from orchestrator.graph.projection_models import (
+    ExecutionAttemptValue,
+    GraphRecordSummaryProjection,
+    PlannerPatchDecisionValue,
+)
 from orchestrator.graph.projections import (
     AcceptedOutputRecord,
     GraphProjection,
@@ -55,6 +60,199 @@ from orchestrator.graph.projections import (
     requirement_freshness_facts_from_projection,
 )
 from orchestrator.graph.semantic_artifacts import semantic_schema_declarations
+
+
+class EvidenceClosureError(ValueError):
+    """Raised when accepted evidence cannot form a deterministic closure."""
+
+
+class EvidenceClosure(BaseModel):
+    """Immutable evidence citations shared by prompts, records, and validation."""
+
+    model_config = ConfigDict(frozen=True)
+
+    candidate_record_ids: tuple[str, ...] = ()
+    file_state_record_ids: tuple[str, ...] = ()
+    verification_report_record_ids: tuple[str, ...] = ()
+    evaluated_record_ids: tuple[str, ...] = ()
+
+    def citations(self) -> dict[str, list[str]]:
+        return {
+            field: list(values)
+            for field in (
+                "candidate_record_ids",
+                "file_state_record_ids",
+                "verification_report_record_ids",
+                "evaluated_record_ids",
+            )
+            if (values := getattr(self, field))
+        }
+
+
+EvidenceConsumer = Literal["check", "verifier", "final_audit", "callback"]
+
+
+def effective_active_node_ids_view(
+    projection: GraphProjection,
+    *,
+    additionally_retired_node_ids: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    """Return lifecycle-aware topology nodes in deterministic graph order."""
+    excluded = set(additionally_retired_node_ids)
+    states = node_states_view(projection)
+    return tuple(
+        node_id
+        for node_id in projection.nodes
+        if node_id not in excluded and states.get(node_id) not in {"retired", "cancelled"}
+    )
+
+
+def evidence_closure_for_node(
+    projection: GraphProjection,
+    node_id: str,
+    *,
+    consumer: EvidenceConsumer = "callback",
+) -> EvidenceClosure:
+    """Resolve one deterministic, transitive evidence contract for a node.
+
+    Direct verification/check/requirement inputs lead the evaluated order,
+    followed by their transitive cited evidence, then directly or transitively
+    identified candidate and file-state records. Unknown accepted references
+    and citation cycles fail closed for every consumer.
+    """
+    del consumer  # One shared contract; the name documents the calling boundary.
+    node = node_payload_view(projection, node_id) or {}
+
+    bindings = input_bindings_view(projection).get(node_id, {})
+    candidate_ids = _record_ids_for_binding_ports(
+        bindings,
+        ("candidate_under_test", "candidate", "semantic_artifact"),
+    )
+    file_state_ids = _record_ids_for_binding_ports(
+        bindings,
+        ("file_state", "accepted_file_state"),
+    )
+    evidence_ports = tuple(
+        port
+        for port in sorted(bindings)
+        if port
+        in {
+            "check_result",
+            "dynamic_feature_acceptance",
+            "verification_evidence",
+            "verification_report",
+            "verifier_check_results",
+        }
+        or port.startswith(("check_result_", "requirement_", "verification_report_"))
+    )
+    evidence_ids = _record_ids_for_binding_ports(bindings, evidence_ports)
+
+    output_records = record_payloads_view(projection)
+    file_states = file_state_records_view(projection)
+    known_ids = {*output_records, *file_states}
+    for record_id in tuple(candidate_ids):
+        payload = output_records.get(record_id)
+        if payload is not None:
+            file_state_ids.extend(_citation_ids(payload, "file_state_record_ids"))
+
+    indirect_ids: list[str] = []
+    visiting: list[str] = []
+    visited: set[str] = set()
+
+    def visit(record_id: str) -> None:
+        if record_id in visiting:
+            cycle = " -> ".join([*visiting[visiting.index(record_id) :], record_id])
+            raise EvidenceClosureError(f"evidence citation cycle: {cycle}")
+        if record_id in visited:
+            return
+        if record_id not in known_ids:
+            # Legacy/replayed projections may retain a typed citation after its
+            # record body has been compacted. Preserve the durable ID as an
+            # opaque leaf; only accepted record bodies can extend the closure.
+            visited.add(record_id)
+            return
+        visiting.append(record_id)
+        payload = output_records.get(record_id)
+        if payload is not None:
+            candidate_ids.extend(_citation_ids(payload, "candidate_record_ids"))
+            file_state_ids.extend(_citation_ids(payload, "file_state_record_ids"))
+            children = _citation_ids(payload, "evaluated_record_ids")
+            for child_id in children:
+                if child_id not in indirect_ids:
+                    indirect_ids.append(child_id)
+                visit(child_id)
+        visiting.pop()
+        visited.add(record_id)
+
+    for evidence_id in evidence_ids:
+        visit(evidence_id)
+
+    candidate_ids = _unique_ids(candidate_ids)
+    for candidate_id in candidate_ids:
+        payload = output_records.get(candidate_id)
+        if payload is not None:
+            file_state_ids.extend(_citation_ids(payload, "file_state_record_ids"))
+    if not file_state_ids and node.get("semantic_stage") != "plan_verification":
+        region_id = node.get("task_region_id")
+        if isinstance(region_id, str):
+            for record_id, record in file_states.items():
+                record_region_id = record.task_region_id
+                if not isinstance(record_region_id, str) and isinstance(
+                    record.producer_node_id, str
+                ):
+                    record_region_id = node_task_regions_view(projection).get(
+                        record.producer_node_id
+                    )
+                if record_region_id == region_id:
+                    file_state_ids.append(record_id)
+
+    candidate_ids = _unique_ids(candidate_ids)
+    file_state_ids = _unique_ids(file_state_ids)
+    evaluated_ids = _unique_ids([*evidence_ids, *indirect_ids, *candidate_ids, *file_state_ids])
+    return EvidenceClosure(
+        candidate_record_ids=tuple(candidate_ids),
+        file_state_record_ids=tuple(file_state_ids),
+        verification_report_record_ids=tuple(_unique_ids(evidence_ids)),
+        evaluated_record_ids=tuple(evaluated_ids),
+    )
+
+
+def _record_ids_for_binding_ports(
+    bindings: dict[str, InputBindingProjection], ports: tuple[str, ...]
+) -> list[str]:
+    return _unique_ids(
+        [
+            record_id
+            for port in ports
+            if (binding := bindings.get(port)) is not None
+            for record_id in binding.record_ids
+        ]
+    )
+
+
+def _citation_ids(payload: dict[str, Any], field: str) -> list[str]:
+    for source in (
+        payload,
+        payload.get("value"),
+        payload.get("provenance"),
+        payload.get("evidence"),
+    ):
+        if not isinstance(source, dict):
+            continue
+        raw_ids = cast(dict[str, Any], source).get(field)
+        if raw_ids is None:
+            continue
+        if not isinstance(raw_ids, list):
+            raise EvidenceClosureError(f"{field} must contain only record IDs")
+        typed_ids = cast(list[Any], raw_ids)
+        if any(not isinstance(item, str) for item in typed_ids):
+            raise EvidenceClosureError(f"{field} must contain only record IDs")
+        return cast(list[str], typed_ids)
+    return []
+
+
+def _unique_ids(record_ids: list[str]) -> list[str]:
+    return list(dict.fromkeys(record_ids))
 
 
 def semantic_schema_declarations_view(
@@ -72,6 +270,154 @@ def non_gap_planner_has_accepted_patch(projection: GraphProjection, node_id: str
         and node.spec.kind == "planner"
         and node.spec.role != "gap_planner"
         and bool(projection.planning.accepted_patch_ids_by_node.get(node_id))
+    )
+
+
+def non_gap_planner_completion_contract_satisfied(
+    projection: GraphProjection, node_id: str
+) -> bool:
+    """Return whether an accepted planner patch satisfies its durable horizon contract."""
+    if not non_gap_planner_has_accepted_patch(projection, node_id):
+        return False
+    planner = node_payload_view(projection, node_id) or {}
+    if planner.get("semantic_stage") != "successor_planning":
+        if not isinstance(planner.get("reliable_plan_skeleton_id"), str):
+            return True
+        accepted_patch_ids = set(projection.planning.accepted_patch_ids_by_node.get(node_id, ()))
+        payloads = [
+            payload
+            for candidate_id in projection.nodes
+            if (payload := node_payload_view(projection, candidate_id) or {}).get("patch_id")
+            in accepted_patch_ids
+        ]
+        discovery_patch_ids = {
+            payload.get("patch_id")
+            for payload in payloads
+            if payload.get("semantic_stage") == "discovery"
+        }
+        verifier_patch_ids = {
+            payload.get("patch_id")
+            for payload in payloads
+            if payload.get("semantic_stage") == "plan_verification"
+        }
+        successor_patch_ids = {
+            payload.get("patch_id")
+            for payload in payloads
+            if payload.get("kind") == "planner"
+            and payload.get("semantic_stage") == "successor_planning"
+        }
+        recovery_payloads = [
+            payload
+            for payload in payloads
+            if payload.get("kind") == "planner" and payload.get("role") == "gap_planner"
+        ]
+        recovery_patch_ids = {payload.get("patch_id") for payload in recovery_payloads}
+        return len(recovery_payloads) == 1 and bool(
+            discovery_patch_ids & verifier_patch_ids & successor_patch_ids & recovery_patch_ids
+        )
+
+    remaining = planner.get("reliable_plan_remaining_horizons")
+    horizon = planner.get("planning_horizon")
+    skeleton_id = planner.get("reliable_plan_skeleton_id")
+    if (
+        not isinstance(remaining, int)
+        or isinstance(remaining, bool)
+        or not isinstance(horizon, int)
+        or isinstance(horizon, bool)
+        or not isinstance(skeleton_id, str)
+    ):
+        return False
+
+    accepted_patch_ids = set(projection.planning.accepted_patch_ids_by_node.get(node_id, ()))
+    payloads = [
+        payload
+        for candidate_id in projection.nodes
+        if (payload := node_payload_view(projection, candidate_id) or {}).get("patch_id")
+        in accepted_patch_ids
+    ]
+    if not reliable_plan_successor_horizon_materialized(projection, node_id):
+        return False
+    if remaining > 1:
+        batch_patch_ids = {
+            payload.get("patch_id")
+            for payload in payloads
+            if payload.get("kind") == "worker"
+            and payload.get("semantic_stage") == "effectful_batch"
+            and payload.get("planning_horizon") == horizon
+        }
+        successor_patch_ids = {
+            payload.get("patch_id")
+            for payload in payloads
+            if payload.get("kind") == "planner"
+            and payload.get("role") != "gap_planner"
+            and payload.get("semantic_stage") == "successor_planning"
+            and payload.get("planning_horizon") == horizon + 1
+            and payload.get("reliable_plan_skeleton_id") == skeleton_id
+        }
+        recovery_payloads = [
+            payload
+            for payload in payloads
+            if payload.get("kind") == "planner" and payload.get("role") == "gap_planner"
+        ]
+        recovery_patch_ids = {payload.get("patch_id") for payload in recovery_payloads}
+        return len(recovery_payloads) == 1 and bool(
+            batch_patch_ids & successor_patch_ids & recovery_patch_ids
+        )
+    if remaining == 1:
+        batch_patch_ids = {
+            payload.get("patch_id")
+            for payload in payloads
+            if payload.get("kind") == "worker"
+            and payload.get("semantic_stage") == "effectful_batch"
+            and payload.get("planning_horizon") == horizon
+        }
+        final_acceptance_patch_ids = {
+            payload.get("patch_id")
+            for payload in payloads
+            if payload.get("kind") == "check"
+            and payload.get("semantic_stage") == "final_acceptance"
+            and payload.get("command_binding") == "dynamic_feature_acceptance"
+        }
+        final_audit_patch_ids = {
+            payload.get("patch_id")
+            for payload in payloads
+            if payload.get("kind") == "verifier" and payload.get("semantic_stage") == "final_audit"
+        }
+        final_gate_patch_ids = {
+            payload.get("patch_id") for payload in payloads if payload.get("kind") == "final_gate"
+        }
+        recovery_payloads = [
+            payload
+            for payload in payloads
+            if payload.get("kind") == "planner" and payload.get("role") == "gap_planner"
+        ]
+        recovery_patch_ids = {payload.get("patch_id") for payload in recovery_payloads}
+        return len(recovery_payloads) == 3 and bool(
+            batch_patch_ids
+            & final_acceptance_patch_ids
+            & final_audit_patch_ids
+            & final_gate_patch_ids
+            & recovery_patch_ids
+        )
+    return False
+
+
+def reliable_plan_successor_horizon_materialized(projection: GraphProjection, node_id: str) -> bool:
+    """Return whether a successor planner durably created its effectful batch."""
+    planner = node_payload_view(projection, node_id) or {}
+    if planner.get("semantic_stage") != "successor_planning":
+        return False
+    horizon = planner.get("planning_horizon")
+    skeleton_id = planner.get("reliable_plan_skeleton_id")
+    accepted_patch_ids = set(projection.planning.accepted_patch_ids_by_node.get(node_id, ()))
+    return any(
+        payload.get("patch_id") in accepted_patch_ids
+        and payload.get("kind") == "worker"
+        and payload.get("semantic_stage") == "effectful_batch"
+        and payload.get("planning_horizon") == horizon
+        and payload.get("reliable_plan_skeleton_id") == skeleton_id
+        for candidate_id in projection.nodes
+        if (payload := node_payload_view(projection, candidate_id) or {})
     )
 
 
@@ -421,6 +767,14 @@ def planner_patch_facts_view(
         "accepted_patches": sorted(accepted, key=patch_key),
         "patch_rejections": sorted(rejected, key=patch_key),
     }
+
+
+def planner_patch_decisions_by_id_view(
+    projection: GraphProjection,
+) -> dict[str, PlannerPatchDecisionValue]:
+    """Return durable patch decisions used to reconcile lost acknowledgements."""
+
+    return dict(projection.planning.patch_decisions_by_id)
 
 
 def pattern_library_view(projection: GraphProjection) -> dict[str, dict[str, dict[str, Any]]]:

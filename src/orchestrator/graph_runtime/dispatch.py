@@ -43,6 +43,7 @@ from orchestrator.git import (
     snapshot_path_metadata,
 )
 from orchestrator.graph import (
+    authoritative_batch_verification_report_ids,
     cleanup_applied_ids_view,
     cleanup_requested_events_view,
     file_state_records_view,
@@ -51,12 +52,14 @@ from orchestrator.graph import (
     leases_view,
     node_kinds_view,
     node_payload_view,
+    non_gap_planner_completion_contract_satisfied,
     node_roles_view,
-    record_payloads_view,
     requirements_for_node_view,
     routine_snapshot_dynamic_feature_view,
     project_node_max_attempts,
+    output_record_payloads_view,
     CheckResultRecord,
+    CandidateRecord,
     EventEnvelope,
     FileStatePolicy,
     GraphCommandContext,
@@ -70,8 +73,8 @@ from orchestrator.graph import (
     ReliablePlanAssignmentCarrier,
     ReliablePlanModelAssignment,
     SemanticArtifactRecord,
+    VerificationReportRecord,
     StoredArtifactRef,
-    check_command_uses_acceptance_fallback,
     initial_projection,
     resolve_check_command_definition,
     recovery_proof_hash,
@@ -151,6 +154,7 @@ from orchestrator.graph_runtime.submission_gate import (
     submission_gate_failure_fingerprint,
 )
 from orchestrator.runners import (
+    AgentConfigError,
     AgentRunner,
     RELIABLE_PLAN_REQUIRED_TOOL_NAMES,
     ReliablePlanToolPreflightError,
@@ -181,6 +185,11 @@ MAX_GRAPH_JSON_SECTION_CHARS = _prompts.MAX_GRAPH_JSON_SECTION_CHARS
 DEFAULT_GAP_PLANNER_RUNTIME_DEATH_MAX_ATTEMPTS = 3
 MAX_GRAPH_PROMPT_FIELD_CHARS = _prompts.MAX_GRAPH_PROMPT_FIELD_CHARS
 MAX_CHECK_OUTPUT_CHARS = 20_000
+
+
+def _requires_submission_quality_gate(context: GraphDispatchContext) -> bool:
+    """Return whether this node owns mechanical snapshot acceptance."""
+    return context.node_kind == "worker"
 
 
 def _recovery_reason_for_finalization_error(
@@ -372,6 +381,8 @@ _graph_patch_feedback_accepted = _prompts.graph_patch_feedback_accepted
 _node_role = _prompts.node_role
 _available_tools_for_context = _prompts.available_tools_for_context
 _patch_payload_has_ops = _prompts.patch_payload_has_ops
+_patch_payload_creates_successor_planner = _prompts.patch_payload_creates_successor_planner
+_patch_payload_creates_finalization = _prompts.patch_payload_creates_finalization
 _output_records_for_submit = _prompts.output_records_for_submit
 _candidate_id_for_check = _prompts.candidate_id_for_check
 _evaluated_record_citations = _prompts.evaluated_record_citations
@@ -1184,24 +1195,36 @@ class StaticGraphAgentFactory:
         if not reliable_plan_membership:
             return None
         if not isinstance(raw_authoritative_carrier, dict):
-            raise ValueError(
+            raise InvalidExecutionContractError(
                 "reliable-plan graph is missing root sealed assignment carrier; "
                 "historical runs remain readable but cannot execute"
             )
-        authoritative_carrier = ReliablePlanAssignmentCarrier.model_validate(
-            raw_authoritative_carrier
-        )
+        try:
+            authoritative_carrier = ReliablePlanAssignmentCarrier.model_validate(
+                raw_authoritative_carrier
+            )
+        except ValueError as exc:
+            raise InvalidExecutionContractError(
+                "reliable-plan root sealed assignment carrier is invalid"
+            ) from exc
         raw_carrier = payload.get("reliable_plan_assignment_carrier")
         if not isinstance(raw_carrier, dict):
-            raise ValueError(
+            raise InvalidExecutionContractError(
                 "reliable-plan execution is missing sealed assignment carrier; "
                 "recreate the run with a qualified assignment arm"
             )
-        carrier = ReliablePlanAssignmentCarrier.model_validate(raw_carrier)
+        try:
+            carrier = ReliablePlanAssignmentCarrier.model_validate(raw_carrier)
+        except ValueError as exc:
+            raise InvalidExecutionContractError(
+                "reliable-plan node sealed assignment carrier is invalid"
+            ) from exc
         if carrier != authoritative_carrier:
-            raise ValueError("reliable-plan node assignment carrier does not match root authority")
+            raise InvalidExecutionContractError(
+                "reliable-plan node assignment carrier does not match root authority"
+            )
         if carrier.selected_runner_type != self._runner_type.value:
-            raise ValueError(
+            raise InvalidExecutionContractError(
                 "reliable-plan selected runner mismatch: "
                 f"node requires {carrier.selected_runner_type}, dispatch selected "
                 f"{self._runner_type.value}"
@@ -1215,19 +1238,25 @@ class StaticGraphAgentFactory:
             "verifier",
             "successor_planner",
         }:
-            raise ValueError("reliable-plan node has invalid assignment role")
+            raise InvalidExecutionContractError("reliable-plan node has invalid assignment role")
         expected_role = self._reliable_plan_role_for_payload(payload)
         if raw_role != expected_role:
-            raise ValueError(
+            raise InvalidExecutionContractError(
                 "reliable-plan node assignment role does not match controller-derived role"
             )
         assignment = carrier.assignment_for(cast(Any, raw_role))
         if payload.get("reliable_plan_selected_runner_type") != carrier.selected_runner_type:
-            raise ValueError("reliable-plan node selected-runner stamp does not match carrier")
+            raise InvalidExecutionContractError(
+                "reliable-plan node selected-runner stamp does not match carrier"
+            )
         if payload.get("runner_model_override") != assignment.model:
-            raise ValueError("reliable-plan node model stamp does not match carrier")
+            raise InvalidExecutionContractError(
+                "reliable-plan node model stamp does not match carrier"
+            )
         if payload.get("profile") != assignment.profile.value:
-            raise ValueError("reliable-plan node profile stamp does not match carrier")
+            raise InvalidExecutionContractError(
+                "reliable-plan node profile stamp does not match carrier"
+            )
         return assignment
 
     @staticmethod
@@ -1251,7 +1280,9 @@ class StaticGraphAgentFactory:
                 return "correction_worker"
             if stage == "effectful_batch" or payload.get("access_mode") == "write":
                 return "implementation_worker"
-        raise ValueError("reliable-plan model-backed node has ambiguous assignment role")
+        raise InvalidExecutionContractError(
+            "reliable-plan model-backed node has ambiguous assignment role"
+        )
 
 
 def _runtime_death_max_attempts(context: GraphDispatchContext) -> int | None:
@@ -1427,24 +1458,31 @@ class GraphDispatchExecutor(SideEffectExecutor):
         context = await self._build_dispatch_context(item)
         if not await self._agent_dispatch_is_allowed(context.run_id):
             return
-        if is_reliable_plan_planner(node_kind=context.node_kind, node_payload=context.node_payload):
-            execution_context = self._execution_context(context)
-            preflight = getattr(self._agent_factory, "preflight", None)
-            if not callable(preflight):
-                raise ReliablePlanToolPreflightError(
-                    invalid_tools={
-                        name: (
-                            "selected graph agent factory does not expose a concrete "
-                            "tool-catalog preflight"
-                        )
-                        for name in RELIABLE_PLAN_REQUIRED_TOOL_NAMES
-                    }
+        try:
+            if is_reliable_plan_planner(
+                node_kind=context.node_kind,
+                node_payload=context.node_payload,
+            ):
+                execution_context = self._execution_context(context)
+                preflight = getattr(self._agent_factory, "preflight", None)
+                if not callable(preflight):
+                    raise ReliablePlanToolPreflightError(
+                        invalid_tools={
+                            name: (
+                                "selected graph agent factory does not expose a concrete "
+                                "tool-catalog preflight"
+                            )
+                            for name in RELIABLE_PLAN_REQUIRED_TOOL_NAMES
+                        }
+                    )
+                preflight(
+                    context,
+                    execution_context,
+                    graph_mcp_available=self._graph_mcp_registry is not None,
                 )
-            preflight(
-                context,
-                execution_context,
-                graph_mcp_available=self._graph_mcp_registry is not None,
-            )
+        except (AgentConfigError, InvalidExecutionContractError) as exc:
+            await self._invalid_execution_contract(context, str(exc))
+            return
         existing = self._running.get(context.execution_id)
         if existing is not None and not existing.done():
             return
@@ -1476,6 +1514,11 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 task = asyncio.create_task(
                     self._run_agent_serialized(context, runner, cancellation)
                 )
+        except (AgentConfigError, InvalidExecutionContractError) as exc:
+            if registry is not None:
+                registry.release_reservation(context.execution_id, cancellation)
+            await self._invalid_execution_contract(context, str(exc))
+            return
         except BaseException:
             if registry is not None:
                 registry.release_reservation(context.execution_id, cancellation)
@@ -1842,7 +1885,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     baseline.snapshot,
                     lock_held=True,
                 )
-                if context.node_kind == "worker":
+                if _requires_submission_quality_gate(context):
                     try:
                         await self._ensure_submission_gate_baseline(context, baseline)
                         applicability = resolve_submission_gate_applicability(
@@ -1907,6 +1950,8 @@ class GraphDispatchExecutor(SideEffectExecutor):
             grades: list[tuple[str, str, str | None]] = []
             graph_patch_submitted = False
             graph_patch_accepted = False
+            graph_successor_accepted = False
+            graph_finalization_accepted = False
             submitted_callback = False
             submission_acknowledgement: SubmissionAcknowledgement | None = None
             first_submission_rejection_category: SubmissionRejectionCategory | None = None
@@ -1959,6 +2004,48 @@ class GraphDispatchExecutor(SideEffectExecutor):
                         "use patch rejection feedback to submit a corrected patch"
                     )
                     raise ValueError(msg)
+                remaining_horizons = context.node_payload.get("reliable_plan_remaining_horizons")
+                if (
+                    isinstance(context.node_payload.get("reliable_plan_skeleton_id"), str)
+                    and context.node_kind == "planner"
+                    and context.node_role != "gap_planner"
+                ):
+                    completion_satisfied = (
+                        non_gap_planner_completion_contract_satisfied(
+                            await self._controller.read_projection(context.run_id),
+                            context.node_id,
+                        )
+                        if managed
+                        else graph_patch_accepted
+                        and (
+                            context.node_payload.get("semantic_stage") != "successor_planning"
+                            or (
+                                graph_successor_accepted
+                                if isinstance(remaining_horizons, int) and remaining_horizons > 1
+                                else graph_finalization_accepted
+                            )
+                        )
+                    )
+                    if not completion_satisfied:
+                        if (
+                            context.node_payload.get("semantic_stage") == "successor_planning"
+                            and isinstance(remaining_horizons, int)
+                            and remaining_horizons > 1
+                        ):
+                            raise ValueError(
+                                "nonfinal reliable-plan horizon must create an accepted "
+                                "successor planner, pass-gated by this batch verifier, "
+                                "before submit"
+                            )
+                        if context.node_payload.get("semantic_stage") == "successor_planning":
+                            raise ValueError(
+                                "final reliable-plan horizon must atomically create the batch, "
+                                "dynamic acceptance check, final audit, and final gate before submit"
+                            )
+                        raise ValueError(
+                            "initial reliable-plan planner must atomically create discovery, "
+                            "plan verification, and the first successor planner before submit"
+                        )
                 try:
                     contract = _submission_contract(context)
                     output_records = (
@@ -2046,11 +2133,16 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 return submission_acknowledgement
 
             async def on_submit_graph_patch(patch_payload: dict[str, Any]) -> str:
-                nonlocal graph_patch_submitted, graph_patch_accepted
+                nonlocal graph_patch_submitted, graph_patch_accepted, graph_successor_accepted
+                nonlocal graph_finalization_accepted
                 graph_patch_submitted = True
                 feedback = await self._submit_graph_patch_callback(context, patch_payload)
                 if _graph_patch_feedback_accepted(feedback):
                     graph_patch_accepted = True
+                    if _patch_payload_creates_successor_planner(patch_payload):
+                        graph_successor_accepted = True
+                    if _patch_payload_creates_finalization(patch_payload):
+                        graph_finalization_accepted = True
                     patch_has_ops = _patch_payload_has_ops(patch_payload)
                     if context.node_role == "gap_planner":
                         context.node_payload["_accepted_gap_planner_patch_had_ops"] = patch_has_ops
@@ -2822,7 +2914,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         )
         submission_gate_report: SubmissionGateReport | None = None
         submission_gate_baseline: SubmissionGateBaseline | None = None
-        if context.node_kind == "worker":
+        if _requires_submission_quality_gate(context):
             submission_gate_baseline = await self._load_submission_gate_baseline(context)
             resolved_commands = submission_gate_commands_from_baseline(submission_gate_baseline)
             try:
@@ -3674,6 +3766,18 @@ class GraphDispatchExecutor(SideEffectExecutor):
             actor_role=context.node_role,
         )
         accepted = [event for event in result.events if event.event_type == "graph_patch_accepted"]
+        reconciled_patch_id = getattr(result, "reconciled_patch_id", None)
+        if reconciled_patch_id is not None:
+            reconciled_successors = getattr(
+                result,
+                "reconciled_successor_planner_node_ids",
+                (),
+            )
+            return (
+                f"graph patch {reconciled_patch_id} accepted (reconciled durable result); "
+                "successor planner nodes: "
+                f"{json.dumps(list(reconciled_successors), sort_keys=True)}"
+            )
         if accepted:
             patch_id = accepted[0].payload.get("patch_id", payload.get("patch_id", "unknown"))
             raw_successors = accepted[0].payload.get("successor_planner_node_ids")
@@ -4621,12 +4725,6 @@ async def _execute_check_command(
         context.graph_events,
         context.graph_projection,
     )
-    cited_record = _check_result_from_bound_verification_if_redundant(
-        context,
-        command_definition,
-    )
-    if cited_record is not None:
-        return cited_record
     invocation, command_text, shell = _check_invocation(command_definition)
     timeout_seconds = _check_timeout_seconds(command_definition)
     if worktree_boundary is None:
@@ -4724,7 +4822,11 @@ async def _execute_check_command(
             lock_held=True,
             offload=False,
         )
-    candidate_id = _candidate_id_for_check(context)
+    if context.node_payload.get("semantic_stage") == "final_acceptance":
+        _final_file_state, final_report = _authoritative_final_acceptance_snapshot(context)
+        candidate_id = final_report.candidate_id
+    else:
+        candidate_id = _candidate_id_for_check(context)
     task_region_id = str(context.node_payload.get("task_region_id") or context.node_id)
     attempt_number = int(context.node_payload.get("attempt_number", 0))
     command_id = str(command_definition.get("id") or context.node_id)
@@ -4782,97 +4884,10 @@ async def _execute_check_command(
             "attempt_number": attempt_number,
             "value": value,
         },
-        _check_record_citations(_evaluated_record_citations(context)),
+        _evaluated_record_citations(context),
         value=True,
     )
     return CheckResultRecord.model_validate(record_payload).model_dump(mode="json")
-
-
-def _check_result_from_bound_verification_if_redundant(
-    context: GraphDispatchContext,
-    command_definition: dict[str, Any],
-) -> dict[str, Any] | None:
-    if command_definition.get("source") != "dynamic_feature_hidden_oracle_binding":
-        return None
-    if not check_command_uses_acceptance_fallback(
-        context.node_payload,
-        context.graph_events,
-        projection=context.graph_projection,
-    ):
-        return None
-    citations = _check_record_citations(_evaluated_record_citations(context))
-    verification_record = _latest_passed_verification_citation(
-        context.graph_projection,
-        citations.get("verification_report_record_ids", []),
-    )
-    if verification_record is None:
-        return None
-    candidate_id = _candidate_id_for_check(context)
-    task_region_id = str(context.node_payload.get("task_region_id") or context.node_id)
-    attempt_number = int(context.node_payload.get("attempt_number", 0))
-    value: dict[str, Any] = {
-        "status": "passed",
-        "classification": "passed",
-        "command_id": str(command_definition.get("id") or context.node_id),
-        "command_binding": "dynamic_feature_hidden_oracle",
-        "command_text": command_definition.get("cmd"),
-        "command": command_definition,
-        "citation_mode": "verification_report_reused",
-        "reused_verification_record_id": verification_record["record_id"],
-        "worktree_path": context.worktree_path,
-        "source_worktree_path": context.worktree_path,
-        "execution_id": context.execution_id,
-        "base_snapshot_id": context.base_snapshot_id,
-        "duration_ms": 0,
-        "stdout_tail": "",
-        "stdout_ref": None,
-        "stderr_tail": "",
-        "stderr_ref": None,
-        "stdout_truncated": False,
-        "stderr_truncated": False,
-        "timeout_seconds": 1,
-        "environment_policy": {
-            "cwd": context.worktree_path,
-            "env": "inherited",
-            "source_worktree_path": context.worktree_path,
-            "dependency_provisioning": [],
-        },
-    }
-    record_payload = _add_evaluated_record_citations(
-        {
-            "record_id": f"check-{context.execution_id}",
-            "record_kind": "output",
-            "record_type": "check_result",
-            "producer_node_id": context.node_id,
-            "port": "check_result",
-            "schema": "CheckResult",
-            "candidate_id": candidate_id,
-            "task_region_id": task_region_id,
-            "attempt_number": attempt_number,
-            "value": value,
-        },
-        citations,
-        value=True,
-    )
-    return CheckResultRecord.model_validate(record_payload).model_dump(mode="json")
-
-
-def _check_record_citations(citations: dict[str, list[str]]) -> dict[str, list[str]]:
-    """Order a check's oracle evidence before the candidate it substantiates."""
-    ordered = {key: list(record_ids) for key, record_ids in citations.items()}
-    evaluated_record_ids = list(
-        dict.fromkeys(
-            [
-                *ordered.get("verification_report_record_ids", []),
-                *ordered.get("candidate_record_ids", []),
-                *ordered.get("file_state_record_ids", []),
-                *ordered.get("evaluated_record_ids", []),
-            ]
-        )
-    )
-    if evaluated_record_ids:
-        ordered["evaluated_record_ids"] = evaluated_record_ids
-    return ordered
 
 
 async def _externalize_check_output(
@@ -4884,47 +4899,6 @@ async def _externalize_check_output(
         return output, None
     ref = await store.put(encoded, media_type="text/plain", encoding="utf-8")
     return output[-CHECK_OUTPUT_TAIL_CHARS:], ref
-
-
-def _latest_passed_verification_citation(
-    projection: GraphProjection,
-    record_ids: list[str],
-    events: list[EventEnvelope] | None = None,
-) -> dict[str, Any] | None:
-    wanted = set(record_ids)
-    latest: dict[str, Any] | None = None
-    payloads = record_payloads_view(projection)
-    for record_id in record_ids:
-        payload = payloads.get(record_id)
-        if payload is None:
-            continue
-        if payload.get("record_type") != "verification_report":
-            continue
-        outcome = payload.get("outcome")
-        value = payload.get("value")
-        if outcome is None and isinstance(value, dict):
-            outcome = cast(dict[str, Any], value).get("outcome")
-        if outcome != "passed":
-            continue
-        latest = dict(payload)
-    if latest is not None or not events:
-        return latest
-    for event in events:
-        if (
-            event.event_type != "output_record_accepted"
-            or event.payload.get("record_id") not in wanted
-        ):
-            continue
-        payload = event.payload
-        if payload.get("record_type") != "verification_report":
-            continue
-        outcome = payload.get("outcome")
-        value = payload.get("value")
-        if outcome is None and isinstance(value, dict):
-            outcome = cast(dict[str, Any], value).get("outcome")
-        if outcome == "passed":
-            latest = dict(payload)
-    return latest
 
 
 def _prepare_check_execution_worktree(context: GraphDispatchContext) -> CheckExecutionWorktree:
@@ -5128,6 +5102,15 @@ def _classify_check_result(
 
 
 def _bound_file_state_snapshot(context: GraphDispatchContext) -> tuple[str, str] | None:
+    if context.node_payload.get("semantic_stage") == "final_acceptance":
+        record, _report = _authoritative_final_acceptance_snapshot(context)
+        snapshot_id = record.snapshot_id
+        snapshot_ref = record.git.ref if record.git is not None else None
+        if not isinstance(snapshot_id, str) or not isinstance(snapshot_ref, str):
+            raise ValueError(
+                "final acceptance requires an exact published file-state snapshot identity"
+            )
+        return snapshot_id, snapshot_ref
     citations = _evaluated_record_citations(context)
     file_state_record_ids = citations.get("file_state_record_ids", [])
     if not file_state_record_ids:
@@ -5142,6 +5125,137 @@ def _bound_file_state_snapshot(context: GraphDispatchContext) -> tuple[str, str]
         if isinstance(snapshot_id, str) and isinstance(snapshot_ref, str):
             return snapshot_id, snapshot_ref
     return None
+
+
+def _authoritative_final_acceptance_snapshot(
+    context: GraphDispatchContext,
+) -> tuple[Any, VerificationReportRecord]:
+    """Resolve the sole current final-batch snapshot or fail closed."""
+    bindings = input_bindings_view(context.graph_projection).get(context.node_id, {})
+    bound_reports_by_port: list[tuple[str, str]] = []
+    for port, binding in bindings.items():
+        if not port.startswith("verification_report_") and port != "verification_evidence":
+            continue
+        if len(binding.record_ids) != 1:
+            raise ValueError(f"final acceptance requires exactly one verification report at {port}")
+        bound_reports_by_port.append((port, binding.record_ids[0]))
+    bound_reports_by_port.sort(key=lambda item: _final_acceptance_port_order(item[0]))
+    bound_report_ids = list(dict.fromkeys(record_id for _port, record_id in bound_reports_by_port))
+    bound_report_ids = list(dict.fromkeys(bound_report_ids))
+    if not bound_report_ids:
+        raise ValueError("final acceptance requires bound batch verification reports")
+
+    records = output_record_payloads_view(context.graph_projection)
+    for record_id in bound_report_ids:
+        report = records.get(record_id)
+        if not isinstance(report, VerificationReportRecord) or report.outcome != "passed":
+            raise ValueError("final acceptance requires exact passing batch verification reports")
+
+    declared_batch_ids = context.node_payload.get("declared_batch_ids")
+    final_batch_id: Any = None
+    if (
+        isinstance(declared_batch_ids, list)
+        and declared_batch_ids
+        and isinstance(declared_batch_ids[-1], str)
+    ):
+        final_batch_id = declared_batch_ids[-1]
+    elif bound_reports_by_port:
+        final_bound_report = records.get(bound_reports_by_port[-1][1])
+        if isinstance(final_bound_report, VerificationReportRecord):
+            final_producer = (
+                node_payload_view(
+                    context.graph_projection,
+                    final_bound_report.producer_node_id,
+                )
+                or {}
+            )
+            final_batch_id = final_producer.get("declared_batch_id")
+    if not isinstance(final_batch_id, str):
+        raise ValueError("final acceptance cannot identify the final declared batch")
+
+    if isinstance(declared_batch_ids, list):
+        configured_batch_ids = {
+            item for item in cast(list[Any], declared_batch_ids) if isinstance(item, str)
+        }
+    else:
+        configured_batch_ids = {
+            batch_id
+            for record_id in bound_report_ids
+            if isinstance(record := records.get(record_id), VerificationReportRecord)
+            and isinstance(
+                batch_id := (
+                    node_payload_view(context.graph_projection, record.producer_node_id) or {}
+                ).get("declared_batch_id"),
+                str,
+            )
+        }
+    current_reports, ambiguous_batches = authoritative_batch_verification_report_ids(
+        context.graph_projection, configured_batch_ids
+    )
+    if ambiguous_batches or set(current_reports) != configured_batch_ids:
+        raise ValueError(
+            "final acceptance requires exactly one authoritative report for every declared batch"
+        )
+    if set(current_reports.values()) != set(bound_report_ids):
+        raise ValueError("final acceptance is bound to stale batch verification evidence")
+    report = records[current_reports[final_batch_id]]
+    if not isinstance(report, VerificationReportRecord):
+        raise ValueError("final acceptance authority resolved to a non-verification record")
+
+    candidate_ids = list(dict.fromkeys(report.candidate_record_ids))
+    singular_candidate_id = report.candidate_record_id
+    if singular_candidate_id is not None and singular_candidate_id not in candidate_ids:
+        candidate_ids.append(singular_candidate_id)
+    if len(candidate_ids) != 1:
+        raise ValueError(
+            "final acceptance requires exactly one final candidate record in its verification report"
+        )
+    candidate = records.get(candidate_ids[0])
+    if not isinstance(candidate, CandidateRecord):
+        raise ValueError("final acceptance verification cites a missing final candidate record")
+
+    file_state_ids = list(dict.fromkeys(report.file_state_record_ids))
+    if len(file_state_ids) != 1:
+        raise ValueError(
+            "final acceptance requires exactly one final file-state record in its verification report"
+        )
+    candidate_file_state_ids = list(
+        dict.fromkeys(
+            [
+                *candidate.file_state_record_ids,
+                *candidate.value.file_state_record_ids,
+                *(
+                    [candidate.file_state_record_id]
+                    if candidate.file_state_record_id is not None
+                    else []
+                ),
+                *(
+                    [candidate.value.file_state_record_id]
+                    if candidate.value.file_state_record_id is not None
+                    else []
+                ),
+            ]
+        )
+    )
+    if candidate_file_state_ids != file_state_ids:
+        raise ValueError(
+            "final acceptance verification does not cite the final candidate's exact file state"
+        )
+    file_state = file_state_records_view(context.graph_projection).get(file_state_ids[0])
+    if file_state is None or file_state.compromised is True or file_state.verdict != "captured":
+        raise ValueError("final acceptance final file-state record is unavailable or ineligible")
+    if file_state.candidate_id not in {None, report.candidate_id, candidate.candidate_id}:
+        raise ValueError("final acceptance final file state has mismatched candidate provenance")
+    return file_state, report
+
+
+def _final_acceptance_port_order(port: str) -> tuple[int, int | str]:
+    prefix = "verification_report_batch_"
+    if port.startswith(prefix):
+        suffix = port[len(prefix) :]
+        if suffix.isdigit():
+            return (0, int(suffix))
+    return (1, port)
 
 
 def _check_command_definition(

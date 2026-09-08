@@ -327,9 +327,12 @@ def resolve_submission_gate_commands(
     """Resolve authoritative commands without treating agent prose as evidence.
 
     Explicit node commands and the dynamic-feature acceptance command are work
-    contract facts.  A checked-in ``.task-world/config.yaml`` contributes its
-    configured project test command.  Missing config does not invent a gate for
-    repositories that have not declared one; malformed config fails closed.
+    contract facts. Reliable-plan batch and correction workers defer the full
+    dynamic acceptance command to the graph's final audit; their own commands
+    and the checked-in project gate still apply. A checked-in
+    ``.task-world/config.yaml`` contributes its configured project test command.
+    Missing config does not invent a gate for repositories that have not
+    declared one; malformed config fails closed.
     """
     applicability = resolve_submission_gate_applicability(node_payload)
     if not applicability.execute_commands:
@@ -356,7 +359,11 @@ def resolve_submission_gate_commands(
                 )
             )
 
-    if dynamic_feature is not None:
+    deferred_dynamic_acceptance = node_payload.get("semantic_stage") in {
+        "effectful_batch",
+        "corrective_work",
+    }
+    if dynamic_feature is not None and not deferred_dynamic_acceptance:
         dynamic_timeout = _source_timeout(
             dynamic_feature.get("acceptance_command_timeout_seconds"),
             field_name="dynamic_feature.acceptance_command_timeout_seconds",

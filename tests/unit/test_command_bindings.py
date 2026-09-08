@@ -52,9 +52,8 @@ def test_oracle_binding_resolves_hidden_oracle_when_configured() -> None:
 
 
 def test_oracle_binding_falls_back_to_acceptance_command() -> None:
-    # hidden_oracle_command is an optional routine input defaulting to "" —
-    # the final-invariant check must still resolve to the acceptance command
-    # instead of failing non-retryable at dispatch (2bed8f2f incident).
+    # Hidden-oracle and product acceptance commands are separate authorities.
+    # An absent oracle must not silently acquire the acceptance command.
     events = [
         _dynamic_feature_event(
             {
@@ -64,10 +63,20 @@ def test_oracle_binding_falls_back_to_acceptance_command() -> None:
         )
     ]
 
-    definition = resolve_check_command_definition(dict(_ORACLE_BOUND_CHECK), events)
+    oracle_definition = resolve_check_command_definition(dict(_ORACLE_BOUND_CHECK), events)
+    acceptance_definition = resolve_check_command_definition(
+        {
+            "node_id": "check-acceptance",
+            "kind": "check",
+            "command_binding": "dynamic_feature_acceptance",
+        },
+        events,
+    )
 
-    assert definition is not None
-    assert definition["cmd"] == "uv run pytest tests -q"
+    assert oracle_definition is None
+    assert acceptance_definition is not None
+    assert acceptance_definition["cmd"] == "uv run pytest tests -q"
+    assert acceptance_definition["source"] == "dynamic_feature_acceptance_binding"
 
 
 def test_oracle_binding_unresolvable_without_any_command() -> None:

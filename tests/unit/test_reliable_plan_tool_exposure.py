@@ -31,7 +31,7 @@ def _context(available_tools: list[str]) -> ExecutionContext:
     )
 
 
-def test_original_all_four_skipped_condition_fails_closed() -> None:
+def test_controller_owned_constructor_missing_fails_closed() -> None:
     with pytest.raises(ReliablePlanToolPreflightError) as raised:
         build_dynamic_tool_specs(
             context=_context(["submit_graph_patch"]),
@@ -46,6 +46,7 @@ def test_explicit_allowlist_is_authorized_and_deterministically_ordered() -> Non
         "create_effectful_batch",
         "read_file",
         "create_discovery_region",
+        "construct_reliable_plan_region",
         "create_successor_planner",
         "create_plan_verification",
         "create_discovery_region",
@@ -61,6 +62,10 @@ def test_explicit_allowlist_is_authorized_and_deterministically_ordered() -> Non
     assert resolved == (
         "read_file",
         *RELIABLE_PLAN_REQUIRED_TOOL_NAMES,
+        "create_discovery_region",
+        "create_plan_verification",
+        "create_successor_planner",
+        "create_effectful_batch",
         "submit_graph_patch",
     )
     assert "create_corrective_region" not in resolved
@@ -72,7 +77,7 @@ def test_one_missing_required_macro_fails_closed() -> None:
     with pytest.raises(ReliablePlanToolPreflightError) as raised:
         build_dynamic_tool_specs(context=_context(available))
 
-    assert raised.value.missing_tools == ("create_effectful_batch",)
+    assert raised.value.missing_tools == ("construct_reliable_plan_region",)
 
 
 def test_malformed_required_schema_fails_closed_with_exact_tool() -> None:
@@ -83,14 +88,14 @@ def test_malformed_required_schema_fails_closed_with_exact_tool() -> None:
         )
         if spec["name"] in RELIABLE_PLAN_REQUIRED_TOOL_NAMES
     ]
-    malformed = next(spec for spec in specs if spec["name"] == "create_plan_verification")
+    malformed = next(spec for spec in specs if spec["name"] == "construct_reliable_plan_region")
     malformed["inputSchema"] = {"type": "array"}
 
     with pytest.raises(ReliablePlanToolPreflightError) as raised:
         validate_reliable_plan_tool_specs(specs)
 
     assert raised.value.invalid_tools == {
-        "create_plan_verification": "inputSchema root type must be object"
+        "construct_reliable_plan_region": "inputSchema root type must be object"
     }
 
 
@@ -102,7 +107,7 @@ def test_required_macro_schema_cannot_omit_a_core_field() -> None:
         )
         if spec["name"] in RELIABLE_PLAN_REQUIRED_TOOL_NAMES
     ]
-    malformed = next(spec for spec in specs if spec["name"] == "create_effectful_batch")
+    malformed = next(spec for spec in specs if spec["name"] == "construct_reliable_plan_region")
     malformed_schema = dict(malformed["inputSchema"])
     malformed_schema["required"] = [
         field for field in malformed_schema["required"] if field != "checks"
@@ -113,7 +118,7 @@ def test_required_macro_schema_cannot_omit_a_core_field() -> None:
         validate_reliable_plan_tool_specs(specs)
 
     assert raised.value.invalid_tools == {
-        "create_effectful_batch": "missing required fields: checks"
+        "construct_reliable_plan_region": "missing required fields: checks"
     }
 
 
@@ -138,14 +143,23 @@ async def test_shared_graph_mcp_registers_and_routes_reliable_macros() -> None:
     )
 
     await mcp.call_tool(
-        "create_successor_planner",
+        "construct_reliable_plan_region",
         {
             "patch_id": "patch-1",
             "base_graph_position": 4,
-            "region_id": "horizon-2",
-            "evidence_source_node_id": "verify-plan",
-            "evidence_source_port": "verification_report",
-            "planning_horizon": 2,
+            "operation_key": "batch-2-attempt-1",
+            "scope": "batch-2",
+            "objective": "Implement batch 2.",
+            "requirement_ids": ["REQ-2"],
+            "dependencies": ["batch-1"],
+            "acceptance": ["batch 2 passes"],
+            "checks": [
+                {
+                    "name": "project tests",
+                    "command_binding": "dynamic_feature_hidden_oracle",
+                }
+            ],
+            "rubric": ["REQ-2 is satisfied"],
         },
     )
     assert calls == [
@@ -154,12 +168,21 @@ async def test_shared_graph_mcp_registers_and_routes_reliable_macros() -> None:
             "base_graph_position": 4,
             "macro_invocations": [
                 {
-                    "macro": "create_successor_planner",
+                    "macro": "construct_reliable_plan_region",
                     "args": {
-                        "region_id": "horizon-2",
-                        "evidence_source_node_id": "verify-plan",
-                        "evidence_source_port": "verification_report",
-                        "planning_horizon": 2,
+                        "operation_key": "batch-2-attempt-1",
+                        "scope": "batch-2",
+                        "objective": "Implement batch 2.",
+                        "requirement_ids": ["REQ-2"],
+                        "dependencies": ["batch-1"],
+                        "acceptance": ["batch 2 passes"],
+                        "checks": [
+                            {
+                                "name": "project tests",
+                                "command_binding": "dynamic_feature_hidden_oracle",
+                            }
+                        ],
+                        "rubric": ["REQ-2 is satisfied"],
                     },
                 }
             ],

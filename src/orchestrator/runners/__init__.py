@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 # Agent interface and types
 from orchestrator.runners.interface import AgentRunner
 from orchestrator.runners.errors import (
+    AgentConfigError as AgentConfigError,
     AgentNotAvailableError,
     SubmissionRejectedError,
     SubmissionRepairExhaustedError,

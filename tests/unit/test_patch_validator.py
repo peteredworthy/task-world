@@ -18,7 +18,7 @@ from orchestrator.graph import (
     resource_claim_dicts,
     validate_patch,
 )
-from orchestrator.graph import GraphProjection, build_projection, initial_projection
+from orchestrator.graph import GraphProjection, build_projection, initial_projection, reduce_event
 from tests.unit.graph_test_utils import event
 
 
@@ -135,6 +135,107 @@ def test_patch_at_current_position_accepted() -> None:
     )
 
     assert result.accepted
+
+
+def test_recovery_patch_can_retire_a_final_gate_stale_against_new_plan() -> None:
+    projection = build_projection(
+        [
+            event(
+                "node_created",
+                {
+                    "node_id": "planner-1",
+                    "kind": "planner",
+                    "role": "planner",
+                    "state": "leased",
+                },
+                position=1,
+            ),
+            event(
+                "node_created",
+                {
+                    "node_id": "old-final-gate",
+                    "kind": "final_gate",
+                    "role": "final_gate",
+                    "state": "planned",
+                    "declared_batch_ids": [],
+                },
+                position=2,
+            ),
+            event(
+                "output_record_accepted",
+                {
+                    "record_id": "accepted-recovery-plan",
+                    "record_kind": "graph_record",
+                    "record_type": "semantic_artifact",
+                    "producer_node_id": "worker-recovery-plan",
+                    "producer_port": "semantic_artifact",
+                    "port": "semantic_artifact",
+                    "schema": "SemanticArtifact",
+                    "value": {
+                        "semantic_role": "implementation_plan",
+                        "schema_id": "recovery-plan",
+                        "schema_version": 1,
+                        "content": {"batches": [{"batch_id": "recovery-batch"}]},
+                        "provenance": {"source": "recovery"},
+                        "source_record_ids": [],
+                        "requirement_ids": ["REQ-1"],
+                        "task_region_id": "recovery",
+                        "validation_status": "validated",
+                        "authority_status": "accepted",
+                    },
+                },
+                position=3,
+            ),
+        ]
+    )
+
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "retire_node",
+                    "node_id": "old-final-gate",
+                    "reason": "superseded by recovery finalization",
+                }
+            ]
+        ),
+        projection=projection,
+    )
+
+    assert result.accepted
+
+    retired_projection = reduce_event(
+        projection,
+        event(
+            "node_retired",
+            {"node_id": "old-final-gate"},
+            position=4,
+        ),
+    )
+    retired_projection = reduce_event(
+        retired_projection,
+        event(
+            "node_state_changed",
+            {
+                "node_id": "old-final-gate",
+                "new_state": "retired",
+                "trigger": "graph_patch_accepted",
+            },
+            position=5,
+        ),
+    )
+    unrelated = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {"node_id": "note-after-retirement", "kind": "artifact"},
+                }
+            ]
+        ),
+        projection=retired_projection,
+    )
+    assert unrelated.accepted
 
 
 def test_exact_nonexistent_requirement_record_source_port_rejects_atomically() -> None:
@@ -629,6 +730,74 @@ def test_create_edge_rejects_unknown_endpoint_node_in_projection() -> None:
 
     assert not result.accepted
     assert result.rejection_reason == "edge edge-1 references unknown source node: missing-source"
+
+
+def test_unknown_source_feedback_names_matching_record_producer() -> None:
+    projection = build_projection(
+        [
+            event(
+                "node_created",
+                {
+                    "node_id": "worker-real",
+                    "kind": "worker",
+                    "role": "builder",
+                    "state": "completed",
+                },
+                position=1,
+            ),
+            event(
+                "node_created",
+                {
+                    "node_id": "verifier-target",
+                    "kind": "verifier",
+                    "role": "verifier",
+                    "state": "planned",
+                },
+                position=2,
+            ),
+            event(
+                "output_record_accepted",
+                {
+                    "record_id": "candidate-real",
+                    "record_kind": "output",
+                    "record_type": "candidate",
+                    "producer_node_id": "worker-real",
+                    "producer_port": "candidate",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": "candidate-real",
+                    "value": {"summary": "accepted candidate"},
+                },
+                position=3,
+            ),
+        ]
+    )
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-candidate",
+                    "from_node_id": "worker-guessed",
+                    "from_port": "candidate",
+                    "to_node_id": "verifier-target",
+                    "to_port": "candidate_under_test",
+                    "required": True,
+                    "accepted_record_selector": {
+                        "record_type": "candidate",
+                        "schema": "ImplementationCandidate",
+                    },
+                }
+            ]
+        ),
+        projection=projection,
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == (
+        "edge edge-candidate references unknown source node: worker-guessed; "
+        "known matching producers: [worker-real]"
+    )
 
 
 def test_create_edge_rejects_unknown_endpoint_node_in_same_patch() -> None:

@@ -20,7 +20,10 @@ from orchestrator.graph import (
     initial_projection,
     input_bindings_view,
     leases_view,
+    node_payload_view,
     node_states_view,
+    output_record_payloads_view,
+    project_final_invariant_blockers,
     project_graph_outcome,
     project_graph_projection_snapshot,
     project_requirement_freshness_facts,
@@ -29,6 +32,7 @@ from orchestrator.graph import (
     projection_to_checkpoint,
     ready_nodes_view,
     reduce_event,
+    reliable_plan_assignment_carrier,
     retry_not_before_by_node_view,
 )
 from tests.unit.graph_test_utils import canonical_event_payload
@@ -829,6 +833,424 @@ def test_evaluate_final_gate_passed_decision_allows_lifecycle_completion() -> No
     assert decision_events[0].payload["value"] == {"status": "passed", "blockers": []}
     assert [event.event_type for event in completion] == ["run_lifecycle_changed"]
     assert completion[0].payload["to_state"] == "completed"
+
+
+def _exact_final_gate_candidate_events(
+    label: str,
+    *,
+    start: int,
+    acceptance_status: str = "passed",
+) -> list[EventEnvelope]:
+    worker = f"worker-{label}"
+    check = f"check-{label}"
+    verifier = f"verifier-{label}"
+    acceptance = f"acceptance-{label}"
+    audit = f"audit-{label}"
+    gate = f"gate-{label}"
+    candidate = f"candidate-{label}"
+    file_state = f"file-{label}"
+    check_result = f"check-result-{label}"
+    report = f"report-{label}"
+    receipt = f"receipt-{label}"
+    audit_report = f"audit-report-{label}"
+    position = start
+    events: list[EventEnvelope] = []
+
+    def emit(event_type: str, payload: dict[str, Any]) -> None:
+        nonlocal position
+        events.append(_event(event_type, payload, position))
+        position += 1
+
+    for payload in (
+        {
+            "node_id": worker,
+            "kind": "worker",
+            "state": "completed",
+            "task_region_id": "batch-1",
+            "semantic_stage": "effectful_batch",
+            "declared_batch_id": "batch-1",
+        },
+        {
+            "node_id": check,
+            "kind": "check",
+            "state": "completed",
+            "task_region_id": "batch-1",
+            "semantic_stage": "effectful_batch",
+            "declared_batch_id": "batch-1",
+        },
+        {
+            "node_id": verifier,
+            "kind": "verifier",
+            "state": "completed",
+            "task_region_id": "batch-1",
+            "semantic_stage": "effectful_batch",
+            "declared_batch_id": "batch-1",
+        },
+        {
+            "node_id": acceptance,
+            "kind": "check",
+            "state": "completed",
+            "task_region_id": "batch-1",
+            "semantic_stage": "final_acceptance",
+            "command_binding": "dynamic_feature_acceptance",
+        },
+        {
+            "node_id": audit,
+            "kind": "verifier",
+            "state": "completed",
+            "task_region_id": "batch-1",
+            "semantic_stage": "final_audit",
+        },
+        {
+            "node_id": gate,
+            "kind": "final_gate",
+            "state": "ready",
+            "declared_batch_ids": ["batch-1"],
+        },
+    ):
+        emit("node_created", payload)
+
+    selector_report = {
+        "record_type": "verification_report",
+        "schema": "VerificationReport",
+        "outcome": "passed",
+    }
+    for edge in (
+        {
+            "edge_id": f"edge-{worker}-{verifier}",
+            "from_node_id": worker,
+            "from_port": "candidate",
+            "to_node_id": verifier,
+            "to_port": "candidate_under_test",
+            "required": True,
+            "accepted_record_selector": {
+                "record_type": "candidate",
+                "schema": "ImplementationCandidate",
+            },
+        },
+        {
+            "edge_id": f"edge-{check}-{verifier}",
+            "from_node_id": check,
+            "from_port": "check_result",
+            "to_node_id": verifier,
+            "to_port": "check_result_1",
+            "required": True,
+            "accepted_record_selector": {
+                "record_type": "check_result",
+                "schema": "CheckResult",
+                "status": "passed",
+            },
+        },
+        *(
+            {
+                "edge_id": f"edge-{verifier}-{target}",
+                "from_node_id": verifier,
+                "from_port": "verification_report",
+                "to_node_id": target,
+                "to_port": "verification_report_batch_1",
+                "required": True,
+                "accepted_record_selector": selector_report,
+            }
+            for target in (acceptance, audit, gate)
+        ),
+        *(
+            {
+                "edge_id": f"edge-{acceptance}-{target}",
+                "from_node_id": acceptance,
+                "from_port": "check_result",
+                "to_node_id": target,
+                "to_port": "dynamic_feature_acceptance",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "check_result",
+                    "schema": "CheckResult",
+                    "status": "passed",
+                },
+            }
+            for target in (audit, gate)
+        ),
+        {
+            "edge_id": f"edge-{audit}-{gate}",
+            "from_node_id": audit,
+            "from_port": "verification_report",
+            "to_node_id": gate,
+            "to_port": "verification_report_final_audit",
+            "required": True,
+            "accepted_record_selector": selector_report,
+        },
+    ):
+        emit("edge_created", edge)
+
+    emit(
+        "file_state_accepted",
+        {
+            "record_id": file_state,
+            "record_kind": "file_state",
+            "record_type": "file_state",
+            "producer_node_id": worker,
+            "port": "file_state",
+            "schema": "FileStateRecord",
+            "snapshot_id": f"snapshot-{label}",
+            "candidate_id": candidate,
+            "task_region_id": "batch-1",
+            "verdict": "captured",
+        },
+    )
+    emit(
+        "output_record_accepted",
+        {
+            "record_id": candidate,
+            "record_kind": "output",
+            "record_type": "candidate",
+            "producer_node_id": worker,
+            "port": "candidate",
+            "schema": "ImplementationCandidate",
+            "candidate_id": candidate,
+            "task_region_id": "batch-1",
+            "file_state_record_ids": [file_state],
+            "value": {"summary": label, "file_state_record_ids": [file_state]},
+        },
+    )
+    check_value = {
+        "status": "passed",
+        "classification": "passed",
+        "command_id": check,
+        "command_text": "true",
+        "command": {"argv": ["true"]},
+        "worktree_path": "/work",
+        "base_snapshot_id": f"snapshot-{label}",
+        "execution_snapshot_id": f"snapshot-{label}",
+        "execution_id": f"execution-{label}",
+        "exit_code": 0,
+        "duration_ms": 1,
+        "stdout_tail": "",
+        "stderr_tail": "",
+        "stdout_truncated": False,
+        "stderr_truncated": False,
+        "timeout_seconds": 1.0,
+        "environment_policy": {},
+    }
+    emit(
+        "output_record_accepted",
+        {
+            "record_id": check_result,
+            "record_kind": "output",
+            "record_type": "check_result",
+            "producer_node_id": check,
+            "port": "check_result",
+            "schema": "CheckResult",
+            "candidate_id": candidate,
+            "task_region_id": "batch-1",
+            "attempt_number": 1,
+            "candidate_record_ids": [candidate],
+            "file_state_record_ids": [file_state],
+            "evaluated_record_ids": [candidate, file_state],
+            "value": check_value,
+        },
+    )
+    emit(
+        "output_record_accepted",
+        {
+            "record_id": report,
+            "record_kind": "verification",
+            "record_type": "verification_report",
+            "producer_node_id": verifier,
+            "port": "verification_report",
+            "schema": "VerificationReport",
+            "candidate_id": candidate,
+            "candidate_record_ids": [candidate],
+            "file_state_record_ids": [file_state],
+            "evaluated_record_ids": [check_result, candidate, file_state],
+            "outcome": "passed",
+            "value": {"outcome": "passed"},
+        },
+    )
+    emit(
+        "verification_passed",
+        {
+            "node_id": verifier,
+            "verifier_node_id": verifier,
+            "candidate_id": candidate,
+            "task_region_id": "batch-1",
+            "record_id": report,
+            "outcome": "passed",
+            "value": {"outcome": "passed"},
+        },
+    )
+    receipt_value = {
+        **check_value,
+        "status": acceptance_status,
+        "classification": acceptance_status,
+        "command_id": "dynamic-feature-acceptance",
+        "command_binding": "dynamic_feature_acceptance",
+        "verification_report_record_ids": [report],
+        "evaluated_record_ids": [report, check_result, candidate, file_state],
+    }
+    emit(
+        "output_record_accepted",
+        {
+            "record_id": receipt,
+            "record_kind": "output",
+            "record_type": "check_result",
+            "producer_node_id": acceptance,
+            "port": "check_result",
+            "schema": "CheckResult",
+            "candidate_id": candidate,
+            "task_region_id": "batch-1",
+            "attempt_number": 1,
+            "candidate_record_ids": [candidate],
+            "file_state_record_ids": [file_state],
+            "verification_report_record_ids": [report],
+            "evaluated_record_ids": [report, check_result, candidate, file_state],
+            "value": receipt_value,
+        },
+    )
+    if acceptance_status == "passed":
+        emit(
+            "output_record_accepted",
+            {
+                "record_id": audit_report,
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": audit,
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": candidate,
+                "candidate_record_ids": [candidate],
+                "file_state_record_ids": [file_state],
+                "evaluated_record_ids": [
+                    receipt,
+                    report,
+                    check_result,
+                    candidate,
+                    file_state,
+                ],
+                "outcome": "passed",
+                "value": {"outcome": "passed"},
+            },
+        )
+
+    bindings = [
+        (verifier, "candidate_under_test", [candidate]),
+        (verifier, "check_result_1", [check_result]),
+        (acceptance, "verification_report_batch_1", [report]),
+        (audit, "verification_report_batch_1", [report]),
+        (gate, "verification_report_batch_1", [report]),
+    ]
+    if acceptance_status == "passed":
+        bindings.extend(
+            [
+                (audit, "dynamic_feature_acceptance", [receipt]),
+                (gate, "dynamic_feature_acceptance", [receipt]),
+                (gate, "verification_report_final_audit", [audit_report]),
+            ]
+        )
+    for node_id, port, record_ids in bindings:
+        emit(
+            "input_bound",
+            {"to_node_id": node_id, "to_port": port, "record_ids": record_ids},
+        )
+    return events
+
+
+def test_final_gate_excludes_stale_acceptance_after_distinct_corrected_candidate() -> None:
+    plan_events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {"node_id": "plan", "kind": "planner", "state": "completed"},
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "accepted-plan",
+                "record_kind": "graph_record",
+                "record_type": "semantic_artifact",
+                "producer_node_id": "plan",
+                "port": "semantic_artifact",
+                "schema": "SemanticArtifact",
+                "value": {
+                    "semantic_role": "implementation_plan",
+                    "schema_id": "plan",
+                    "schema_version": 1,
+                    "content": {"batches": [{"batch_id": "batch-1"}]},
+                    "authority_status": "accepted",
+                },
+            },
+            2,
+        ),
+    ]
+    candidate_a_events = _exact_final_gate_candidate_events("a", start=3)
+    a_result = _apply(
+        [*plan_events, *candidate_a_events],
+        "evaluate_final_gate",
+        {"node_id": "gate-a"},
+    )
+    assert a_result[0].payload["value"] == {"status": "passed", "blockers": []}
+
+    retire_start = max(event.position for event in candidate_a_events) + 1
+    retired_a = [
+        _event(
+            "node_retired",
+            {"node_id": f"{kind}-a", "reason": "superseded_by_candidate_b"},
+            retire_start + index,
+        )
+        for index, kind in enumerate(("worker", "check", "verifier", "acceptance", "audit", "gate"))
+    ]
+    failed_b_events = _exact_final_gate_candidate_events(
+        "b",
+        start=retire_start + len(retired_a),
+        acceptance_status="failed",
+    )
+    stale_bindings = [
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "gate-b",
+                "to_port": "dynamic_feature_acceptance",
+                "record_ids": ["receipt-a"],
+            },
+            max(event.position for event in failed_b_events) + 1,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "gate-b",
+                "to_port": "verification_report_final_audit",
+                "record_ids": ["audit-report-a"],
+            },
+            max(event.position for event in failed_b_events) + 2,
+        ),
+    ]
+    stale_graph = [
+        *plan_events,
+        *candidate_a_events,
+        *retired_a,
+        *failed_b_events,
+        *stale_bindings,
+    ]
+    blocked = _apply(stale_graph, "evaluate_final_gate", {"node_id": "gate-b"})
+    blocker_kinds = {item["kind"] for item in blocked[0].payload["value"]["blockers"]}
+    assert blocker_kinds >= {
+        "missing_dynamic_feature_acceptance",
+        "missing_final_independent_audit",
+    }
+    projection = _project(stale_graph)
+    assert "receipt-a" in output_record_payloads_view(projection)
+    assert "receipt-b" in output_record_payloads_view(projection)
+
+    passed_b_events = _exact_final_gate_candidate_events(
+        "b",
+        start=retire_start + len(retired_a),
+        acceptance_status="passed",
+    )
+    corrected = _apply(
+        [*plan_events, *candidate_a_events, *retired_a, *passed_b_events],
+        "evaluate_final_gate",
+        {"node_id": "gate-b"},
+    )
+    assert corrected[0].payload["value"] == {"status": "passed", "blockers": []}
 
 
 def test_lifecycle_complete_rejected_when_final_gate_has_no_completion_decision() -> None:
@@ -2549,6 +2971,160 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
         event.event_type == "lease_granted" and event.payload["node_id"] == "planner-gap"
         for event in schedule_output
     )
+
+
+def test_final_audit_callback_accepts_candidate_cited_by_bound_batch_report() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-1",
+                "value": {"summary": "candidate under final audit"},
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-1",
+                "record_kind": "check_result",
+                "record_type": "check_result",
+                "producer_node_id": "check-1-node",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "candidate_id": "candidate-1",
+                "value": {"status": "passed", "classification": "passed"},
+            },
+            2,
+        ),
+        _event(
+            "file_state_accepted",
+            {
+                "record_id": "file-state-1",
+                "record_kind": "file_state",
+                "producer_node_id": "worker-1",
+                "port": "file_state",
+                "schema": "FileStateRecord",
+                "candidate_id": "candidate-1",
+                "snapshot_id": "snapshot-1",
+                "base_snapshot_id": "S0",
+                "verdict": "captured",
+            },
+            3,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "verification-batch-1",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verifier-batch-1",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-1",
+                "candidate_record_ids": ["candidate-1"],
+                "file_state_record_ids": ["file-state-1"],
+                "outcome": "passed",
+                "value": {
+                    "outcome": "passed",
+                    "grades": [{"requirement_id": "R-1", "grade": "A"}],
+                },
+                "evaluated_record_ids": [
+                    "check-1",
+                    "requirement-R-1",
+                    "file-state-1",
+                    "candidate-1",
+                ],
+            },
+            4,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "final-audit",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "running",
+                "semantic_stage": "final_audit",
+                "task_region_id": "final-region",
+            },
+            5,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "final-audit",
+                "to_port": "verification_report_batch_1",
+                "record_ids": ["verification-batch-1"],
+            },
+            6,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "final-audit",
+                "lease_id": "lease-final-audit",
+                "generation": 1,
+                "execution_id": "exec-final-audit",
+                "base_snapshot_id": "S0",
+            },
+            7,
+        ),
+    ]
+    events = _with_routine_requirement(events, "R-1")
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            node_id="final-audit",
+            lease_id="lease-final-audit",
+            execution_id="exec-final-audit",
+            idempotency_key="final-audit-key",
+            payload={
+                "payload_hash": "hash-final-audit",
+                "output_records": [
+                    {
+                        "record_id": "verification-final-audit",
+                        "record_kind": "verification",
+                        "producer_node_id": "final-audit",
+                        "port": "verification_report",
+                        "schema": "VerificationReport",
+                        "candidate_id": "candidate-1",
+                        "evaluated_record_ids": [
+                            "verification-batch-1",
+                            "check-1",
+                            "requirement-R-1",
+                            "file-state-1",
+                            "candidate-1",
+                        ],
+                        "outcome": "passed",
+                        "value": {
+                            "outcome": "passed",
+                            "grades": [
+                                {
+                                    "requirement_id": "R-1",
+                                    "grade": "A",
+                                    "reason": "bound batch evidence proves the candidate",
+                                }
+                            ],
+                        },
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert output[0].event_type == "callback_accepted"
+    assert output[1].event_type == "output_record_accepted"
+    assert output[1].payload["candidate_id"] == "candidate-1"
 
 
 def test_verifier_callback_rejects_grade_for_unrepresented_requirement_before_acceptance() -> None:
@@ -6052,6 +6628,406 @@ def test_patch_accept_emits_events_for_all_v1_ops() -> None:
     assert output[8].payload["allowed_actions"] == ["submit_records"]
 
 
+def test_reliable_plan_revision_attempt_receives_controller_owned_assignments() -> None:
+    base_assignment = {
+        "runner_type": "codex_server",
+        "model": "gpt-5.6-luna",
+        "profile": "coder",
+    }
+    carrier = reliable_plan_assignment_carrier(
+        skeleton_id="reliable-plan-fff4f6b7-v1",
+        selected_runner_type="codex_server",
+        arm={
+            "arm_id": "luna-work-sol-verification",
+            "planner": {**base_assignment, "model": "gpt-5.6-sol", "profile": "architect"},
+            "discovery_worker": {**base_assignment, "profile": "summarizer"},
+            "implementation_worker": base_assignment,
+            "correction_worker": base_assignment,
+            "verifier": {**base_assignment, "model": "gpt-5.6-sol"},
+            "successor_planner": {**base_assignment, "profile": "architect"},
+        },
+    )
+    declaration = {
+        "record_id": "schema-plan-v1",
+        "record_kind": "graph_record",
+        "record_type": "semantic_schema_declaration",
+        "schema_version": 1,
+        "producer_node_id": "routine-snapshot",
+        "port": "semantic_schema_declaration",
+        "schema": "SemanticSchemaDeclaration",
+        "value": {
+            "schema_id": "ordered-batch-plan",
+            "version": 1,
+            "semantic_role": "implementation_plan",
+            "json_schema": {
+                "type": "object",
+                "required": ["batches"],
+                "properties": {
+                    "batches": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["batch_id"],
+                            "properties": {"batch_id": {"type": "string"}},
+                            "additionalProperties": False,
+                        },
+                    }
+                },
+                "additionalProperties": False,
+            },
+            "authority": "routine_snapshot",
+        },
+    }
+    accepted_plan = {
+        "record_id": "accepted-plan",
+        "record_kind": "graph_record",
+        "record_type": "semantic_artifact",
+        "schema_version": 1,
+        "producer_node_id": "worker-discovery",
+        "producer_port": "semantic_artifact",
+        "port": "semantic_artifact",
+        "schema": "SemanticArtifact",
+        "value": {
+            "semantic_role": "implementation_plan",
+            "schema_id": "ordered-batch-plan",
+            "schema_version": 1,
+            "content": {"batches": [{"batch_id": "batch-1"}]},
+            "provenance": {"source": "discovery"},
+            "source_record_ids": [],
+            "requirement_ids": ["requirement-1"],
+            "task_region_id": "discovery",
+            "validation_status": "validated",
+            "authority_status": "accepted",
+        },
+    }
+    failed_report = {
+        "record_id": "plan-verification-failed",
+        "record_kind": "verification",
+        "record_type": "verification_report",
+        "producer_node_id": "verifier-plan",
+        "port": "verification_report",
+        "schema": "VerificationReport",
+        "candidate_id": "accepted-plan",
+        "candidate_record_id": "accepted-plan",
+        "candidate_record_ids": ["accepted-plan"],
+        "task_region_id": "plan-verification",
+        "outcome": "failed",
+        "value": {"outcome": "failed", "grades": []},
+        "evaluated_record_ids": ["accepted-plan", "requirement-1"],
+    }
+    events = [
+        _event(
+            "node_created",
+            {"node_id": "routine-snapshot", "kind": "artifact", "state": "completed"},
+            0,
+        ),
+        _event("output_record_accepted", declaration, 1),
+        _event(
+            "node_created",
+            {"node_id": "requirement-1", "kind": "requirement", "state": "completed"},
+            2,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "requirement-1",
+                "record_kind": "graph_record",
+                "record_type": "requirement_record",
+                "producer_node_id": "requirement-1",
+                "port": "requirement",
+                "schema": "RequirementRecord",
+                "value": {"id": "REQ-1", "text": "Required behavior", "must": True},
+            },
+            3,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-discovery",
+                "kind": "worker",
+                "role": "discovery",
+                "state": "completed",
+                "semantic_stage": "discovery",
+                "access_mode": "read_only",
+                "effect_contract": "read_only_semantic",
+                "semantic_schema_id": "ordered-batch-plan",
+                "semantic_schema_version": 1,
+            },
+            4,
+        ),
+        _event("output_record_accepted", accepted_plan, 5),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-plan",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "completed",
+                "semantic_stage": "plan_verification",
+                "semantic_schema_id": "ordered-batch-plan",
+                "semantic_schema_version": 1,
+            },
+            6,
+        ),
+        _event("output_record_accepted", failed_report, 7),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-revision",
+                "kind": "planner",
+                "role": "planner",
+                "state": "running",
+                "reliable_plan_skeleton_id": carrier.skeleton_id,
+                "reliable_plan_assignment_carrier": carrier.model_dump(mode="json"),
+            },
+            8,
+        ),
+    ]
+    hostile_assignment = {
+        "reliable_plan_assignment_carrier": {"agent": "supplied"},
+        "reliable_plan_assignment_role": "verifier",
+        "reliable_plan_selected_runner_type": "cli_subprocess",
+        "runner_model_override": "hostile-model",
+        "profile": "architect",
+    }
+
+    output = _apply(
+        events,
+        "submit_patch",
+        {
+            "patch_id": "reliable-revision",
+            "base_graph_position": 8,
+            "ops": [
+                {
+                    "op": "create_revision_attempt",
+                    "task_region_id": "plan-revision",
+                    "failed_candidate_id": "accepted-plan",
+                    "worker_node": {
+                        "node_id": "worker-revision-batch-1",
+                        "kind": "worker",
+                        "role": "fixer",
+                        "semantic_stage": "agent-supplied-stage",
+                        "state": "planned",
+                        "task_region_id": "plan-revision",
+                        "candidate_id": "revised-plan",
+                        "failed_candidate_id": "accepted-plan",
+                        "recovery_of_record_id": "accepted-plan",
+                        "objective": "Produce the corrected candidate.",
+                        "access_mode": "write",
+                        "effect_contract": "effectful_write",
+                        "semantic_schema_id": "ordered-batch-plan",
+                        "semantic_schema_version": 1,
+                        "bound_requirement_ids": ["REQ-1"],
+                        "acceptance": ["candidate resolves the failed requirement"],
+                        "outputs": [
+                            {
+                                "port": "candidate",
+                                "direction": "output",
+                                "schema": "ImplementationCandidate",
+                                "required": True,
+                            },
+                            {
+                                "port": "semantic_artifact",
+                                "direction": "output",
+                                "schema": "SemanticArtifact",
+                                "required": True,
+                            },
+                        ],
+                        **hostile_assignment,
+                    },
+                    "verifier_node": {
+                        "node_id": "verifier-revision-batch-1",
+                        "kind": "verifier",
+                        "role": "verifier",
+                        "state": "planned",
+                        "task_region_id": "plan-revision",
+                        "failed_candidate_id": "accepted-plan",
+                        **hostile_assignment,
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "failed-report-to-revision",
+                    "from_node_id": "verifier-plan",
+                    "from_port": "verification_report",
+                    "to_node_id": "worker-revision-batch-1",
+                    "to_port": "verification_report",
+                    "required": True,
+                    "dependency_type": "input_binding",
+                    "accepted_record_selector": {
+                        "record_id": "plan-verification-failed",
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                        "outcome": "failed",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "revision-candidate-to-verifier",
+                    "from_node_id": "worker-revision-batch-1",
+                    "from_port": "candidate",
+                    "to_node_id": "verifier-revision-batch-1",
+                    "to_port": "candidate_under_test",
+                    "required": True,
+                    "dependency_type": "input_binding",
+                    "accepted_record_selector": {
+                        "record_type": "candidate",
+                        "schema": "ImplementationCandidate",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "revision-artifact-to-verifier",
+                    "from_node_id": "worker-revision-batch-1",
+                    "from_port": "semantic_artifact",
+                    "to_node_id": "verifier-revision-batch-1",
+                    "to_port": "semantic_artifact",
+                    "required": True,
+                    "dependency_type": "input_binding",
+                    "accepted_record_selector": {
+                        "record_type": "semantic_artifact",
+                        "schema": "SemanticArtifact",
+                        "semantic_schema_id": "ordered-batch-plan",
+                        "semantic_schema_version": 1,
+                    },
+                },
+            ],
+        },
+        PatchCommandContext(
+            run_id="run-1",
+            current_graph_position=8,
+            proposed_by_node_id="planner-revision",
+            actor_role="planner",
+        ),
+    )
+
+    assert [event.event_type for event in output] == [
+        "graph_patch_accepted",
+        "revision_created",
+        "node_created",
+        "node_created",
+        "edge_created",
+        "input_bound",
+        "edge_created",
+        "edge_created",
+    ], output[0].payload.get("reason")
+    worker = output[2].payload
+    verifier = output[3].payload
+    assert (
+        worker["reliable_plan_assignment_role"],
+        worker["runner_model_override"],
+        worker["profile"],
+    ) == ("correction_worker", "gpt-5.6-luna", "coder")
+    assert worker["semantic_stage"] == "corrective_work"
+    assert (
+        verifier["reliable_plan_assignment_role"],
+        verifier["runner_model_override"],
+        verifier["profile"],
+    ) == ("verifier", "gpt-5.6-sol", "coder")
+    for assigned in (worker, verifier):
+        assert assigned["reliable_plan_assignment_carrier"] == carrier.model_dump(mode="json")
+        assert assigned["reliable_plan_selected_runner_type"] == "codex_server"
+    assert output[1].payload["worker_node"] == worker
+    assert output[1].payload["verifier_node"] == verifier
+
+    replayed = _project([*events, *output])
+    restored = projection_from_checkpoint(projection_to_checkpoint(replayed, position=8))
+    for node_id, expected in (
+        ("worker-revision-batch-1", worker),
+        ("verifier-revision-batch-1", verifier),
+    ):
+        replayed_payload = node_payload_view(replayed, node_id)
+        restored_payload = node_payload_view(restored, node_id)
+        assert replayed_payload is not None
+        assert restored_payload is not None
+        for field_name in (
+            "reliable_plan_assignment_carrier",
+            "reliable_plan_assignment_role",
+            "reliable_plan_selected_runner_type",
+            "runner_model_override",
+            "profile",
+        ):
+            assert replayed_payload[field_name] == expected[field_name]
+            assert restored_payload[field_name] == expected[field_name]
+        if node_id == "worker-revision-batch-1":
+            assert replayed_payload["semantic_stage"] == "corrective_work"
+            assert restored_payload["semantic_stage"] == "corrective_work"
+
+
+def test_reliable_plan_revision_attempt_rejects_invalid_embedded_role_atomically() -> None:
+    assignment = {
+        "runner_type": "codex_server",
+        "model": "gpt-5.6-luna",
+        "profile": "coder",
+    }
+    carrier = reliable_plan_assignment_carrier(
+        skeleton_id="reliable-plan-fff4f6b7-v1",
+        selected_runner_type="codex_server",
+        arm={
+            "arm_id": "bounded",
+            "planner": {**assignment, "profile": "architect"},
+            "discovery_worker": assignment,
+            "implementation_worker": assignment,
+            "correction_worker": assignment,
+            "verifier": assignment,
+            "successor_planner": {**assignment, "profile": "architect"},
+        },
+    )
+    events = [
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-revision",
+                "kind": "planner",
+                "role": "planner",
+                "state": "running",
+                "reliable_plan_skeleton_id": carrier.skeleton_id,
+                "reliable_plan_assignment_carrier": carrier.model_dump(mode="json"),
+            },
+            0,
+        )
+    ]
+
+    output = _apply(
+        events,
+        "submit_patch",
+        {
+            "patch_id": "ambiguous-reliable-revision",
+            "base_graph_position": 8,
+            "ops": [
+                {
+                    "op": "create_revision_attempt",
+                    "task_region_id": "batch-1",
+                    "failed_candidate_id": "candidate-batch-1",
+                    "worker_node": {
+                        "node_id": "invalid-revision-planner",
+                        "kind": "planner",
+                        "role": "planner",
+                        "state": "planned",
+                    },
+                    "verifier_node": {
+                        "node_id": "verifier-never-created",
+                        "kind": "verifier",
+                        "role": "verifier",
+                        "state": "planned",
+                    },
+                }
+            ],
+        },
+        PatchCommandContext(
+            run_id="run-1",
+            current_graph_position=8,
+            proposed_by_node_id="planner-revision",
+            actor_role="planner",
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["graph_patch_rejected"]
+    assert output[0].payload["reason"] == (
+        "create_revision_attempt worker_node must have kind worker"
+    )
+
+
 def test_patch_reject_emits_rejection() -> None:
     output = _apply(
         [],
@@ -6597,6 +7573,154 @@ def test_reconcile_recovers_quiescent_graph_after_failed_required_check() -> Non
         and event.payload["node_id"] == "planner-recover-check-result-r1"
         and event.payload["base_snapshot_id"] == "routine-snapshot-record"
         for event in next_output
+    )
+
+
+def test_passed_plan_verification_accepts_separate_semantic_discovery_region() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-discovery",
+                "kind": "worker",
+                "role": "discovery",
+                "state": "completed",
+                "task_region_id": "plan-discovery",
+                "semantic_stage": "discovery",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "accepted-plan",
+                "record_kind": "graph_record",
+                "record_type": "semantic_artifact",
+                "producer_node_id": "worker-discovery",
+                "port": "semantic_artifact",
+                "schema": "SemanticArtifact",
+                "value": {
+                    "semantic_role": "implementation_plan",
+                    "schema_id": "ordered-batch-plan",
+                    "schema_version": 1,
+                    "content": {"batches": [{"batch_id": "batch-1"}]},
+                    "provenance": {"source": "discovery"},
+                    "source_record_ids": [],
+                    "requirement_ids": ["requirement-1"],
+                    "task_region_id": "plan-discovery",
+                    "validation_status": "validated",
+                    "authority_status": "accepted",
+                },
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-plan",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "completed",
+                "task_region_id": "plan-verification",
+                "semantic_stage": "plan_verification",
+            },
+            3,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "verifier-plan",
+                "to_port": "semantic_artifact",
+                "record_ids": ["accepted-plan"],
+            },
+            4,
+        ),
+        _event(
+            "verification_passed",
+            {
+                "node_id": "verifier-plan",
+                "verifier_node_id": "verifier-plan",
+                "candidate_id": "accepted-plan",
+                "task_region_id": "plan-verification",
+                "record_id": "verification-plan",
+                "outcome": "passed",
+                "value": {"outcome": "passed", "grades": []},
+            },
+            5,
+        ),
+    ]
+
+    assert project_task_states(events) == {
+        "plan-discovery": "accepted",
+        "plan-verification": "accepted",
+    }
+    assert not any(
+        blocker["kind"] == "task_not_accepted"
+        for blocker in project_final_invariant_blockers(events)
+    )
+
+
+def test_running_final_gate_does_not_block_its_accepted_task_region() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-final-audit",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "completed",
+                "task_region_id": "successor-region",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "verification-final-audit",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verifier-final-audit",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-final",
+                "outcome": "passed",
+                "value": {"outcome": "passed", "grades": []},
+            },
+            2,
+        ),
+        _event(
+            "verification_passed",
+            {
+                "node_id": "verifier-final-audit",
+                "verifier_node_id": "verifier-final-audit",
+                "candidate_id": "candidate-final",
+                "record_id": "verification-final-audit",
+                "outcome": "passed",
+                "task_region_id": "successor-region",
+                "value": {"outcome": "passed", "grades": []},
+            },
+            3,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "final-gate",
+                "kind": "final_gate",
+                "role": "final_gate",
+                "state": "running",
+                "task_region_id": "successor-region",
+            },
+            4,
+        ),
+    ]
+
+    assert project_task_states(events)["successor-region"] == "accepted"
+    assert not any(
+        blocker.get("task_region_id") == "successor-region"
+        and blocker["kind"] == "task_not_accepted"
+        for blocker in project_final_invariant_blockers(events)
     )
 
 
@@ -8399,6 +9523,95 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
     task_states = project_task_states([*events, *output])
     assert task_states["gap-region"] == "accepted"
     assert task_states["corrective-region"] == "accepted"
+
+
+def test_reliable_plan_verification_does_not_synthesize_legacy_final_check() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-plan",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "completed",
+                "task_region_id": "plan-region",
+                "semantic_stage": "plan_verification",
+                "reliable_plan_skeleton_id": "skeleton-1",
+                "candidate_id": "plan-candidate",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "verification-plan-passed",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verifier-plan",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "plan-candidate",
+                "task_region_id": "plan-region",
+                "outcome": "passed",
+                "value": {"outcome": "passed"},
+            },
+            2,
+        ),
+        _event(
+            "verification_passed",
+            {
+                "node_id": "verifier-plan",
+                "verifier_node_id": "verifier-plan",
+                "candidate_id": "plan-candidate",
+                "outcome": "passed",
+                "record_id": "verification-plan-passed",
+                "task_region_id": "plan-region",
+            },
+            3,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-gap-plan",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "planned",
+                "task_region_id": "plan-recovery-region",
+                "reliable_plan_skeleton_id": "skeleton-1",
+            },
+            4,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-verifier-plan-gap",
+                "from_node_id": "verifier-plan",
+                "from_port": "verification_report",
+                "to_node_id": "planner-gap-plan",
+                "to_port": "verification_evidence",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "verification_report",
+                    "schema": "VerificationReport",
+                    "outcome": "failed",
+                },
+            },
+            5,
+        ),
+    ]
+
+    output = _apply(events, "reconcile", {})
+
+    assert any(
+        event.event_type == "node_retired" and event.payload["node_id"] == "planner-gap-plan"
+        for event in output
+    )
+    assert not any(
+        event.event_type == "node_created"
+        and event.payload.get("command_binding") == "dynamic_feature_hidden_oracle"
+        for event in output
+    )
 
 
 def test_passed_verification_final_check_sweep_skips_cycle_forming_edge() -> None:

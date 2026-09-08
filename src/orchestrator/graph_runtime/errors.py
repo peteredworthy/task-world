@@ -23,6 +23,10 @@ class StaleProjectionError(GraphRuntimeError):
     """Raised when a command appends against a stale run-local position."""
 
 
+class PatchOperationConflictError(GraphRuntimeError, ValueError):
+    """Raised when a semantic operation key is reused with different intent."""
+
+
 class GraphEventEnvelopeTooLargeError(GraphRuntimeError):
     """Raised when a complete serialized event exceeds the write contract."""
 

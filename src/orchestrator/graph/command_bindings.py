@@ -7,7 +7,9 @@ from typing import Any, cast
 
 from orchestrator.graph.models import EventEnvelope
 
-KNOWN_CHECK_COMMAND_BINDINGS = frozenset({"dynamic_feature_hidden_oracle"})
+KNOWN_CHECK_COMMAND_BINDINGS = frozenset(
+    {"dynamic_feature_acceptance", "dynamic_feature_hidden_oracle"}
+)
 
 
 def is_known_check_command_binding(value: Any) -> bool:
@@ -85,6 +87,14 @@ def resolve_check_command_definition(
         )
 
     command_binding = node_payload.get("command_binding")
+    if command_binding == "dynamic_feature_acceptance":
+        command = _dynamic_feature_acceptance_command(events, projection=projection)
+        if command is not None:
+            return _shell_command_definition(
+                node_payload,
+                command,
+                source="dynamic_feature_acceptance_binding",
+            )
     if command_binding == "dynamic_feature_hidden_oracle":
         command = _dynamic_feature_hidden_oracle_command(events, projection=projection)
         if command is not None:
@@ -155,6 +165,26 @@ def _dynamic_feature_hidden_oracle_command(
     return None
 
 
+def _dynamic_feature_acceptance_command(
+    events: list[EventEnvelope], *, projection: Any | None = None
+) -> str | None:
+    for dynamic_feature in _projected_dynamic_features(projection):
+        command = _acceptance_from_dynamic_feature(dynamic_feature)
+        if command is not None:
+            return command
+    for event in reversed(events):
+        snapshot = event.payload.get("snapshot")
+        if isinstance(snapshot, dict):
+            typed_snapshot = cast(dict[str, Any], snapshot)
+            command = _acceptance_from_dynamic_feature(typed_snapshot.get("dynamic_feature"))
+            if command is not None:
+                return command
+        command = _acceptance_from_dynamic_feature(event.payload.get("dynamic_feature"))
+        if command is not None:
+            return command
+    return None
+
+
 def _projected_dynamic_features(projection: Any | None) -> tuple[object, ...]:
     """Read dynamic-feature inputs from the durable immutable snapshot.
 
@@ -191,14 +221,15 @@ def _hidden_oracle_from_dynamic_feature(dynamic_feature: Any) -> str | None:
     command = typed.get("hidden_oracle_command")
     if isinstance(command, str) and command.strip():
         return command
-    # hidden_oracle_command is an optional routine input (defaults to "").
-    # Planners are instructed to bind final-invariant checks to this binding,
-    # so when no hidden oracle is configured the check must still resolve —
-    # fall back to the run's acceptance command rather than leaving the node
-    # unresolvable (a non-retryable runtime failure at dispatch).
-    fallback = typed.get("acceptance_command")
-    if isinstance(fallback, str) and fallback.strip():
-        return fallback
+    return None
+
+
+def _acceptance_from_dynamic_feature(dynamic_feature: Any) -> str | None:
+    if not isinstance(dynamic_feature, Mapping):
+        return None
+    command = cast(dict[str, Any], dynamic_feature).get("acceptance_command")
+    if isinstance(command, str) and command.strip():
+        return command
     return None
 
 

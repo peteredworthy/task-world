@@ -12,6 +12,7 @@ from orchestrator.graph import (
     FakeClock,
     SequentialIdGenerator,
     initial_projection,
+    project_final_invariant_blockers,
     project_planner_chain,
     project_run_state,
     reduce_event,
@@ -434,6 +435,42 @@ def test_lifecycle_completed_does_not_bypass_pending_planner() -> None:
     assert project_run_state(events) == "active"
 
 
+def test_reliable_plan_failed_successor_cannot_complete_without_final_gate() -> None:
+    events = _planner_events(reliable_plan_skeleton_id="reliable-plan-v1")
+    events = [*events, *_append(events, _submit_patch(events, "patch-1", _region_ops("planner-1")))]
+    events = _drive_region_to_accepted(events)
+    events = [
+        *events,
+        *_append(
+            events,
+            [
+                _event(
+                    "node_state_changed",
+                    {
+                        "node_id": "planner-1",
+                        "new_state": "failed",
+                        "reason": "successor planning failed",
+                    },
+                )
+            ],
+        ),
+    ]
+
+    assert _project(events).tasks["region-1"].state == "accepted"
+    assert project_run_state(events) == "active"
+    assert project_final_invariant_blockers(events) == [
+        {
+            "kind": "missing_reliable_plan_final_gate",
+            "reason": (
+                "active reliable-plan skeleton has no active final gate or passing "
+                "completion decision"
+            ),
+            "node_id": "root",
+            "state": "completed",
+        }
+    ]
+
+
 def test_generation_budget_rejects_and_gates() -> None:
     events = _planner_events(budget=1, planner_generation=1, planner_id="planner-1")
 
@@ -516,18 +553,22 @@ def _planner_events(
     budget: int = 8,
     planner_generation: int = 0,
     planner_id: str = "planner-0",
+    reliable_plan_skeleton_id: str | None = None,
 ) -> list[EventEnvelope]:
+    root_payload: dict[str, Any] = {
+        "node_id": "root",
+        "kind": "root",
+        "state": "completed",
+        "planner_generation_budget": budget,
+    }
+    if reliable_plan_skeleton_id is not None:
+        root_payload["reliable_plan_skeleton_id"] = reliable_plan_skeleton_id
     return _with_positions(
         [
             _event("run_lifecycle_changed", {"to_state": "active"}),
             _event(
                 "node_created",
-                {
-                    "node_id": "root",
-                    "kind": "root",
-                    "state": "completed",
-                    "planner_generation_budget": budget,
-                },
+                root_payload,
             ),
             _event(
                 "node_created",

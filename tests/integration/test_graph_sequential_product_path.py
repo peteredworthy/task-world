@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
 import json
@@ -34,12 +35,22 @@ from orchestrator.graph import (
     MAX_EVENT_ENVELOPE_BYTES,
     ReliablePlanEvaluationConfig,
     build_projection,
+    completion_decision_passed,
+    edges_view,
+    effective_active_node_ids_view,
     execution_attempts_view,
+    input_bindings_view,
+    iter_final_invariant_blockers,
     leases_view,
+    node_kinds_view,
     node_payload_view,
+    non_gap_planner_completion_contract_satisfied,
     output_record_payloads_view,
     projection_from_checkpoint,
     projection_to_checkpoint,
+    ready_nodes_view,
+    reduce_event,
+    task_region_snapshot_authority_view,
     task_states_view,
 )
 from orchestrator.graph_runtime import (
@@ -77,6 +88,71 @@ ROUTINE_PATH = (
 QUALIFICATION_FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "graph" / "reliable_plan_fff4f6b7.json"
 )
+
+
+def _assert_reliable_plan_checkpoint_parity(events: list[Any]) -> None:
+    """Every durable split must reconstruct the same execution semantics."""
+    uninterrupted = build_projection(events)
+    active_ids = set(effective_active_node_ids_view(uninterrupted))
+    expected_active_edges = {
+        edge_id: edge
+        for edge_id, edge in edges_view(uninterrupted).items()
+        if edge.from_node_id in active_ids and edge.to_node_id in active_ids
+    }
+    expected_planner_completion = {
+        node_id: non_gap_planner_completion_contract_satisfied(uninterrupted, node_id)
+        for node_id, kind in node_kinds_view(uninterrupted).items()
+        if kind == "planner"
+        and (node_payload_view(uninterrupted, node_id) or {}).get("role") != "gap_planner"
+    }
+    expected = (
+        effective_active_node_ids_view(uninterrupted),
+        expected_active_edges,
+        input_bindings_view(uninterrupted),
+        task_region_snapshot_authority_view(uninterrupted),
+        ready_nodes_view(uninterrupted),
+        expected_planner_completion,
+        completion_decision_passed(uninterrupted),
+        list(iter_final_invariant_blockers(events, uninterrupted)),
+    )
+
+    # Seeding is one atomic command, so a production checkpoint cannot split
+    # its node declarations from the routine-snapshot record they reference.
+    first_checkpoint_split = next(
+        index + 1
+        for index, graph_event in enumerate(events)
+        if graph_event.event_type == "run_lifecycle_changed"
+        and graph_event.payload.get("to_state") == "active"
+    )
+    for split in range(first_checkpoint_split, len(events) + 1):
+        prefix = build_projection(events[:split])
+        restored = projection_from_checkpoint(deepcopy(projection_to_checkpoint(prefix)))
+        replayed = restored
+        for graph_event in events[split:]:
+            replayed = reduce_event(replayed, graph_event)
+        replayed_active_ids = set(effective_active_node_ids_view(replayed))
+        observed = (
+            effective_active_node_ids_view(replayed),
+            {
+                edge_id: edge
+                for edge_id, edge in edges_view(replayed).items()
+                if edge.from_node_id in replayed_active_ids
+                and edge.to_node_id in replayed_active_ids
+            },
+            input_bindings_view(replayed),
+            task_region_snapshot_authority_view(replayed),
+            ready_nodes_view(replayed),
+            {
+                node_id: non_gap_planner_completion_contract_satisfied(replayed, node_id)
+                for node_id, kind in node_kinds_view(replayed).items()
+                if kind == "planner"
+                and (node_payload_view(replayed, node_id) or {}).get("role") != "gap_planner"
+            },
+            completion_decision_passed(replayed),
+            list(iter_final_invariant_blockers(events, replayed)),
+        )
+        assert replayed == uninterrupted, split
+        assert observed == expected, split
 
 
 @pytest_asyncio.fixture(scope="module")
@@ -293,13 +369,42 @@ def _final_audit_and_gate_ops(
         {
             "op": "create_node",
             "node": {
+                "node_id": "final-acceptance",
+                "kind": "check",
+                "role": "acceptance_gate",
+                "state": "planned",
+                "semantic_stage": "final_acceptance",
+                "task_region_id": "batch-2",
+                "command_binding": "dynamic_feature_acceptance",
+                "inputs": batch_inputs,
+                "outputs": [
+                    {
+                        "port": "check_result",
+                        "direction": "output",
+                        "schema": "CheckResult",
+                        "required": True,
+                    }
+                ],
+            },
+        },
+        {
+            "op": "create_node",
+            "node": {
                 "node_id": "final-audit",
                 "kind": "verifier",
                 "role": "verifier",
                 "state": "planned",
                 "semantic_stage": "final_audit",
                 "task_region_id": "batch-2",
-                "inputs": batch_inputs,
+                "inputs": [
+                    *batch_inputs,
+                    {
+                        "port": "dynamic_feature_acceptance",
+                        "direction": "input",
+                        "schema": "CheckResult",
+                        "required": True,
+                    },
+                ],
                 "outputs": [
                     {
                         "port": "verification_report",
@@ -322,6 +427,12 @@ def _final_audit_and_gate_ops(
                 "inputs": [
                     *batch_inputs,
                     {
+                        "port": "dynamic_feature_acceptance",
+                        "direction": "input",
+                        "schema": "CheckResult",
+                        "required": True,
+                    },
+                    {
                         "port": "verification_report_final_audit",
                         "direction": "input",
                         "schema": "VerificationReport",
@@ -334,6 +445,7 @@ def _final_audit_and_gate_ops(
     for batch in (1, 2):
         source = batch_one_verifier if batch == 1 else f"verifier-batch-{batch}"
         for target, port in (
+            ("final-acceptance", f"verification_report_batch_{batch}"),
             ("final-audit", f"verification_report_batch_{batch}"),
             ("final-gate", f"verification_report_batch_{batch}"),
         ):
@@ -353,6 +465,23 @@ def _final_audit_and_gate_ops(
                     },
                 }
             )
+    for target in ("final-audit", "final-gate"):
+        ops.append(
+            {
+                "op": "create_edge",
+                "edge_id": f"edge-final-acceptance-to-{target}",
+                "from_node_id": "final-acceptance",
+                "from_port": "check_result",
+                "to_node_id": target,
+                "to_port": "dynamic_feature_acceptance",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "check_result",
+                    "schema": "CheckResult",
+                    "status": "passed",
+                },
+            }
+        )
     ops.append(
         {
             "op": "create_edge",
@@ -442,6 +571,13 @@ async def _plan_reliable_horizon(
         classified_gap_id = f"classified-gap-{dispatch_context.execution_id}"
         invocations = [
             {
+                "macro": "retire_or_supersede",
+                "args": {
+                    "target_id": "planner-h2-original",
+                    "action": "retire",
+                },
+            },
+            {
                 "macro": "create_corrective_region",
                 "args": {
                     "region_id": "corrective_work_region",
@@ -503,6 +639,21 @@ async def _plan_reliable_horizon(
         )
         if horizon == 1:
             if scenario == "correction":
+                # The nonfinal horizon still materializes its passed-evidence
+                # successor atomically. A failed batch leaves it unbound while
+                # the separately failed-evidence-gated gap planner runs.
+                invocations.append(
+                    {
+                        "macro": "create_successor_planner",
+                        "args": {
+                            "region_id": "batch-1",
+                            "node_id": "planner-h2-original",
+                            "evidence_source_node_id": "verifier-batch-1",
+                            "evidence_source_port": "verification_report",
+                            "planning_horizon": 2,
+                        },
+                    }
+                )
                 ops.extend(
                     [
                         {
@@ -733,7 +884,14 @@ class _JoinedHarness:
     process_registry: RunnerOwnedProcessRegistry
     create_service: Callable[[Any], Awaitable[WorkflowService]]
 
-    async def create_and_start(self) -> str:
+    async def create_and_start(
+        self,
+        *,
+        acceptance_command: str = "test -f docs/graph-approach/dynamic-smoke-output.txt",
+        hidden_oracle_command: str = (
+            "grep -q dynamic-smoke docs/graph-approach/dynamic-smoke-output.txt"
+        ),
+    ) -> str:
         qualification_reference = await _issue_qualification_reference(
             self.app, self.canonical_qualification
         )
@@ -758,10 +916,8 @@ class _JoinedHarness:
                 "config": {
                     "feature_spec_path": "docs/dynamic-smoke.md",
                     "feature_spec_content": "Produce the dynamic-smoke output.",
-                    "acceptance_command": ("test -f docs/graph-approach/dynamic-smoke-output.txt"),
-                    "hidden_oracle_command": (
-                        "grep -q dynamic-smoke docs/graph-approach/dynamic-smoke-output.txt"
-                    ),
+                    "acceptance_command": acceptance_command,
+                    "hidden_oracle_command": hidden_oracle_command,
                     "patch_budget": 8,
                     "gap_policy_profile": "standard",
                     "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
@@ -929,7 +1085,7 @@ async def _make_joined_harness(
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(180)
 async def test_api_start_serializes_two_bounded_horizons_with_durable_signals(
     tmp_path: Path,
     canonical_qualification: Any,
@@ -1064,16 +1220,21 @@ async def test_api_start_serializes_two_bounded_horizons_with_durable_signals(
                 async with app.state.session_factory() as failed_session:
                     failed_events = await GraphEventStore(failed_session).read_run(run_id)
                 failure_reasons = [
-                    event.payload.get("reason")
+                    str(event.payload.get("reason"))[-1000:]
                     for event in failed_events
-                    if event.event_type == "node_state_changed"
-                    and event.payload.get("new_state") == "failed"
+                    if (
+                        event.event_type == "callback_rejected_conflict"
+                        or (
+                            event.event_type == "node_state_changed"
+                            and event.payload.get("new_state") == "failed"
+                        )
+                    )
                 ]
             assert body["status"] == "completed", (
                 body["pause_reason"],
                 body["last_error"],
-                outcomes,
                 failure_reasons,
+                [(outcome.completed, outcome.blocked_reason) for outcome in outcomes],
             )
 
         assert outcomes and outcomes[0].completed is True, outcomes
@@ -1112,6 +1273,7 @@ async def test_api_start_serializes_two_bounded_horizons_with_durable_signals(
         )
         assert plan.record_id in plan_report.evaluated_record_ids
         batch_reports = []
+        batch_checks = []
         batch_candidates = []
         batch_file_states = []
         for batch in (1, 2):
@@ -1142,6 +1304,7 @@ async def test_api_start_serializes_two_bounded_horizons_with_durable_signals(
                 file_state_record_id,
             ]
             batch_reports.append(report.record_id)
+            batch_checks.append(check.record_id)
             batch_candidates.append(candidate.record_id)
             batch_file_states.append(file_state_record_id)
         final_audit = next(
@@ -1150,11 +1313,34 @@ async def test_api_start_serializes_two_bounded_horizons_with_durable_signals(
             if record.record_type == "verification_report"
             and record.producer_node_id == "final-audit"
         )
-        assert final_audit.evaluated_record_ids[:2] == batch_reports
-        assert set(final_audit.evaluated_record_ids[2:]) == {
+        final_acceptance = next(
+            record
+            for record in records
+            if record.record_type == "check_result"
+            and record.producer_node_id == "final-acceptance"
+        )
+        assert final_acceptance.value.status == "passed"
+        assert final_acceptance.value.command_binding == "dynamic_feature_acceptance"
+        assert final_acceptance.value.exit_code == 0
+        final_acceptance_bindings = input_bindings_view(projection)["final-acceptance"]
+        assert [
+            *final_acceptance_bindings["verification_report_batch_1"].record_ids,
+            *final_acceptance_bindings["verification_report_batch_2"].record_ids,
+        ] == batch_reports
+        assert final_audit.evaluated_record_ids[:3] == [
+            final_acceptance.record_id,
+            *batch_reports,
+        ]
+        assert set(final_audit.evaluated_record_ids[3:]) == {
             *batch_candidates,
             *batch_file_states,
+            *batch_checks,
+            "requirement-dynamic-feature-acceptance",
         }
+        final_acceptance_payload = node_payload_view(projection, "final-acceptance")
+        assert final_acceptance_payload is not None
+        assert final_acceptance_payload["semantic_stage"] == "final_acceptance"
+        assert final_acceptance_payload["command_binding"] == "dynamic_feature_acceptance"
         completion = next(
             record for record in records if record.record_type == "completion_decision"
         )
@@ -1268,13 +1454,14 @@ async def test_api_start_serializes_two_bounded_horizons_with_durable_signals(
             event_position("node_state_changed", "worker-batch-2", state="completed") > h2_created
         )
         assert event_position("node_state_changed", "check-batch-2", state="completed")
+        _assert_reliable_plan_checkpoint_parity(graph_events)
     finally:
         await consumer.stop()
         await app.state.engine.dispose()
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(180)
 async def test_api_correction_uses_exact_failure_evidence_then_completes_horizon_two(
     tmp_path: Path,
     canonical_qualification: Any,
@@ -1323,11 +1510,22 @@ async def test_api_correction_uses_exact_failure_evidence_then_completes_horizon
         assert corrective_payload["recovery_reason"] == "failed_verification"
         assert corrective_payload["recovery_of_node_id"] == failed_report.producer_node_id
         assert corrective_payload["recovery_of_record_id"] == failed_report.record_id
+        assert corrective_payload["semantic_stage"] == "corrective_work"
+        assert corrective_payload["reliable_plan_assignment_role"] == "correction_worker"
+        assert harness.factory.effective_configs["worker-corrective-batch-1"] == {
+            "model": "gpt-5.6-luna",
+            "reasoning_effort": "low",
+        }
         corrective_verifier = node_payload_view(projection, "verifier-corrective-batch-1")
         assert corrective_verifier is not None
         assert corrective_verifier["recovery_reason"] == "failed_verification"
         assert corrective_verifier["recovery_of_node_id"] == failed_report.producer_node_id
         assert corrective_verifier["recovery_of_record_id"] == failed_report.record_id
+        assert corrective_verifier["reliable_plan_assignment_role"] == "verifier"
+        assert harness.factory.effective_configs["verifier-corrective-batch-1"] == {
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "low",
+        }
         corrective_candidate = next(
             record for record in records if record.record_id == "candidate-corrective-batch-1"
         )
@@ -1360,11 +1558,79 @@ async def test_api_correction_uses_exact_failure_evidence_then_completes_horizon
             )
             < position("node_created", "worker-batch-2")
         )
-        assert not any(event.event_type == "runtime_retry_scheduled" for event in events)
+        assert not any(event.event_type == "runtime_retry_scheduled" for event in events), [
+            event.payload for event in events if event.event_type == "runtime_retry_scheduled"
+        ]
         completion = next(
             record for record in records if record.record_type == "completion_decision"
         )
         assert getattr(completion.value, "status", None) == "passed"
+        assert task_states_view(projection).get("batch-1") == "accepted"
+        assert any(
+            event.event_type == "node_retired"
+            and event.payload.get("node_id") == "planner-h2-original"
+            for event in events
+        )
+        assert "planner-h2-original" in node_kinds_view(projection)
+        assert "planner-h2-original" not in effective_active_node_ids_view(projection)
+        _assert_reliable_plan_checkpoint_parity(events)
+    finally:
+        await harness.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(180)
+async def test_api_failed_final_acceptance_receipt_blocks_audit_gate_and_completion(
+    tmp_path: Path,
+    canonical_qualification: Any,
+) -> None:
+    harness = await _make_joined_harness(
+        tmp_path,
+        canonical_qualification,
+        scenario="happy",
+    )
+    try:
+        run_id = await harness.create_and_start(
+            acceptance_command="exit 97",
+            hidden_oracle_command="exit 0",
+        )
+        await harness.drain_start(run_id)
+        outcome = await harness.wait_driver(run_id)
+
+        response = await harness.client.get(f"/api/runs/{run_id}")
+        assert response.status_code == 200
+        assert response.json()["status"] != "completed"
+        assert outcome.completed is False
+
+        projection = await harness.controllers[-1].read_projection(run_id)
+        records = list(output_record_payloads_view(projection).values())
+        acceptance_receipt = next(
+            record
+            for record in records
+            if record.record_type == "check_result"
+            and record.producer_node_id == "final-acceptance"
+        )
+        assert acceptance_receipt.value.status == "failed"
+        assert acceptance_receipt.value.command_binding == "dynamic_feature_acceptance"
+        assert acceptance_receipt.value.command_text == "exit 97"
+        assert acceptance_receipt.value.exit_code == 97
+        assert not any(
+            record.record_type == "verification_report" and record.producer_node_id == "final-audit"
+            for record in records
+        )
+        assert not any(record.record_type == "completion_decision" for record in records)
+        assert task_states_view(projection)["batch-1"] == "accepted"
+        final_acceptance_payload = node_payload_view(projection, "final-acceptance")
+        assert final_acceptance_payload is not None
+        assert final_acceptance_payload["command_binding"] == "dynamic_feature_acceptance"
+        events = await harness.events(run_id)
+        assert not any(
+            event.event_type == "node_state_changed"
+            and event.payload.get("node_id") in {"final-audit", "final-gate"}
+            and event.payload.get("new_state") == "completed"
+            for event in events
+        )
+        _assert_reliable_plan_checkpoint_parity(events)
     finally:
         await harness.close()
 
@@ -1500,7 +1766,25 @@ async def test_api_environment_blockage_restores_rejected_candidate_and_continue
         await asyncio.wait_for(harness.wait_driver(run_id), timeout=60)
 
         completed = await harness.client.get(f"/api/runs/{run_id}")
-        assert completed.json()["status"] == "completed", completed.text
+        completion_body = completed.json()
+        completion_events = await harness.events(run_id)
+        completion_failure_reasons = [
+            str(event.payload.get("reason"))[-1000:]
+            for event in completion_events
+            if event.payload.get("node_id") == "final-audit"
+            and (
+                event.event_type == "callback_rejected_conflict"
+                or (
+                    event.event_type == "node_state_changed"
+                    and event.payload.get("new_state") == "failed"
+                )
+            )
+        ]
+        assert completion_body["status"] == "completed", (
+            completion_body["pause_reason"],
+            completion_body["last_error"],
+            completion_failure_reasons,
+        )
         assert harness.factory.environment_worker_executions == 2
         assert harness.factory.environment_worker_mutations == 1
         events = await harness.events(run_id)

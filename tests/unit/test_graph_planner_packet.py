@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -736,6 +737,67 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
     assert "do not execute downstream_acceptance_command" in read_only_prompt
     assert "Do not modify repository files" in read_only_prompt
 
+    batch_context = GraphDispatchContext(
+        run_id="run-dynamic",
+        node_id="worker-batch-1",
+        node_kind="worker",
+        node_role="implementer",
+        node_payload={
+            "node_id": "worker-batch-1",
+            "kind": "worker",
+            "role": "implementer",
+            "access_mode": "write",
+            "semantic_stage": "effectful_batch",
+            "effect_contract": "effectful_write",
+            "declared_batch_id": "batch-1",
+        },
+        requirements=[],
+        worktree_path="/tmp/worktree",
+        lease_id="lease-batch-1",
+        lease_generation=1,
+        execution_id="exec-batch-1",
+        base_snapshot_id="snapshot-0",
+        dispatch_event_id="dispatch-batch-1",
+        graph_events=fallback_dynamic_worker_context.graph_events,
+    )
+    batch_prompt = _prompt_for_node(batch_context)
+    assert "downstream_acceptance_command:" in batch_prompt
+    assert "dynamic_acceptance_command:" not in batch_prompt
+    assert "Do not execute or broaden scope" in batch_prompt
+    assert "explicit check nodes and the final audit own that evidence" in batch_prompt
+
+    semantic_revision_context = GraphDispatchContext(
+        run_id="run-dynamic",
+        node_id="worker-semantic-plan-revision",
+        node_kind="worker",
+        node_role="fixer",
+        node_payload={
+            "node_id": "worker-semantic-plan-revision",
+            "kind": "worker",
+            "role": "fixer",
+            "access_mode": "write",
+            "semantic_stage": "corrective_work",
+            "effect_contract": "effectful_write",
+            "semantic_schema_id": "reliable-plan-implementation-plan",
+            "semantic_schema_version": 1,
+            "recovery_of_record_id": "failed-plan-record",
+        },
+        requirements=[],
+        worktree_path="/tmp/worktree",
+        lease_id="lease-semantic-revision",
+        lease_generation=1,
+        execution_id="exec-semantic-revision",
+        base_snapshot_id="snapshot-0",
+        dispatch_event_id="dispatch-semantic-revision",
+        graph_events=fallback_dynamic_worker_context.graph_events,
+    )
+    semantic_revision_prompt = _prompt_for_node(semantic_revision_context)
+    assert "submit outputs.semantic_artifact using the declared semantic schema" in (
+        semantic_revision_prompt
+    )
+    assert "Do not modify repository files" in semantic_revision_prompt
+    assert "this node repairs the plan artifact" in semantic_revision_prompt
+
     verifier_events = [
         _event(
             "output_record_accepted",
@@ -1198,6 +1260,88 @@ def test_gap_planner_packet_includes_gap_contract_and_corrective_examples() -> N
     failed_report_edge = revision_example["ops"][1]
     assert failed_report_edge["accepted_record_selector"]["outcome"] == "failed"
     assert failed_report_edge["accepted_record_selector"]["record_id"]
+
+
+def test_final_reliable_plan_horizon_gets_exact_finalization_guidance() -> None:
+    events = _graph_events()
+    next_position = max(event.position for event in events) + 1
+    for batch_id, verifier_id in (
+        ("batch-1-pure", "verifier-batch-1"),
+        ("batch-2-cli", "verifier-batch-2"),
+    ):
+        events.append(
+            _event(
+                "node_created",
+                {
+                    "node_id": verifier_id,
+                    "kind": "verifier",
+                    "role": "verifier",
+                    "state": "planned",
+                    "task_region_id": batch_id,
+                    "semantic_stage": "effectful_batch",
+                    "declared_batch_id": batch_id,
+                },
+                next_position,
+            )
+        )
+        next_position += 1
+
+    base_context = _planner_context(events)
+    context = replace(
+        base_context,
+        node_payload={
+            **base_context.node_payload,
+            "semantic_stage": "successor_planning",
+            "planning_horizon": 2,
+            "reliable_plan_skeleton_id": "plan-record-1",
+            "reliable_plan_remaining_horizons": 1,
+            "declared_batch_id": "batch-2-cli",
+            "declared_batch_ids": ["batch-1-pure", "batch-2-cli"],
+        },
+    )
+
+    packet = _planner_packet(context)
+
+    assert packet["reliable_plan_contract"] == {
+        "semantic_stage": "successor_planning",
+        "planning_horizon": 2,
+        "remaining_horizons_including_current": 1,
+        "declared_batch_ids": ["batch-1-pure", "batch-2-cli"],
+        "current_declared_batch_id": "batch-2-cli",
+        "required_sequence": [
+            "call construct_reliable_plan_region once for the current accepted batch scope",
+            "the controller atomically creates the batch, dynamic acceptance, independent audit, and final gate",
+            "the controller rejects a partial batch-only or finalization-only patch",
+            "call plain submit only after that complete patch is accepted",
+        ],
+        "finalization_rules": [
+            "do not create another worker, check, batch, or successor planner",
+            "create exactly one controller-bound dynamic_feature_acceptance check distinct from any hidden oracle check",
+            "the acceptance check must consume a passed verification report from every declared batch verifier",
+            "the final-audit verifier must consume those passed batch reports and the passed acceptance receipt",
+            "the final gate must consume the passed batch reports, acceptance receipt, and final-audit report",
+            "the final gate declared_batch_ids must exactly equal declared_batch_ids",
+            "declare every concrete input port used by an edge",
+        ],
+    }
+    purposes = [example["purpose"] for example in packet["patch_examples"]]
+    assert "create_successor_planner" not in purposes
+    assert "construct_reliable_plan_region" in purposes
+
+    construction = next(
+        example
+        for example in packet["patch_examples"]
+        if example["purpose"] == "construct_reliable_plan_region"
+    )
+    assert construction["scope"] == "batch-2-cli"
+    assert "ops" not in construction
+    assert "node_id" not in construction
+    assert construction["checks"] == [
+        {
+            "name": "bounded project check",
+            "command_binding": "dynamic_feature_hidden_oracle",
+        }
+    ]
 
 
 def test_gap_planner_packet_includes_blocking_obligations() -> None:

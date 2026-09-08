@@ -722,6 +722,7 @@ async def test_production_reliable_plan_controller_path_gates_first_effectful_le
                 "reliable_plan_selected_runner_type": "codex_server",
                 "reliable_plan_model_assignments": evaluation.luna_arm.model_dump(mode="json"),
                 "reliable_plan_one_horizon_authorized": True,
+                "reliable_plan_remaining_horizons": 2,
             },
         )
         seeded = await controller.handle_command(
@@ -914,7 +915,12 @@ async def test_production_reliable_plan_controller_path_gates_first_effectful_le
                     "batch_id": "batch-1",
                     "objective": "Implement batch 1.",
                     "acceptance": ["batch 1 passes"],
-                }
+                },
+                {
+                    "batch_id": "batch-2",
+                    "objective": "Implement batch 2.",
+                    "acceptance": ["batch 2 passes"],
+                },
             ],
         }
         rejected_snapshots: list[dict[str, object]] = []
@@ -1361,7 +1367,17 @@ async def test_production_reliable_plan_controller_path_gates_first_effectful_le
                             "rubric": ["batch 1 passes"],
                             "planning_horizon": 1,
                         },
-                    }
+                    },
+                    {
+                        "macro": "create_successor_planner",
+                        "args": {
+                            "region_id": "successor-batch-2",
+                            "node_id": "planner-batch-2",
+                            "evidence_source_node_id": "verifier-batch-batch-1",
+                            "evidence_source_port": "verification_report",
+                            "planning_horizon": 2,
+                        },
+                    },
                 ],
             },
             context=PatchCommandContext(
@@ -1371,7 +1387,10 @@ async def test_production_reliable_plan_controller_path_gates_first_effectful_le
                 actor_role="planner",
             ),
         )
-        assert any(event.event_type == "graph_patch_accepted" for event in effectful.events)
+        assert any(event.event_type == "graph_patch_accepted" for event in effectful.events), [
+            (event.payload.get("reason"), event.payload.get("diagnostics"))
+            for event in effectful.events
+        ]
         effectful_projection = await passed_controller.read_projection(str(passed_run_id))
         effectful_ids = {
             node_id

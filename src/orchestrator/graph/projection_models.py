@@ -442,6 +442,14 @@ class PlannerPatchDecisionValue(ProjectionModel):
     proposed_by_node_id: StrictStr | None = None
     base_graph_position: StrictInt | None = None
     reason: StrictStr | None = None
+    operation_key: StrictStr | None = None
+    operation_fingerprint: StrictStr | None = None
+    successor_planner_node_ids: tuple[StrictStr, ...] = ()
+
+    @field_validator("successor_planner_node_ids", mode="before")
+    @classmethod
+    def freeze_successor_planner_node_ids(cls, value: object) -> tuple[object, ...]:
+        return _freeze_sequence(value, "successor planner node IDs must be a sequence")
 
 
 class LatestRoutineSnapshotProjection(ProjectionModel):

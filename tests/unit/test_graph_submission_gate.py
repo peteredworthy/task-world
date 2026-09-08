@@ -233,6 +233,34 @@ def test_source_specific_timeouts_are_validated_and_project_default_is_long(
             )
 
 
+@pytest.mark.parametrize("semantic_stage", ["effectful_batch", "corrective_work"])
+def test_reliable_plan_intermediate_workers_defer_dynamic_acceptance_to_final_audit(
+    tmp_path: Path,
+    semantic_stage: str,
+) -> None:
+    config_dir = tmp_path / ".task-world"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text('test_command: "printf project"\n')
+    node = {
+        "kind": "worker",
+        "access_mode": "write",
+        "effect_contract": "effectful_write",
+        "semantic_stage": semantic_stage,
+        "acceptance_commands": ["printf batch"],
+    }
+
+    commands = resolve_submission_gate_commands(
+        node_payload=node,
+        dynamic_feature={"acceptance_command": "exit 97"},
+        worktree_path=tmp_path,
+    )
+
+    assert [(command.command, command.source) for command in commands] == [
+        ("printf batch", "node_acceptance_commands"),
+        ("printf project", "project_test_command"),
+    ]
+
+
 @pytest.mark.asyncio
 async def test_read_only_execution_workspace_is_exact_disposable_and_isolated(
     tmp_path: Path,

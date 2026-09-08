@@ -39,6 +39,7 @@ _GRAPH_MCP_ALLOWLIST = frozenset(
         "create_join",
         "request_gate",
         "retire_or_supersede",
+        "construct_reliable_plan_region",
         "create_discovery_region",
         "create_plan_verification",
         "create_successor_planner",
@@ -450,6 +451,45 @@ def build_graph_mcp_server(
         retire_or_supersede,
         name="retire_or_supersede",
         description="Retire or supersede an existing graph node.",
+    )
+
+    async def construct_reliable_plan_region(
+        patch_id: str,
+        base_graph_position: int,
+        operation_key: str,
+        scope: str,
+        objective: str,
+        requirement_ids: list[str],
+        dependencies: list[str],
+        acceptance: list[str],
+        checks: list[dict[str, Any]],
+        rubric: list[str],
+        rationale_record_id: str | None = None,
+    ) -> str:
+        """Construct one complete reliable-plan region from semantic work decisions."""
+        args: dict[str, Any] = {
+            "patch_id": patch_id,
+            "base_graph_position": base_graph_position,
+            "operation_key": operation_key,
+            "scope": scope,
+            "objective": objective,
+            "requirement_ids": requirement_ids,
+            "dependencies": dependencies,
+            "acceptance": acceptance,
+            "checks": checks,
+            "rubric": rubric,
+        }
+        if rationale_record_id is not None:
+            args["rationale_record_id"] = rationale_record_id
+        return await _route("construct_reliable_plan_region", args)
+
+    _add_tool(
+        construct_reliable_plan_region,
+        name="construct_reliable_plan_region",
+        description=(
+            "Construct the complete reliable-plan horizon from semantic work decisions; "
+            "the controller derives graph identities and all execution mechanics."
+        ),
     )
 
     async def create_discovery_region(

@@ -48,6 +48,7 @@ async def test_configured_project_gate_runs_journal_and_cleanup_regressions_nest
             "__pycache__",
             "node_modules",
             "orchestrator.db",
+            "orchestrator.db-*",
             "outputs",
             "repos",
             "tmp",

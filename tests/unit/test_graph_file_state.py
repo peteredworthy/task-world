@@ -10,6 +10,7 @@ import pytest
 from orchestrator.graph import (
     Actor,
     ActorKind,
+    CacheAuthorityPolicy,
     EventEnvelope,
     FakeClock,
     FileStateDeclaration,
@@ -21,6 +22,7 @@ from orchestrator.graph import (
     classify_file_state,
     declared_tool_cache_roots,
     default_file_state_policy,
+    derive_cache_roots,
     project_residue_report,
 )
 from orchestrator.graph_runtime import (
@@ -424,6 +426,43 @@ def test_collect_worktree_status_parses_rename_with_spaces(tmp_path: Path) -> No
         ("after name.txt", "R."),
         ("before name.txt", "renamed_from"),
     }
+
+
+def test_ignored_cache_nested_in_untracked_directory_has_one_source_kind(tmp_path: Path) -> None:
+    repo = _init_file_state_repo(tmp_path)
+    with (repo / ".gitignore").open("a", encoding="utf-8") as stream:
+        stream.write("__pycache__/\n")
+    subprocess.run(["git", "add", ".gitignore"], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "ignore Python caches",
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    source = repo / "examples" / "qualification" / "validator.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    cache = source.parent / "__pycache__"
+    cache.mkdir()
+    (cache / "validator.cpython-312.pyc").write_bytes(b"cache")
+
+    status = collect_worktree_status(repo)
+
+    assert [entry.path for entry in status.untracked] == ["examples/qualification/validator.py"]
+    assert [entry.path for entry in status.ignored] == ["examples/qualification/__pycache__"]
+    assert [
+        (root.path, root.kind) for root in derive_cache_roots(status, CacheAuthorityPolicy())
+    ] == [("examples/qualification/__pycache__", "ignored")]
 
 
 def test_policy_roots_snapshot_discards_preexisting_and_created_caches(tmp_path: Path) -> None:

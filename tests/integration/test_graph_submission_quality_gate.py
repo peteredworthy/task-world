@@ -32,12 +32,14 @@ from orchestrator.graph import (
     execution_attempts_view,
     leases_view,
     node_states_view,
+    reliable_plan_assignment_carrier,
 )
 from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchExecutor,
     GraphEventStore,
     OutboxDispatcher,
+    StaticGraphAgentFactory,
     SubmissionGateCommand,
     capture_submission_gate_baseline,
     enforce_submission_quality_gate,
@@ -54,6 +56,7 @@ from orchestrator.runners.types import (
     LogLineCallback,
     SubmitCallback,
 )
+from orchestrator.runners import ReliablePlanToolPreflightError
 from tests.integration.test_graph_runner_e2e import (
     AgentFactory,
     FixedClock,
@@ -307,6 +310,334 @@ async def test_dispatch_invalid_worker_contract_is_terminal_not_retryable_infras
         assert node_states_view(projection)["worker-legacy-invalid"] == "failed"
         assert all(lease.state != "active" for lease in leases_view(projection).values())
         assert (repo / "README.md").read_text(encoding="utf-8") != "candidate\n"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_prelaunch_reliable_assignment_error_is_durable_invalid_plan_failure(
+    tmp_path: Path,
+) -> None:
+    engine = create_engine(tmp_path / "prelaunch-assignment-contract.db")
+    await init_db(engine)
+    sessions: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+    repo = tmp_path / "repo-prelaunch-assignment"
+    _init_repo(repo)
+    clock = FixedClock()
+    ids = SequentialIds()
+    run_id = "prelaunch-assignment-contract"
+    assignment = {
+        "runner_type": "codex_server",
+        "model": "gpt-5.6-luna",
+        "profile": "coder",
+    }
+    carrier = reliable_plan_assignment_carrier(
+        skeleton_id="reliable-plan-fff4f6b7-v1",
+        selected_runner_type="codex_server",
+        arm={
+            "arm_id": "luna-work-sol-verification",
+            "planner": {**assignment, "model": "gpt-5.6-sol", "profile": "architect"},
+            "discovery_worker": {**assignment, "profile": "summarizer"},
+            "implementation_worker": assignment,
+            "correction_worker": assignment,
+            "verifier": {**assignment, "model": "gpt-5.6-sol"},
+            "successor_planner": {**assignment, "profile": "architect"},
+        },
+    )
+    expected_reason = (
+        "reliable-plan execution is missing sealed assignment carrier; "
+        "recreate the run with a qualified assignment arm"
+    )
+    try:
+        async with sessions() as session:
+            session.add(
+                RunModel(
+                    id=run_id,
+                    repo_name="prelaunch-assignment-repo",
+                    status=RunStatus.ACTIVE.value,
+                    execution_mode="graph",
+                    source_branch="main",
+                    created_at=clock.now(),
+                    updated_at=clock.now(),
+                )
+            )
+            events = [
+                EventEnvelope(
+                    event_id="lifecycle-active",
+                    run_id=run_id,
+                    position=-1,
+                    event_type="run_lifecycle_changed",
+                    schema_version=1,
+                    actor=Actor(kind=ActorKind.CONTROLLER),
+                    timestamp=clock.now(),
+                    payload=canonical_event_payload(
+                        "run_lifecycle_changed",
+                        {"to_state": "active"},
+                    ),
+                ),
+                EventEnvelope(
+                    event_id="reliable-root",
+                    run_id=run_id,
+                    position=-1,
+                    event_type="node_created",
+                    schema_version=1,
+                    actor=Actor(kind=ActorKind.CONTROLLER),
+                    timestamp=clock.now(),
+                    payload=canonical_event_payload(
+                        "node_created",
+                        {
+                            "node_id": "root",
+                            "kind": "root",
+                            "role": "run_root",
+                            "state": "completed",
+                            "reliable_plan_skeleton_id": carrier.skeleton_id,
+                            "reliable_plan_assignment_carrier": carrier.model_dump(mode="json"),
+                        },
+                    ),
+                ),
+                EventEnvelope(
+                    event_id="unstamped-worker",
+                    run_id=run_id,
+                    position=-1,
+                    event_type="node_created",
+                    schema_version=1,
+                    actor=Actor(kind=ActorKind.CONTROLLER),
+                    timestamp=clock.now(),
+                    payload=canonical_event_payload(
+                        "node_created",
+                        {
+                            "node_id": "worker-missing-assignment",
+                            "kind": "worker",
+                            "role": "builder",
+                            "state": "planned",
+                            "objective": "Implement the bounded batch.",
+                            "acceptance": ["bounded batch passes"],
+                            "access_mode": "write",
+                            "effect_contract": "effectful_write",
+                            "reliable_plan_skeleton_id": carrier.skeleton_id,
+                        },
+                    ),
+                ),
+            ]
+            await GraphEventStore(session).append_events(run_id, 0, events)
+            await session.commit()
+
+        controller = GraphController(sessions, clock, ids, auto_dispatch=False)
+        executor = GraphDispatchExecutor(
+            sessions,
+            controller,
+            StaticGraphAgentFactory(AgentRunnerType.CODEX_SERVER),
+            worktree_path=repo,
+            artifact_store=FilesystemArtifactStore(tmp_path / "artifacts-prelaunch-assignment"),
+        )
+        dispatcher = OutboxDispatcher(sessions, executor, clock)
+        scheduled = await controller.handle_command(
+            run_id,
+            await controller.current_position(run_id),
+            "schedule_tick",
+            {"lease_seconds": 60, "max_grants": 1, "base_snapshot_id": "baseline"},
+        )
+        assert any(event.event_type == "agent_dispatch_requested" for event in scheduled.events)
+
+        await dispatcher.dispatch_pending(run_id=run_id)
+
+        durable_events = await _read_events(sessions, run_id)
+        failures = [
+            event.payload["value"]
+            for event in durable_events
+            if event.event_type == "output_record_accepted"
+            and event.payload.get("record_type") == "failure_record"
+        ]
+        assert failures == [
+            {
+                "failed_node_id": "worker-missing-assignment",
+                "phase": "dispatch",
+                "failure_class": "invalid_plan_failure",
+                "error_class": "invalid_execution_contract",
+                "retryable": False,
+                "lease_id": scheduled.events[-2].payload["lease_id"],
+                "execution_id": scheduled.events[-2].payload["execution_id"],
+                "lease_generation": 1,
+                "reason": expected_reason,
+            }
+        ]
+        assert not any(
+            event.payload.get("reason") == "runtime_execution_missing_no_callback"
+            for event in durable_events
+        )
+        projection = await controller.read_projection(run_id)
+        assert node_states_view(projection)["worker-missing-assignment"] == "failed"
+        assert all(lease.state != "active" for lease in leases_view(projection).values())
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_planner_tool_preflight_error_is_durable_invalid_plan_failure(
+    tmp_path: Path,
+) -> None:
+    class MissingSuccessorToolCatalog:
+        def preflight(
+            self,
+            context: ExecutionContext,
+            *,
+            graph_mcp_available: bool,
+        ) -> None:
+            del context, graph_mcp_available
+            raise ReliablePlanToolPreflightError(missing_tools=("create_successor_planner",))
+
+    engine = create_engine(tmp_path / "planner-tool-preflight-contract.db")
+    await init_db(engine)
+    sessions: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+    repo = tmp_path / "repo-planner-tool-preflight"
+    _init_repo(repo)
+    clock = FixedClock()
+    ids = SequentialIds()
+    run_id = "planner-tool-preflight-contract"
+    assignment = {
+        "runner_type": "codex_server",
+        "model": "gpt-5.6-luna",
+        "profile": "coder",
+    }
+    carrier = reliable_plan_assignment_carrier(
+        skeleton_id="reliable-plan-fff4f6b7-v1",
+        selected_runner_type="codex_server",
+        arm={
+            "arm_id": "luna-work-sol-verification",
+            "planner": {**assignment, "model": "gpt-5.6-sol", "profile": "architect"},
+            "discovery_worker": {**assignment, "profile": "summarizer"},
+            "implementation_worker": assignment,
+            "correction_worker": assignment,
+            "verifier": {**assignment, "model": "gpt-5.6-sol"},
+            "successor_planner": {**assignment, "profile": "architect"},
+        },
+    )
+    expected_reason = (
+        "Agent runner 'reliable_plan' configuration error: planner tool preflight failed; "
+        "missing tools: create_successor_planner"
+    )
+    try:
+        async with sessions() as session:
+            session.add(
+                RunModel(
+                    id=run_id,
+                    repo_name="planner-tool-preflight-repo",
+                    status=RunStatus.ACTIVE.value,
+                    execution_mode="graph",
+                    source_branch="main",
+                    created_at=clock.now(),
+                    updated_at=clock.now(),
+                )
+            )
+            carrier_payload = carrier.model_dump(mode="json")
+            events = [
+                EventEnvelope(
+                    event_id="lifecycle-active",
+                    run_id=run_id,
+                    position=-1,
+                    event_type="run_lifecycle_changed",
+                    schema_version=1,
+                    actor=Actor(kind=ActorKind.CONTROLLER),
+                    timestamp=clock.now(),
+                    payload=canonical_event_payload(
+                        "run_lifecycle_changed",
+                        {"to_state": "active"},
+                    ),
+                ),
+                EventEnvelope(
+                    event_id="reliable-root",
+                    run_id=run_id,
+                    position=-1,
+                    event_type="node_created",
+                    schema_version=1,
+                    actor=Actor(kind=ActorKind.CONTROLLER),
+                    timestamp=clock.now(),
+                    payload=canonical_event_payload(
+                        "node_created",
+                        {
+                            "node_id": "root",
+                            "kind": "root",
+                            "role": "run_root",
+                            "state": "completed",
+                            "reliable_plan_skeleton_id": carrier.skeleton_id,
+                            "reliable_plan_assignment_carrier": carrier_payload,
+                        },
+                    ),
+                ),
+                EventEnvelope(
+                    event_id="reliable-planner",
+                    run_id=run_id,
+                    position=-1,
+                    event_type="node_created",
+                    schema_version=1,
+                    actor=Actor(kind=ActorKind.CONTROLLER),
+                    timestamp=clock.now(),
+                    payload=canonical_event_payload(
+                        "node_created",
+                        {
+                            "node_id": "planner-preflight",
+                            "kind": "planner",
+                            "role": "planner",
+                            "state": "planned",
+                            "reliable_plan_skeleton_id": carrier.skeleton_id,
+                            "reliable_plan_assignment_carrier": carrier_payload,
+                            "reliable_plan_assignment_role": "planner",
+                            "reliable_plan_selected_runner_type": "codex_server",
+                            "runner_model_override": "gpt-5.6-sol",
+                            "profile": "architect",
+                        },
+                    ),
+                ),
+            ]
+            await GraphEventStore(session).append_events(run_id, 0, events)
+            await session.commit()
+
+        controller = GraphController(sessions, clock, ids, auto_dispatch=False)
+        executor = GraphDispatchExecutor(
+            sessions,
+            controller,
+            StaticGraphAgentFactory(
+                AgentRunnerType.CODEX_SERVER,
+                graph_tool_catalog=MissingSuccessorToolCatalog(),
+            ),
+            worktree_path=repo,
+            artifact_store=FilesystemArtifactStore(tmp_path / "artifacts-tool-preflight"),
+        )
+        dispatcher = OutboxDispatcher(sessions, executor, clock)
+        scheduled = await controller.handle_command(
+            run_id,
+            await controller.current_position(run_id),
+            "schedule_tick",
+            {"lease_seconds": 60, "max_grants": 1, "base_snapshot_id": "baseline"},
+        )
+        assert any(event.event_type == "agent_dispatch_requested" for event in scheduled.events)
+
+        completed = await dispatcher.dispatch_pending(run_id=run_id)
+
+        assert len(completed) == 1
+        assert completed[0].status == "completed"
+        assert completed[0].attempts == 1
+        assert completed[0].last_error is None
+        durable_events = await _read_events(sessions, run_id)
+        failures = [
+            event.payload["value"]
+            for event in durable_events
+            if event.event_type == "output_record_accepted"
+            and event.payload.get("record_type") == "failure_record"
+        ]
+        assert len(failures) == 1
+        assert failures[0]["failed_node_id"] == "planner-preflight"
+        assert failures[0]["failure_class"] == "invalid_plan_failure"
+        assert failures[0]["error_class"] == "invalid_execution_contract"
+        assert failures[0]["retryable"] is False
+        assert failures[0]["reason"] == expected_reason
+        assert not any(
+            event.payload.get("reason") == "runtime_execution_missing_no_callback"
+            for event in durable_events
+        )
+        projection = await controller.read_projection(run_id)
+        assert node_states_view(projection)["planner-preflight"] == "failed"
+        assert all(lease.state != "active" for lease in leases_view(projection).values())
     finally:
         await engine.dispose()
 

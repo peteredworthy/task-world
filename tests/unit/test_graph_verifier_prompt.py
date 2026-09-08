@@ -192,6 +192,131 @@ def test_plan_verifier_preserves_an_authored_rubric_exactly() -> None:
     assert packet["rubric"] == authored
 
 
+def test_final_audit_citations_preserve_bound_batch_order() -> None:
+    def candidate(batch: int) -> dict[str, Any]:
+        return {
+            "record_id": f"candidate-batch-{batch}",
+            "record_kind": "output",
+            "record_type": "candidate",
+            "producer_node_id": f"worker-batch-{batch}",
+            "port": "candidate",
+            "schema": "ImplementationCandidate",
+            "candidate_id": f"candidate-batch-{batch}",
+            "value": {"summary": f"candidate {batch}"},
+        }
+
+    def file_state(batch: int) -> dict[str, Any]:
+        return {
+            "record_id": f"file-state-batch-{batch}",
+            "record_kind": "file_state",
+            "producer_node_id": f"worker-batch-{batch}",
+            "port": "file_state",
+            "schema": "FileStateRecord",
+            "snapshot_id": f"snapshot-{batch}",
+            "base_snapshot_id": "routine-snapshot",
+            "verdict": "captured",
+        }
+
+    def report(batch: int) -> dict[str, Any]:
+        candidate_id = f"candidate-batch-{batch}"
+        return {
+            "record_id": f"verification-batch-{batch}",
+            "record_kind": "verification",
+            "record_type": "verification_report",
+            "producer_node_id": f"verifier-batch-{batch}",
+            "port": "verification_report",
+            "schema": "VerificationReport",
+            "candidate_id": candidate_id,
+            "candidate_record_ids": [candidate_id],
+            "file_state_record_ids": [f"file-state-batch-{batch}"],
+            "task_region_id": f"batch-{batch}",
+            "outcome": "passed",
+            "value": {"outcome": "passed", "grades": []},
+            "evaluated_record_ids": [candidate_id, f"file-state-batch-{batch}"],
+        }
+
+    events = [
+        _event("output_record_accepted", candidate(2), 1),
+        _event("file_state_accepted", file_state(2), 2),
+        _event("output_record_accepted", report(2), 3),
+        _event("output_record_accepted", candidate(1), 4),
+        _event("file_state_accepted", file_state(1), 5),
+        _event("output_record_accepted", report(1), 6),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "final-audit",
+                "to_port": "verification_report_batch_1",
+                "record_ids": ["verification-batch-1"],
+            },
+            7,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "final-audit",
+                "to_port": "verification_report_batch_2",
+                "record_ids": ["verification-batch-2"],
+            },
+            8,
+        ),
+    ]
+    context = GraphDispatchContext(
+        run_id="run-final-audit-order",
+        node_id="final-audit",
+        node_kind="verifier",
+        node_role="verifier",
+        node_payload={
+            "node_id": "final-audit",
+            "kind": "verifier",
+            "role": "verifier",
+            "semantic_stage": "final_audit",
+            "task_region_id": "batch-2",
+            "objective": "Audit both accepted batches.",
+            "acceptance": ["Both batch reports pass."],
+            "rubric": ["All accepted batches are covered."],
+        },
+        requirements=[],
+        worktree_path="/tmp/worktree",
+        lease_id="lease-final-audit",
+        lease_generation=1,
+        execution_id="exec-final-audit",
+        base_snapshot_id="routine-snapshot",
+        dispatch_event_id="dispatch-final-audit",
+        graph_projection=_projection(events),
+        graph_events=events,
+    )
+
+    packet = _packet(render_graph_node_prompt(context))
+    citations = packet["evaluated_record_citations"]
+
+    assert citations["verification_report_record_ids"] == [
+        "verification-batch-1",
+        "verification-batch-2",
+    ]
+    assert citations["candidate_record_ids"] == ["candidate-batch-1", "candidate-batch-2"]
+    assert citations["file_state_record_ids"] == [
+        "file-state-batch-1",
+        "file-state-batch-2",
+    ]
+    assert packet["candidate_id"] == "candidate-batch-1"
+    assert packet["candidate_evidence"] == {
+        "bound_candidate_or_artifact_record_ids": [
+            "candidate-batch-1",
+            "candidate-batch-2",
+        ]
+    }
+    cited_records = {record["record_id"]: record for record in packet["cited_evidence_records"]}
+    assert cited_records["candidate-batch-1"]["record_payload"]["value"] == {
+        "summary": "candidate 1"
+    }
+    assert cited_records["candidate-batch-2"]["record_payload"]["value"] == {
+        "summary": "candidate 2"
+    }
+    assert cited_records["file-state-batch-1"]["record_payload"]["verdict"] == "captured"
+    assert cited_records["file-state-batch-2"]["record_payload"]["verdict"] == "captured"
+
+
 @pytest.mark.parametrize(
     ("missing_field", "invalid_value"),
     [

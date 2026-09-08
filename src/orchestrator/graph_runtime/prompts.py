@@ -7,15 +7,18 @@ from typing import TYPE_CHECKING, Any, cast
 
 from orchestrator.artifacts import ArtifactStore, StoredArtifactRef
 from orchestrator.graph import (
+    accepted_declared_batch_ids,
     planner_generation_budget,
     planner_generations_view,
     edges_view,
+    evidence_closure_for_node,
     environment_failures_view,
     execution_attempts_view,
     file_state_records_view,
     input_bindings_view,
     last_deferred_reasons_view,
     node_kinds_view,
+    node_payload_view,
     node_states_view,
     node_task_regions_view,
     planner_session_carryovers_view,
@@ -100,9 +103,14 @@ def _verifier_packet(context: GraphDispatchContext) -> dict[str, Any]:
     node = context.node_payload
     _validate_verifier_contract(node)
     citations = _evaluated_record_citations(context)
-    candidate_record_ids = _bound_record_ids_for_ports(
-        context,
-        ("candidate_under_test", "candidate", "semantic_artifact"),
+    candidate_record_ids = _unique_record_ids(
+        [
+            *_bound_record_ids_for_ports(
+                context,
+                ("candidate_under_test", "candidate", "semantic_artifact"),
+            ),
+            *citations.get("candidate_record_ids", []),
+        ]
     )
     requirement_record_ids = _bound_record_ids_for_ports(
         context,
@@ -137,6 +145,10 @@ def _verifier_packet(context: GraphDispatchContext) -> dict[str, Any]:
             context,
             context.graph_projection,
         )["bound_records"],
+        "cited_evidence_records": _hydrated_cited_records(
+            context.graph_projection,
+            _indirect_cited_record_ids(context, citations),
+        ),
         "evaluated_record_citations": citations,
         "required_report_schema": {
             "record_kind": "verification",
@@ -283,12 +295,13 @@ def _prompt_for_node(context: GraphDispatchContext) -> str:
                     "",
                     "Planner mutation contract:",
                     "- Your job is to propose future graph structure, not edit repository files.",
+                    "- For reliable_plan_contract, call construct_reliable_plan_region once with scope, objective, requirement IDs, dependencies, acceptance, checks, and rubric; the controller constructs the entire authorized horizon.",
                     "- Prefer planner-facing graph macros; low-level ops are the internal expansion format.",
                     "- Mutate the graph only through submit_graph_patch or macro-backed patch envelopes.",
                     "- Use current_graph_position from the packet as base_graph_position.",
                     "- Use node_id from the packet as planner identity; dispatch will bind proposer evidence.",
                     "- When using raw fallback ops, choose only from allowed_patch_operations.",
-                    "- Use horizon_region_templates for standard discovery, implementation, validation, gap-analysis, corrective-work, and final invariant regions.",
+                    "- Use horizon_region_templates only for non-reliable-plan compatibility authoring and gap recovery.",
                     "- Read frontier, evidence, open_planner_proposals, accepted_planner_patches, and patch_rejections before proposing.",
                     "- If dynamic_feature is present, ground generated worker, verifier, gap-analysis, corrective-work, and final invariant regions in those feature inputs.",
                     "- Check nodes must include command_definition or command_binding; for dynamic_feature final invariant checks, use command_binding='dynamic_feature_hidden_oracle'.",
@@ -680,6 +693,11 @@ def _dynamic_feature_prompt_lines(
         and node.get("access_mode") == "read_only"
         and node.get("semantic_stage") == "discovery"
     )
+    staged_reliable_plan_work = node.get("semantic_stage") in {
+        "effectful_batch",
+        "corrective_work",
+    }
+    defers_dynamic_acceptance = read_only_semantic or staged_reliable_plan_work
     for source_key, prompt_key in (
         ("feature_spec_path", "dynamic_feature_spec_path"),
         ("feature_spec_content", "dynamic_feature_spec_content"),
@@ -687,7 +705,7 @@ def _dynamic_feature_prompt_lines(
             "acceptance_command",
             (
                 "downstream_acceptance_command"
-                if read_only_semantic
+                if defers_dynamic_acceptance
                 else "dynamic_acceptance_command"
             ),
         ),
@@ -704,6 +722,30 @@ def _dynamic_feature_prompt_lines(
             "dynamic_worker_instruction: Analyze the repository and submit only the typed "
             "semantic artifact. Do not modify repository files and do not execute "
             "downstream_acceptance_command; effectful workers and checks own that evidence."
+        )
+        return lines
+
+    semantic_plan_revision = (
+        node.get("semantic_stage") == "corrective_work"
+        and isinstance(node.get("semantic_schema_id"), str)
+        and isinstance(node.get("semantic_schema_version"), int)
+        and isinstance(node.get("recovery_of_record_id"), str)
+    )
+    if semantic_plan_revision:
+        lines.append(
+            "dynamic_worker_instruction: Revise the exact bound failed semantic plan and "
+            "submit outputs.semantic_artifact using the declared semantic schema. Do not "
+            "modify repository files or execute downstream_acceptance_command; this node "
+            "repairs the plan artifact for independent re-verification."
+        )
+        return lines
+
+    if staged_reliable_plan_work:
+        lines.append(
+            "dynamic_worker_instruction: Work only within the node's declared batch or "
+            "correction scope and its bound evidence. Do not execute or broaden scope to "
+            "satisfy downstream_acceptance_command; explicit check nodes and the final "
+            "audit own that evidence."
         )
         return lines
 
@@ -763,6 +805,9 @@ def _planner_packet(context: GraphDispatchContext) -> dict[str, Any]:
         )
     packet["allowed_patch_operations"] = _planner_allowed_ops_packet()
     packet["horizon_region_templates"] = horizon_region_templates()
+    reliable_plan_contract = _planner_reliable_plan_contract(context)
+    if reliable_plan_contract is not None:
+        packet["reliable_plan_contract"] = reliable_plan_contract
     if context.node_role == "gap_planner":
         packet["gap_analysis_contract"] = {
             "inspect": [
@@ -1286,6 +1331,20 @@ def _planner_patch_examples(
                             "access_mode": "write",
                             "effect_contract": "effectful_write",
                             "acceptance": ["The failed plan-verification grade is corrected."],
+                            "outputs": [
+                                {
+                                    "port": "candidate",
+                                    "direction": "output",
+                                    "schema": "ImplementationCandidate",
+                                    "required": True,
+                                },
+                                {
+                                    "port": "semantic_artifact",
+                                    "direction": "output",
+                                    "schema": "SemanticArtifact",
+                                    "required": True,
+                                },
+                            ],
                         },
                         "verifier_node": {
                             "node_id": "verifier-semantic-plan-revision",
@@ -1352,26 +1411,33 @@ def _planner_patch_examples(
         )
         return sorted(examples, key=lambda example: str(example.get("patch_id", "")))
 
+    final_reliable_plan_horizon = (
+        context.node_payload.get("semantic_stage") == "successor_planning"
+        and context.node_payload.get("reliable_plan_remaining_horizons") == 1
+    )
     if "create_node" in PLANNER_OPS:
-        examples.append(
-            {
-                "purpose": "create_successor_planner",
-                "patch_id": "example-successor-planner",
-                "base_graph_position": base_position,
-                "ops": [
-                    {
-                        "op": "create_node",
-                        "node": {
-                            "node_id": "planner-successor-example",
-                            "kind": "planner",
-                            "role": "planner",
-                            "state": "planned",
-                            "task_region_id": "region-example",
+        if final_reliable_plan_horizon:
+            examples.append(_reliable_plan_semantic_region_example(packet, context))
+        else:
+            examples.append(
+                {
+                    "purpose": "create_successor_planner",
+                    "patch_id": "example-successor-planner",
+                    "base_graph_position": base_position,
+                    "ops": [
+                        {
+                            "op": "create_node",
+                            "node": {
+                                "node_id": "planner-successor-example",
+                                "kind": "planner",
+                                "role": "planner",
+                                "state": "planned",
+                                "task_region_id": "region-example",
+                            },
                         },
-                    },
-                ],
-            }
-        )
+                    ],
+                }
+            )
         examples.append(
             {
                 "purpose": "create_gap_planner",
@@ -1502,6 +1568,286 @@ def _planner_patch_examples(
     return sorted(examples, key=lambda example: str(example.get("patch_id", "")))
 
 
+def _planner_reliable_plan_contract(
+    context: GraphDispatchContext,
+) -> dict[str, Any] | None:
+    node = context.node_payload
+    if not isinstance(node.get("reliable_plan_skeleton_id"), str):
+        return None
+    remaining = node.get("reliable_plan_remaining_horizons")
+    declared_batch_ids = _reliable_plan_declared_batch_ids(context)
+    contract: dict[str, Any] = {
+        "semantic_stage": node.get("semantic_stage"),
+        "planning_horizon": node.get("planning_horizon"),
+        "remaining_horizons_including_current": remaining,
+        "declared_batch_ids": declared_batch_ids,
+        "current_declared_batch_id": node.get("declared_batch_id"),
+    }
+    if node.get("semantic_stage") != "successor_planning":
+        contract["required_sequence"] = [
+            "call construct_reliable_plan_region once with the complete semantic planning decision",
+            "the controller atomically creates discovery, plan verification, and the first successor",
+            "call plain submit only after the construction acknowledgement is accepted",
+        ]
+        return contract
+    if remaining == 1:
+        contract["required_sequence"] = [
+            "call construct_reliable_plan_region once for the current accepted batch scope",
+            "the controller atomically creates the batch, dynamic acceptance, independent audit, and final gate",
+            "the controller rejects a partial batch-only or finalization-only patch",
+            "call plain submit only after that complete patch is accepted",
+        ]
+        contract["finalization_rules"] = [
+            "do not create another worker, check, batch, or successor planner",
+            "create exactly one controller-bound dynamic_feature_acceptance check distinct from any hidden oracle check",
+            "the acceptance check must consume a passed verification report from every declared batch verifier",
+            "the final-audit verifier must consume those passed batch reports and the passed acceptance receipt",
+            "the final gate must consume the passed batch reports, acceptance receipt, and final-audit report",
+            "the final gate declared_batch_ids must exactly equal declared_batch_ids",
+            "declare every concrete input port used by an edge",
+        ]
+    elif isinstance(remaining, int) and not isinstance(remaining, bool) and remaining > 1:
+        contract["required_sequence"] = [
+            "call construct_reliable_plan_region once for the current accepted batch scope",
+            "the controller atomically creates the batch and its passed-report successor planner",
+            "the controller rejects a partial batch-only or successor-only patch",
+            "call plain submit only after that complete patch is accepted",
+        ]
+    return contract
+
+
+def _reliable_plan_semantic_region_example(
+    packet: dict[str, Any],
+    context: GraphDispatchContext,
+) -> dict[str, Any]:
+    declared_batch_ids = _reliable_plan_declared_batch_ids(context)
+    materialized = accepted_declared_batch_ids(context.graph_projection)
+    current_scope = context.node_payload.get("declared_batch_id")
+    scope = (
+        current_scope
+        if isinstance(current_scope, str)
+        else next(
+            (batch_id for batch_id in declared_batch_ids if batch_id not in materialized), None
+        )
+    )
+    return {
+        "purpose": "construct_reliable_plan_region",
+        "patch_id": "stable-logical-operation-key",
+        "base_graph_position": int(packet.get("current_graph_position", 0)),
+        "operation_key": "stable-logical-operation-key",
+        "scope": scope or "exact-accepted-batch-id",
+        "objective": "Implement the selected accepted-plan batch.",
+        "requirement_ids": ["exact-bound-requirement-id"],
+        "dependencies": [],
+        "acceptance": ["the batch obligations and required checks pass"],
+        "checks": [
+            {
+                "name": "bounded project check",
+                "command_binding": "dynamic_feature_hidden_oracle",
+            }
+        ],
+        "rubric": ["the exact batch and bound requirements are satisfied"],
+    }
+
+
+def legacy_reliable_plan_finalization_example(
+    packet: dict[str, Any],
+    context: GraphDispatchContext,
+) -> dict[str, Any]:
+    declared_batch_ids = _reliable_plan_declared_batch_ids(context)
+    batch_verifiers: dict[str, str] = {}
+    for node_id, kind in node_kinds_view(context.graph_projection).items():
+        if kind != "verifier":
+            continue
+        payload = node_payload_view(context.graph_projection, node_id) or {}
+        batch_id = payload.get("declared_batch_id")
+        if payload.get("semantic_stage") == "effectful_batch" and isinstance(batch_id, str):
+            batch_verifiers[batch_id] = node_id
+
+    input_specs = [
+        {
+            "port": f"verification_report_batch_{index}",
+            "direction": "input",
+            "schema": "VerificationReport",
+            "required": True,
+        }
+        for index, _batch_id in enumerate(declared_batch_ids, start=1)
+    ]
+    final_audit_id = "final-audit-exact-id"
+    final_acceptance_id = "final-acceptance-exact-id"
+    final_gate_id = "final-gate-exact-id"
+    ops: list[dict[str, Any]] = [
+        {
+            "op": "create_node",
+            "node": {
+                "node_id": final_acceptance_id,
+                "kind": "check",
+                "role": "acceptance_gate",
+                "state": "planned",
+                "semantic_stage": "final_acceptance",
+                "task_region_id": context.node_payload.get("task_region_id"),
+                "command_binding": "dynamic_feature_acceptance",
+                "inputs": input_specs,
+                "outputs": [
+                    {
+                        "port": "check_result",
+                        "direction": "output",
+                        "schema": "CheckResult",
+                        "required": True,
+                    }
+                ],
+            },
+        },
+        {
+            "op": "create_node",
+            "node": {
+                "node_id": final_audit_id,
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "planned",
+                "semantic_stage": "final_audit",
+                "task_region_id": context.node_payload.get("task_region_id"),
+                "inputs": [
+                    *input_specs,
+                    {
+                        "port": "dynamic_feature_acceptance",
+                        "direction": "input",
+                        "schema": "CheckResult",
+                        "required": True,
+                    },
+                ],
+                "outputs": [
+                    {
+                        "port": "verification_report",
+                        "direction": "output",
+                        "schema": "VerificationReport",
+                        "required": True,
+                    }
+                ],
+            },
+        },
+        {
+            "op": "create_node",
+            "node": {
+                "node_id": final_gate_id,
+                "kind": "final_gate",
+                "role": "final_gate",
+                "state": "planned",
+                "task_region_id": context.node_payload.get("task_region_id"),
+                "declared_batch_ids": declared_batch_ids,
+                "inputs": [
+                    *input_specs,
+                    {
+                        "port": "dynamic_feature_acceptance",
+                        "direction": "input",
+                        "schema": "CheckResult",
+                        "required": True,
+                    },
+                    {
+                        "port": "verification_report_final_audit",
+                        "direction": "input",
+                        "schema": "VerificationReport",
+                        "required": True,
+                    },
+                ],
+            },
+        },
+    ]
+    for index, batch_id in enumerate(declared_batch_ids, start=1):
+        source = batch_verifiers.get(batch_id, f"exact-verifier-for-{batch_id}")
+        port = f"verification_report_batch_{index}"
+        for target in (final_acceptance_id, final_audit_id, final_gate_id):
+            ops.append(
+                {
+                    "op": "create_edge",
+                    "edge_id": f"edge-{batch_id}-to-{target}",
+                    "from_node_id": source,
+                    "from_port": "verification_report",
+                    "to_node_id": target,
+                    "to_port": port,
+                    "required": True,
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                        "outcome": "passed",
+                    },
+                }
+            )
+    ops.append(
+        {
+            "op": "create_edge",
+            "edge_id": "edge-final-acceptance-to-final-audit",
+            "from_node_id": final_acceptance_id,
+            "from_port": "check_result",
+            "to_node_id": final_audit_id,
+            "to_port": "dynamic_feature_acceptance",
+            "required": True,
+            "accepted_record_selector": {
+                "record_type": "check_result",
+                "schema": "CheckResult",
+                "status": "passed",
+            },
+        }
+    )
+    ops.append(
+        {
+            "op": "create_edge",
+            "edge_id": "edge-final-acceptance-to-final-gate",
+            "from_node_id": final_acceptance_id,
+            "from_port": "check_result",
+            "to_node_id": final_gate_id,
+            "to_port": "dynamic_feature_acceptance",
+            "required": True,
+            "accepted_record_selector": {
+                "record_type": "check_result",
+                "schema": "CheckResult",
+                "status": "passed",
+            },
+        }
+    )
+    ops.append(
+        {
+            "op": "create_edge",
+            "edge_id": "edge-final-audit-to-final-gate",
+            "from_node_id": final_audit_id,
+            "from_port": "verification_report",
+            "to_node_id": final_gate_id,
+            "to_port": "verification_report_final_audit",
+            "required": True,
+            "accepted_record_selector": {
+                "record_type": "verification_report",
+                "schema": "VerificationReport",
+                "outcome": "passed",
+            },
+        }
+    )
+    return {
+        "purpose": "create_reliable_plan_finalization",
+        "instruction": (
+            "Use the exact declared batch IDs and existing verifier node IDs. Replace only "
+            "placeholder final node IDs or any exact-verifier-for-* source that is not yet "
+            "materialized. Keep the one dynamic_feature_acceptance check distinct from hidden "
+            "oracle checks. Submit this topology atomically with the final effectful batch."
+        ),
+        "patch_id": "example-reliable-plan-finalization",
+        "base_graph_position": int(packet.get("current_graph_position", 0)),
+        "ops": ops,
+    }
+
+
+def _reliable_plan_declared_batch_ids(context: GraphDispatchContext) -> list[str]:
+    accepted_ids = sorted(accepted_declared_batch_ids(context.graph_projection))
+    if accepted_ids:
+        return accepted_ids
+    return _unique_record_ids(
+        [
+            item
+            for item in cast(list[Any], context.node_payload.get("declared_batch_ids", []))
+            if isinstance(item, str)
+        ]
+    )
+
+
 def _node_role(node_kind: str, node_payload: dict[str, Any]) -> str:
     role = node_payload.get("role")
     if isinstance(role, str) and role:
@@ -1532,6 +1878,10 @@ def _candidate_id_for_verifier(context: GraphDispatchContext) -> str:
     )
     if bound_candidate_ids:
         return bound_candidate_ids[0]
+    if context.node_payload.get("semantic_stage") == "final_audit":
+        cited_candidate_ids = _evaluated_record_citations(context).get("candidate_record_ids", [])
+        if cited_candidate_ids:
+            return cited_candidate_ids[0]
     audit_inputs = _bound_record_ids_for_ports(
         context,
         tuple(
@@ -1564,107 +1914,123 @@ def _patch_payload_has_ops(patch_payload: dict[str, Any]) -> bool:
     return isinstance(macro_invocations, list) and bool(cast(list[object], macro_invocations))
 
 
-def _evaluated_record_citations(context: GraphDispatchContext) -> dict[str, list[str]]:
-    candidate_record_ids = _bound_record_ids_for_ports(
-        context,
-        ("candidate_under_test", "candidate", "semantic_artifact"),
-    )
-    file_state_record_ids = _bound_record_ids_for_ports(
-        context,
-        ("file_state", "accepted_file_state"),
-    )
-    evidence_record_ids = _bound_record_ids_for_ports(
-        context,
-        (
-            "verification_evidence",
-            "verification_report",
-            "check_result",
-            "verifier_check_results",
-            *tuple(
-                port
-                for port in sorted(
-                    input_bindings_view(context.graph_projection).get(context.node_id, {})
-                )
-                if port.startswith("check_result_")
-                or port.startswith("requirement_")
-                or port.startswith("verification_report_")
-            ),
-        ),
-    )
-    for record in _record_payloads_for_ids(context.graph_projection, candidate_record_ids):
-        file_state_record_ids.extend(_citation_record_ids(record, "file_state_record_ids"))
-    for record in _record_payloads_for_ids(context.graph_projection, evidence_record_ids):
-        candidate_record_ids.extend(_citation_record_ids(record, "candidate_record_ids"))
-        file_state_record_ids.extend(_citation_record_ids(record, "file_state_record_ids"))
-    if (
-        not file_state_record_ids
-        and context.node_payload.get("semantic_stage") != "plan_verification"
+def _patch_payload_creates_successor_planner(patch_payload: dict[str, Any]) -> bool:
+    raw_patch = patch_payload.get("patch")
+    payload = cast(dict[str, Any], raw_patch) if isinstance(raw_patch, dict) else patch_payload
+    macro_invocations = payload.get("macro_invocations")
+    if isinstance(macro_invocations, list) and any(
+        isinstance(invocation, dict)
+        and cast(dict[str, Any], invocation).get("macro") == "create_successor_planner"
+        for invocation in cast(list[Any], macro_invocations)
     ):
-        file_state_record_ids.extend(_file_state_record_ids_for_task_region(context))
-    citations: dict[str, list[str]] = {}
-    unique_candidate_record_ids = _unique_record_ids(candidate_record_ids)
-    unique_file_state_record_ids = _unique_record_ids(file_state_record_ids)
-    if unique_candidate_record_ids:
-        citations["candidate_record_ids"] = unique_candidate_record_ids
-    if unique_file_state_record_ids:
-        citations["file_state_record_ids"] = unique_file_state_record_ids
-    unique_evidence_record_ids = _unique_record_ids(evidence_record_ids)
-    if unique_evidence_record_ids:
-        citations["verification_report_record_ids"] = unique_evidence_record_ids
-    evaluated_record_ids = _unique_record_ids(
-        [*evidence_record_ids, *unique_candidate_record_ids, *unique_file_state_record_ids]
+        return True
+    ops = payload.get("ops")
+    return isinstance(ops, list) and any(
+        isinstance(op, dict)
+        and cast(dict[str, Any], op).get("op") == "create_node"
+        and isinstance(cast(dict[str, Any], op).get("node"), dict)
+        and cast(dict[str, Any], cast(dict[str, Any], op)["node"]).get("kind") == "planner"
+        and cast(dict[str, Any], cast(dict[str, Any], op)["node"]).get("role") == "planner"
+        for op in cast(list[Any], ops)
     )
-    if evaluated_record_ids:
-        citations["evaluated_record_ids"] = evaluated_record_ids
-    return citations
 
 
-def _record_payloads_for_ids(
+def _patch_payload_creates_finalization(patch_payload: dict[str, Any]) -> bool:
+    raw_patch = patch_payload.get("patch")
+    payload = cast(dict[str, Any], raw_patch) if isinstance(raw_patch, dict) else patch_payload
+    ops = payload.get("ops")
+    if not isinstance(ops, list):
+        return False
+    nodes = [
+        cast(dict[str, Any], op)["node"]
+        for op in cast(list[Any], ops)
+        if isinstance(op, dict)
+        and cast(dict[str, Any], op).get("op") == "create_node"
+        and isinstance(cast(dict[str, Any], op).get("node"), dict)
+    ]
+    return (
+        any(
+            node.get("kind") == "worker" and node.get("semantic_stage") == "effectful_batch"
+            for node in nodes
+        )
+        and any(
+            node.get("kind") == "check"
+            and node.get("semantic_stage") == "final_acceptance"
+            and node.get("command_binding") == "dynamic_feature_acceptance"
+            for node in nodes
+        )
+        and any(node.get("kind") == "final_gate" for node in nodes)
+        and any(
+            node.get("kind") == "verifier" and node.get("semantic_stage") == "final_audit"
+            for node in nodes
+        )
+    )
+
+
+def _evaluated_record_citations(context: GraphDispatchContext) -> dict[str, list[str]]:
+    consumer = (
+        "final_audit"
+        if context.node_payload.get("semantic_stage") == "final_audit"
+        else "check"
+        if context.node_kind == "check"
+        else "verifier"
+    )
+    return evidence_closure_for_node(
+        context.graph_projection,
+        context.node_id,
+        consumer=consumer,
+    ).citations()
+
+
+def _hydrated_cited_records(
     projection: GraphProjection,
     record_ids: list[str],
 ) -> list[dict[str, Any]]:
-    wanted = set(record_ids)
-    return [
-        payload
-        for record_id, payload in record_payloads_view(projection).items()
-        if record_id in wanted
-    ]
-
-
-def _citation_record_ids(record: dict[str, Any], field: str) -> list[str]:
-    for source in (record, record.get("value"), record.get("provenance"), record.get("evidence")):
-        if not isinstance(source, dict):
-            continue
-        raw_ids = cast(dict[str, Any], source).get(field)
-        if not isinstance(raw_ids, list):
-            continue
-        record_ids = [
-            record_id for record_id in cast(list[Any], raw_ids) if isinstance(record_id, str)
-        ]
-        if record_ids:
-            return record_ids
-    return []
-
-
-def _file_state_record_ids_for_task_region(context: GraphDispatchContext) -> list[str]:
-    task_region_id = context.node_payload.get("task_region_id")
-    if not isinstance(task_region_id, str):
-        return []
-    output: list[str] = []
-    for record_id, record in file_state_records_view(context.graph_projection).items():
-        record_region_id = record.task_region_id
-        if not isinstance(record_region_id, str):
-            producer_node_id = record.producer_node_id
-            if isinstance(producer_node_id, str):
-                record_region_id = node_task_regions_view(context.graph_projection).get(
-                    producer_node_id
+    output_records = record_payloads_view(projection)
+    file_states = file_state_records_view(projection)
+    hydrated: list[dict[str, Any]] = []
+    for record_id in _unique_record_ids(record_ids):
+        file_state = file_states.get(record_id)
+        if file_state is not None:
+            hydrated.append(
+                _hydrated_bound_record(
+                    record_id=record_id,
+                    record_kind="file_state",
+                    record_payload=_compact_file_state_record(file_state),
+                    hydration_policy="structured_json",
                 )
-        if record_region_id != task_region_id:
+            )
             continue
-        if record.verdict in {"rejected", "failed"}:
+        record = output_records.get(record_id)
+        if record is None:
             continue
-        output.append(record_id)
-    return _unique_record_ids(output)
+        hydrated.append(
+            _hydrated_bound_record(
+                record_id=record_id,
+                record_kind=str(record.get("record_kind", "output")),
+                record_payload=_tail_only_prompt_record_payload(record),
+                hydration_policy="structured_json",
+            )
+        )
+    return hydrated
+
+
+def _indirect_cited_record_ids(
+    context: GraphDispatchContext,
+    citations: dict[str, list[str]],
+) -> list[str]:
+    direct_record_ids = {
+        record_id
+        for binding in input_bindings_view(context.graph_projection)
+        .get(context.node_id, {})
+        .values()
+        for record_id in binding.record_ids
+    }
+    return [
+        record_id
+        for record_id in citations.get("evaluated_record_ids", [])
+        if record_id not in direct_record_ids
+    ]
 
 
 def _bound_record_ids_for_ports(
@@ -1971,6 +2337,8 @@ graph_patch_feedback_accepted = _graph_patch_feedback_accepted
 node_role = _node_role
 available_tools_for_context = _available_tools_for_context
 patch_payload_has_ops = _patch_payload_has_ops
+patch_payload_creates_successor_planner = _patch_payload_creates_successor_planner
+patch_payload_creates_finalization = _patch_payload_creates_finalization
 output_records_for_submit = _output_records_for_submit
 candidate_id_for_check = _candidate_id_for_check
 evaluated_record_citations = _evaluated_record_citations

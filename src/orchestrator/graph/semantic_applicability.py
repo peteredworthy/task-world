@@ -54,6 +54,7 @@ def correction_superseded_task_region_id(
     failed_record_id = node.get("failed_verification_record_id")
     failed_candidate_id = node.get("failed_candidate_id")
     batch_id = node.get("declared_batch_id")
+    correction_trigger = node.get("correction_trigger", "failed_batch")
     if (
         not isinstance(failed_record_id, str)
         or not isinstance(failed_candidate_id, str)
@@ -65,11 +66,15 @@ def correction_superseded_task_region_id(
     records = output_record_payloads_view(projection)
     report = records.get(failed_record_id)
     failed = failed_verification_results_by_record_id_view(projection).get(failed_record_id)
+    expected_outcome = "passed" if correction_trigger == "failed_final_acceptance" else "failed"
     if (
         not isinstance(report, VerificationReportRecord)
-        or report.outcome != "failed"
+        or report.outcome != expected_outcome
         or report.candidate_id != failed_candidate_id
-        or failed is None
+    ):
+        return None
+    if correction_trigger != "failed_final_acceptance" and (
+        failed is None
         or failed.candidate_id != failed_candidate_id
         or failed.node_id != report.producer_node_id
     ):
@@ -81,31 +86,45 @@ def correction_superseded_task_region_id(
     ):
         return None
     failed_verifier = node_payload_view(projection, report.producer_node_id) or {}
-    failed_region_id = failed.task_region_id or failed_verifier.get("task_region_id")
-    if (
-        not isinstance(failed_region_id, str)
-        or failed_verifier.get("kind") != "verifier"
-        or failed_verifier.get("semantic_stage") != "effectful_batch"
-        or failed_verifier.get("declared_batch_id") != batch_id
-    ):
-        return None
-
+    failed_region_id = (
+        failed.task_region_id if failed is not None else None
+    ) or failed_verifier.get("task_region_id")
     failed_candidate = next(
         (
             record
             for record in records.values()
-            if isinstance(record, CandidateRecord)
-            and record.candidate_id == failed_candidate_id
-            and record.task_region_id == failed_region_id
+            if isinstance(record, CandidateRecord) and record.candidate_id == failed_candidate_id
         ),
         None,
     )
-    if failed_candidate is None:
+    if failed_candidate is not None and correction_trigger in {
+        "failed_final_acceptance",
+        "failed_final_audit",
+    }:
+        failed_region_id = failed_candidate.task_region_id
+    expected_failed_stage = (
+        "final_audit" if correction_trigger == "failed_final_audit" else "effectful_batch"
+    )
+    if (
+        not isinstance(failed_region_id, str)
+        or failed_verifier.get("kind") != "verifier"
+        or (
+            correction_trigger == "failed_final_audit"
+            and failed_verifier.get("semantic_stage") != expected_failed_stage
+        )
+        or (
+            correction_trigger != "failed_final_audit"
+            and failed_verifier.get("declared_batch_id") != batch_id
+        )
+    ):
+        return None
+
+    if failed_candidate is None or failed_candidate.task_region_id != failed_region_id:
         return None
     failed_producer = node_payload_view(projection, failed_candidate.producer_node_id) or {}
     if (
         failed_producer.get("kind") != "worker"
-        or failed_producer.get("semantic_stage") != "effectful_batch"
+        or failed_producer.get("semantic_stage") not in {"effectful_batch", "corrective_work"}
         or failed_producer.get("declared_batch_id") != batch_id
         or failed_producer.get("task_region_id") != failed_region_id
     ):
@@ -115,7 +134,9 @@ def correction_superseded_task_region_id(
         return None
     latest = max(candidates, key=lambda candidate: (candidate.attempt_number, candidate.position))
     verdict = verifier_verdicts_view(projection).get(failed_candidate_id)
-    if latest.candidate_id != failed_candidate_id or verdict is None or verdict.verdict != "failed":
+    if latest.candidate_id != failed_candidate_id:
+        return None
+    if correction_trigger == "failed_batch" and (verdict is None or verdict.verdict != "failed"):
         return None
     return failed_region_id
 
@@ -233,18 +254,23 @@ def _is_exact_declared_batch_correction(
     if len(report_edges) != 1 or not check_edges or len(gap_edges) != 1:
         return False
 
+    correction_trigger = node.get("correction_trigger", "failed_batch")
+    expected_report_outcome = (
+        "passed" if correction_trigger == "failed_final_acceptance" else "failed"
+    )
+    expected_check_status = "passed" if correction_trigger == "failed_final_audit" else "failed"
     report_id = _exact_selected_record_id(
         report_edges[0],
         record_type="verification_report",
         schema="VerificationReport",
-        terminal=("outcome", "failed"),
+        terminal=("outcome", expected_report_outcome),
     )
     check_ids = [
         _exact_selected_record_id(
             edge,
             record_type="check_result",
             schema="CheckResult",
-            terminal=("status", "failed"),
+            terminal=("status", expected_check_status),
         )
         for edge in check_edges
     ]
@@ -271,9 +297,9 @@ def _is_exact_declared_batch_correction(
     gap = records.get(gap_id)
     if (
         not isinstance(report, VerificationReportRecord)
-        or report.outcome != "failed"
+        or report.outcome != expected_report_outcome
         or any(
-            not isinstance(check, CheckResultRecord) or check.value.status != "failed"
+            not isinstance(check, CheckResultRecord) or check.value.status != expected_check_status
             for check in checks
         )
     ):
@@ -291,7 +317,7 @@ def _is_exact_declared_batch_correction(
     batch_id = producer.get("declared_batch_id")
     if (
         producer.get("kind") != "worker"
-        or producer.get("semantic_stage") != "effectful_batch"
+        or producer.get("semantic_stage") not in {"effectful_batch", "corrective_work"}
         or not isinstance(batch_id, str)
         or batch_id not in accepted_declared_batch_ids(projection)
         or node.get("declared_batch_id") != batch_id
@@ -380,7 +406,13 @@ def _is_active_exact_gap_promise(
         for binding in input_bindings_view(projection).get(source_node_id, {}).values()
         for bound_id in binding.record_ids
     }
-    return required_evidence.issubset(bound_ids)
+    records = output_record_payloads_view(projection)
+    closure = set(bound_ids)
+    for bound_id in tuple(bound_ids):
+        record = records.get(bound_id)
+        if isinstance(record, (VerificationReportRecord, CheckResultRecord)):
+            closure.update(record.evaluated_record_ids)
+    return required_evidence.issubset(closure)
 
 
 def _exact_selected_record_id(

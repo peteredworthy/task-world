@@ -36,7 +36,7 @@ from orchestrator.graph.projection_queries import (
     cache_authority_is_new_format,
     lease_by_id,
     node_cache_authority_hash,
-    non_gap_planner_has_accepted_patch,
+    non_gap_planner_completion_contract_satisfied,
 )
 from orchestrator.graph.cache_authority import RunnerCacheRoot, validate_authorized_cache_roots
 from orchestrator.graph.boundary_types import (
@@ -873,8 +873,9 @@ def handle_complete_runner_recovery(
         max_attempts = attempt.recovery_max_attempts or node_max_attempts_view(projection).get(
             attempt.node_id, 0
         )
-        if attempt.recovery_reason == "runner_died" and non_gap_planner_has_accepted_patch(
-            projection, attempt.node_id
+        if (
+            attempt.recovery_reason == "runner_died"
+            and non_gap_planner_completion_contract_satisfied(projection, attempt.node_id)
         ):
             lifecycle_events.append(
                 make_event(

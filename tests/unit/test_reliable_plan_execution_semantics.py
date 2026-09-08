@@ -99,11 +99,35 @@ def _reliable_plan_planner_fields(*, successor: bool = False) -> dict[str, Any]:
 
 
 def _macro_patch(macro: str, args: dict[str, Any]) -> PatchEnvelope:
+    return _macro_patch_for_planner(
+        patch_id=f"patch-{macro}",
+        invocations=[{"macro": macro, "args": args}],
+    )
+
+
+def _macro_patch_for_planner(*, patch_id: str, invocations: list[dict[str, Any]]) -> PatchEnvelope:
+    expanded_invocations = list(invocations)
+    for invocation in invocations:
+        if invocation.get("macro") != "create_effectful_batch":
+            continue
+        batch_id = str(invocation["args"]["batch_id"])
+        verifier_id = str(invocation["args"].get("verifier_id", f"verifier-batch-{batch_id}"))
+        expanded_invocations.append(
+            {
+                "macro": "create_gap_planner",
+                "args": {
+                    "region_id": f"recovery-{batch_id}",
+                    "node_id": f"planner-gap-{batch_id}",
+                    "evidence_source_node_id": verifier_id,
+                    "evidence_source_port": "verification_report",
+                },
+            }
+        )
     command = SubmitPatchCommand.model_validate(
         {
-            "patch_id": f"patch-{macro}",
+            "patch_id": patch_id,
             "base_graph_position": 0,
-            "macro_invocations": [{"macro": macro, "args": args}],
+            "macro_invocations": expanded_invocations,
         }
     )
     ops = expand_patch_macros(command.ops, command.macro_invocations, "planner-1")
@@ -115,12 +139,51 @@ def _macro_patch(macro: str, args: dict[str, Any]) -> PatchEnvelope:
     )
 
 
+def _atomic_nonfinal_batch_patch(args: dict[str, Any]) -> PatchEnvelope:
+    batch_id = str(args["batch_id"])
+    planning_horizon = int(args["planning_horizon"])
+    return _macro_patch_for_planner(
+        patch_id=f"patch-atomic-{batch_id}",
+        invocations=[
+            {"macro": "create_effectful_batch", "args": args},
+            {
+                "macro": "create_successor_planner",
+                "args": {
+                    "region_id": f"successor-{batch_id}",
+                    "node_id": f"planner-h{planning_horizon + 1}",
+                    "evidence_source_node_id": f"verifier-batch-{batch_id}",
+                    "evidence_source_port": "verification_report",
+                    "planning_horizon": planning_horizon + 1,
+                },
+            },
+        ],
+    )
+
+
 def _macro_patch_many(invocations: list[dict[str, Any]]) -> PatchEnvelope:
+    expanded_invocations = list(invocations)
+    plan_verifiers = [
+        invocation["args"]["verifier_id"]
+        for invocation in invocations
+        if invocation.get("macro") == "create_plan_verification"
+    ]
+    for verifier_id in plan_verifiers:
+        expanded_invocations.append(
+            {
+                "macro": "create_gap_planner",
+                "args": {
+                    "region_id": f"recovery-{verifier_id}",
+                    "node_id": f"planner-gap-{verifier_id}",
+                    "evidence_source_node_id": verifier_id,
+                    "evidence_source_port": "verification_report",
+                },
+            }
+        )
     command = SubmitPatchCommand.model_validate(
         {
             "patch_id": "patch-reliable-plan-skeleton",
             "base_graph_position": 0,
-            "macro_invocations": invocations,
+            "macro_invocations": expanded_invocations,
         }
     )
     ops = expand_patch_macros(command.ops, command.macro_invocations, "planner-initial")
@@ -270,6 +333,20 @@ def _semantic_plan_revision_facts(
         "bound_requirement_ids": ["REQ-1"],
         "objective": "Revise the rejected typed plan.",
         "acceptance": ["The revised plan fixes the failed grade."],
+        "outputs": [
+            {
+                "port": "candidate",
+                "direction": "output",
+                "schema": "ImplementationCandidate",
+                "required": True,
+            },
+            {
+                "port": "semantic_artifact",
+                "direction": "output",
+                "schema": "SemanticArtifact",
+                "required": True,
+            },
+        ],
     }
     edges = [
         {
@@ -393,6 +470,24 @@ def test_semantic_plan_revision_is_classified_only_from_exact_typed_lineage() ->
     assert (
         classify_write_worker_semantics(node["node_id"], node, projection, edges=edges)
         == "semantic_plan_revision"
+    )
+
+
+def test_semantic_plan_revision_requires_semantic_artifact_output_contract() -> None:
+    projection, node, edges = _semantic_plan_revision_facts()
+    node.pop("outputs")
+    patch = PatchEnvelope(
+        patch_id="semantic-plan-revision-without-artifact-output",
+        proposed_by_node_id="planner-1",
+        base_graph_position=0,
+        ops=[PatchOp(op="create_node", node=node), *[PatchOp(**edge) for edge in edges]],
+    )
+
+    result = validate_patch(patch, 0, [], projection, "planner")
+
+    assert result.accepted is False
+    assert result.rejection_reason == (
+        "semantic plan revision must declare a required semantic_artifact output"
     )
 
 
@@ -1009,6 +1104,171 @@ def test_reliable_plan_successor_only_patch_fails_closed_with_diagnostics() -> N
     assert result.diagnostics["violation"] == "missing_or_ambiguous_discovery"
 
 
+def _materialized_first_horizon_projection() -> Any:
+    return build_projection(
+        [
+            event(
+                "node_created",
+                {
+                    "node_id": "planner-1",
+                    "kind": "planner",
+                    "role": "planner",
+                    "state": "leased",
+                    "semantic_stage": "successor_planning",
+                    "planning_horizon": 1,
+                    "reliable_plan_one_horizon_authorized": True,
+                    "reliable_plan_remaining_horizons": 2,
+                    **_reliable_plan_planner_fields(successor=True),
+                },
+            ),
+            event(
+                "node_created",
+                {
+                    "node_id": "worker-batch-1",
+                    "kind": "worker",
+                    "role": "implementer",
+                    "state": "planned",
+                    "semantic_stage": "effectful_batch",
+                    "planning_horizon": 1,
+                    "declared_batch_id": "batch-1",
+                    "task_region_id": "batch-1",
+                },
+                position=1,
+            ),
+            event(
+                "node_created",
+                {
+                    "node_id": "verifier-batch-1",
+                    "kind": "verifier",
+                    "role": "verifier",
+                    "state": "planned",
+                    "semantic_stage": "effectful_batch",
+                    "planning_horizon": 1,
+                    "declared_batch_id": "batch-1",
+                    "task_region_id": "batch-1",
+                    "outputs": [
+                        {
+                            "port": "verification_report",
+                            "direction": "output",
+                            "schema": "VerificationReport",
+                            "required": True,
+                        }
+                    ],
+                },
+                position=2,
+            ),
+            event(
+                "node_created",
+                {
+                    "node_id": "verifier-plan",
+                    "kind": "verifier",
+                    "role": "verifier",
+                    "state": "completed",
+                    "semantic_stage": "plan_verification",
+                    "outputs": [
+                        {
+                            "port": "verification_report",
+                            "direction": "output",
+                            "schema": "VerificationReport",
+                            "required": True,
+                        }
+                    ],
+                },
+                position=3,
+            ),
+            event(
+                "graph_patch_accepted",
+                {
+                    "patch_id": "patch-batch-1",
+                    "base_graph_position": 0,
+                    "actor_role": "planner",
+                    "proposed_by_node_id": "planner-1",
+                    "successor_planner_node_ids": [],
+                },
+                position=4,
+            ),
+        ]
+    )
+
+
+def test_reliable_plan_accepts_successor_after_batch_was_materialized_by_prior_patch() -> None:
+    projection = _materialized_first_horizon_projection()
+    patch = _macro_patch(
+        "create_successor_planner",
+        {
+            "region_id": "batch-1",
+            "node_id": "planner-h2",
+            "evidence_source_node_id": "verifier-batch-1",
+            "evidence_source_port": "verification_report",
+            "planning_horizon": 2,
+        },
+    )
+
+    result = validate_patch(patch, 0, [], projection, "planner")
+
+    assert result.accepted is False
+    assert result.diagnostics is not None
+    assert result.diagnostics["violation"] == "incomplete_reliable_plan_horizon"
+
+
+def test_reliable_plan_rejects_separate_successor_not_gated_by_batch_verifier() -> None:
+    projection = _materialized_first_horizon_projection()
+    patch = _macro_patch(
+        "create_successor_planner",
+        {
+            "region_id": "batch-1",
+            "node_id": "planner-h2",
+            "evidence_source_node_id": "verifier-plan",
+            "evidence_source_port": "verification_report",
+            "planning_horizon": 2,
+        },
+    )
+
+    result = validate_patch(patch, 0, [], projection, "planner")
+
+    assert result.accepted is False
+    assert result.diagnostics is not None
+    assert result.diagnostics["violation"] == "incomplete_reliable_plan_horizon"
+
+
+def test_reliable_plan_command_accepts_successor_after_prior_batch_patch() -> None:
+    projection = _materialized_first_horizon_projection()
+    patch = _macro_patch(
+        "create_successor_planner",
+        {
+            "region_id": "batch-1",
+            "node_id": "planner-h2",
+            "evidence_source_node_id": "verifier-batch-1",
+            "evidence_source_port": "verification_report",
+            "planning_horizon": 2,
+        },
+    )
+
+    command_events = apply_command(
+        projection,
+        [],
+        "submit_patch",
+        {
+            "patch_id": patch.patch_id,
+            "base_graph_position": 4,
+            "ops": [op.model_dump(mode="json") for op in patch.ops],
+        },
+        PatchCommandContext(
+            run_id="run-1",
+            current_graph_position=4,
+            proposed_by_node_id="planner-1",
+            actor_role="planner",
+        ),
+        FakeClock(),
+        SequentialIdGenerator(),
+    )
+
+    assert command_events[0].event_type == "graph_patch_rejected"
+    assert command_events[0].payload["diagnostics"]["violation"] == (
+        "incomplete_reliable_plan_horizon"
+    )
+
+
 @pytest.mark.parametrize(
     "extra_node",
     [
@@ -1305,7 +1565,9 @@ def test_effectful_batch_macro_requires_plan_verification_checks_and_distinct_re
                     "role": "planner",
                     "state": "leased",
                     "semantic_stage": "successor_planning",
-                    "reliable_plan_skeleton_id": "reliable-plan-v1",
+                    "planning_horizon": 1,
+                    "reliable_plan_remaining_horizons": 2,
+                    **_reliable_plan_planner_fields(successor=True),
                 },
                 position=1,
             ),
@@ -1368,24 +1630,42 @@ def test_effectful_batch_macro_requires_plan_verification_checks_and_distinct_re
             ),
         ]
     )
-    patch = _macro_patch(
-        "create_effectful_batch",
-        {
-            "region_id": "region-batch-1",
-            "batch_id": "batch-1",
-            "plan_source_node_id": "worker-discovery",
-            "plan_verification_source_node_id": "verifier-plan",
-            "semantic_schema_id": "ordered-batch-plan",
-            "semantic_schema_version": 1,
-            "objective": "Implement only batch 1.",
-            "acceptance": ["batch 1 checks pass"],
-            "requirement_source_node_ids": ["requirement-1"],
-            "checks": [
-                {"check_id": "check-batch-1", "command_binding": "dynamic_feature_hidden_oracle"}
-            ],
-            "rubric": ["candidate satisfies batch 1 and REQ-1"],
-            "planning_horizon": 1,
-        },
+    patch = _macro_patch_for_planner(
+        patch_id="patch-atomic-batch-1",
+        invocations=[
+            {
+                "macro": "create_effectful_batch",
+                "args": {
+                    "region_id": "region-batch-1",
+                    "batch_id": "batch-1",
+                    "plan_source_node_id": "worker-discovery",
+                    "plan_verification_source_node_id": "verifier-plan",
+                    "semantic_schema_id": "ordered-batch-plan",
+                    "semantic_schema_version": 1,
+                    "objective": "Implement only batch 1.",
+                    "acceptance": ["batch 1 checks pass"],
+                    "requirement_source_node_ids": ["requirement-1"],
+                    "checks": [
+                        {
+                            "check_id": "check-batch-1",
+                            "command_binding": "dynamic_feature_hidden_oracle",
+                        }
+                    ],
+                    "rubric": ["candidate satisfies batch 1 and REQ-1"],
+                    "planning_horizon": 1,
+                },
+            },
+            {
+                "macro": "create_successor_planner",
+                "args": {
+                    "region_id": "successor-batch-2",
+                    "node_id": "planner-h2",
+                    "evidence_source_node_id": "verifier-batch-batch-1",
+                    "evidence_source_port": "verification_report",
+                    "planning_horizon": 2,
+                },
+            },
+        ],
     )
     result = validate_patch(
         patch,
@@ -1401,6 +1681,60 @@ def test_effectful_batch_macro_requires_plan_verification_checks_and_distinct_re
         if op.node is not None and op.node.get("kind") in {"worker", "check", "verifier"}
     } == {"region-batch-1"}
 
+    raw_ops = [op.model_dump(mode="json", exclude_none=True) for op in patch.ops]
+    worker_op = next(
+        op
+        for op in raw_ops
+        if op.get("op") == "create_node"
+        and op.get("node", {}).get("semantic_stage") == "effectful_batch"
+    )
+    worker_op["node"].pop("kind")
+    worker_op["node"].update(
+        {
+            "reliable_plan_assignment_carrier": {"agent": "supplied"},
+            "reliable_plan_assignment_role": "verifier",
+            "reliable_plan_selected_runner_type": "cli_subprocess",
+            "runner_model_override": "hostile-model",
+            "profile": "architect",
+        }
+    )
+
+    command_events = apply_command(
+        projection,
+        [],
+        "submit_patch",
+        {
+            "patch_id": "patch-default-worker-kind",
+            "base_graph_position": 9,
+            "ops": raw_ops,
+        },
+        PatchCommandContext(
+            run_id="run-1",
+            current_graph_position=9,
+            proposed_by_node_id="planner-1",
+            actor_role="planner",
+        ),
+        FakeClock(),
+        SequentialIdGenerator(),
+    )
+
+    assert command_events[0].event_type == "graph_patch_accepted", command_events[0].payload
+    created_worker = next(
+        event.payload
+        for event in command_events
+        if event.event_type == "node_created"
+        and event.payload.get("semantic_stage") == "effectful_batch"
+    )
+    assignment = _reliable_plan_carrier().assignment_for("implementation_worker")
+    assert created_worker["kind"] == "worker"
+    assert created_worker["reliable_plan_assignment_carrier"] == (
+        _reliable_plan_carrier().model_dump(mode="json")
+    )
+    assert created_worker["reliable_plan_assignment_role"] == "implementation_worker"
+    assert created_worker["reliable_plan_selected_runner_type"] == "codex_server"
+    assert created_worker["runner_model_override"] == assignment.model
+    assert created_worker["profile"] == assignment.profile.value
+
 
 def test_effectful_batch_rejects_pass_report_for_a_different_plan_artifact() -> None:
     declaration = _declaration()
@@ -1415,6 +1749,8 @@ def test_effectful_batch_rejects_pass_report_for_a_different_plan_artifact() -> 
                 "role": "planner",
                 "state": "leased",
                 "semantic_stage": "successor_planning",
+                "planning_horizon": 1,
+                "reliable_plan_remaining_horizons": 2,
                 **_reliable_plan_planner_fields(successor=True),
             },
         ),
@@ -1453,8 +1789,7 @@ def test_effectful_batch_rejects_pass_report_for_a_different_plan_artifact() -> 
         ),
     ]
     projection = build_projection(projection_events)
-    patch = _macro_patch(
-        "create_effectful_batch",
+    patch = _atomic_nonfinal_batch_patch(
         {
             "region_id": "region-batch-1",
             "batch_id": "batch-1",
@@ -1527,6 +1862,8 @@ def test_effectful_batch_rejects_report_for_later_plan_when_bind_first_uses_earl
                     "role": "planner",
                     "state": "leased",
                     "semantic_stage": "successor_planning",
+                    "planning_horizon": 1,
+                    "reliable_plan_remaining_horizons": 2,
                     "reliable_plan_skeleton_id": "reliable-plan-v1",
                 },
             ),
@@ -1577,8 +1914,7 @@ def test_effectful_batch_rejects_report_for_later_plan_when_bind_first_uses_earl
             ),
         ]
     )
-    patch = _macro_patch(
-        "create_effectful_batch",
+    patch = _atomic_nonfinal_batch_patch(
         {
             "region_id": "region-batch-1",
             "batch_id": "batch-1",

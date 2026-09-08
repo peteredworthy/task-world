@@ -88,11 +88,8 @@ routine:
       title: "Plan dynamic feature execution graph"
       available_tools:
         - submit_graph_patch
-        - create_discovery_region
-        - create_plan_verification
-        - create_successor_planner
-        - create_effectful_batch
+        - construct_reliable_plan_region
       step_context: |
-        Build the feature execution plan by creating planner-driven runtime regions only.
-        Use `submit_graph_patch`, DG-1.3 packet fields, and `horizon_region_templates`
-        for worker, verifier, gap-planner, corrective-work, and invariant regions.
+        Supply one bounded semantic work decision per horizon with
+        `construct_reliable_plan_region`; controller code owns graph construction,
+        evidence wiring, model assignments, checks, and continuations.
