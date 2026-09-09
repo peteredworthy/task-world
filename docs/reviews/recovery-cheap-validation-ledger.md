@@ -26,6 +26,36 @@ missing historical timings remain unknown, with prospective identity and timing
 capture carried into Stage 2. The Stage 1 no-model evidence gate is satisfied;
 this ledger does not itself authorize more than the bounded Stage 2 allowance.
 
+## Stage 2 isolated harness
+
+The deterministic harness is implemented at
+`examples/recovery/model_phase_probe.py`; no paid invocation has occurred yet.
+One CLI invocation performs exactly one phase with Luna medium and no automatic
+retry. Planner mode uses a disposable real Git repository, SQLite event store,
+`OutboxDispatcher`, `GraphDispatchExecutor`, `RunnerOwnedProcessRegistry`, and
+the non-injected Codex Server runner; it stops scheduling after the single
+planner dispatch. Verifier mode uses a fresh direct Codex Server context over a
+committed good/defective fixture pair whose independent oracle results are
+recorded before the model starts. Both modes emit source, fixture, timing,
+callback, usage, timeout, and cleanup evidence. The 180-second limit is
+operator-enforced because this runner has no native token/action cap; expiry is
+reported as incomplete and is not retried.
+
+Deterministic validation command:
+
+```bash
+UV_CACHE_DIR=/tmp/orchestrator-recovery-uv uv run --no-sync pytest -n 0 -q tests/integration/test_recovery_model_phase_probe.py
+```
+
+Current corrected result: the harness suite passes **9 tests in 5.60s**. The
+combined harness, dispatch-packet, tool-exposure, and Codex transport command
+passes **54 tests, 1 deselected, 1 known schema warning in 7.19s** under fresh
+independent validation. It includes
+negative proof for missing planner submit/finalization, weak or duplicate
+verifier grades, planner/verifier timeout draining, and bounded unexpected-error
+JSON. Scoped Ruff and Pyright pass. A clean commit is required before either
+invocation card is recorded or a model is called.
+
 ## Retained gate accounting
 
 All values below are retained observations, not projections. The repeated
