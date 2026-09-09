@@ -6079,6 +6079,7 @@ def _is_non_retryable_runtime_death(reason: str) -> bool:
         or reason.startswith("cache scan bytes budget exceeded at ")
         or reason.startswith("check node missing command_definition")
         or reason.startswith("check command_definition requires ")
+        or reason.startswith("check command binding ")
     )
 
 

@@ -45,7 +45,8 @@ from orchestrator.runners.health_check import (
     parse_health_check_command,
 )
 from orchestrator.workflow import InvalidTransitionError
-from orchestrator.workflow import generate_builder_prompt, SummaryCache
+from orchestrator.workflow import ArtifactRegistry, SummaryCache, TaskContextBuilder
+from orchestrator.workflow import generate_builder_prompt
 from orchestrator.git import (
     SeedStaleness,
     classify_seed_staleness,
@@ -918,6 +919,17 @@ class AgentRunnerExecutor:
                 agent_runner_type.value, f"Task config not found: {task_state.config_id}"
             )
 
+        # Resolve artifact-backed variables before either phase so builder and
+        # verifier receive the same task contract.  The verifier gets this
+        # resolved map without any builder transcript or prior-attempt data.
+        run_config = dict(run.config)
+        if task_state.status == TaskStatus.VERIFYING or (
+            task_state.status in (TaskStatus.PENDING, TaskStatus.BUILDING)
+            and task_config.script is None
+            and task_config.fan_out is None
+        ):
+            run_config = await self._resolve_task_prompt_config(run, task_config, summary_cache)
+
         # Only intercept fan-out/script for initial execution, not for
         # verification or recovery — those should fall through to their
         # dedicated handlers below.
@@ -1007,6 +1019,8 @@ class AgentRunnerExecutor:
                 agent_runner_type,
                 agent_runner_config,
                 step_id=step_id,
+                step_context=step_context,
+                run_config=run_config,
                 available_tools=available_tools,
                 mcp_servers=mcp_servers,
             )
@@ -1058,25 +1072,6 @@ class AgentRunnerExecutor:
         # Reconstruct compressed decisions from persisted run.config
         decisions = decisions_from_config(run.config)
 
-        # Build artifact context from context_from if configured
-        run_config = dict(run.config)
-        if task_config.context_from:
-            from orchestrator.workflow import ArtifactRegistry
-            from orchestrator.workflow import TaskContextBuilder
-
-            worktree_path = Path(run.worktree_path) if run.worktree_path else None
-            ctx_builder = TaskContextBuilder(ArtifactRegistry(), worktree_path=worktree_path)
-            artifact_context = await ctx_builder.build_context(
-                run_id=run.id,
-                context_sources=task_config.context_from,
-                variables=run.config,
-                summary_cache=summary_cache,
-            )
-            run_config.update(artifact_context)
-            # Also expose artifact keys under "context.<name>" namespace so that
-            # templates using {{context.summary}}, {{context.plan}}, etc. resolve correctly.
-            run_config.update({f"context.{k}": v for k, v in artifact_context.items()})
-
         prompt = generate_builder_prompt(
             task_config,
             task_state,
@@ -1117,6 +1112,28 @@ class AgentRunnerExecutor:
             agent_runner_type_value=agent_runner_type.value,
             session=session,
         )
+
+    async def _resolve_task_prompt_config(
+        self,
+        run: Run,
+        task_config: Any,
+        summary_cache: SummaryCache | None,
+    ) -> dict[str, Any]:
+        """Resolve run and artifact context shared by builder and verifier prompts."""
+        run_config = dict(run.config)
+        if task_config.context_from and run.worktree_path:
+            context_builder = TaskContextBuilder(
+                ArtifactRegistry(), worktree_path=Path(run.worktree_path)
+            )
+            artifact_context = await context_builder.build_context(
+                run_id=run.id,
+                context_sources=task_config.context_from,
+                variables=run.config,
+                summary_cache=summary_cache,
+            )
+            run_config.update(artifact_context)
+            run_config.update({f"context.{key}": value for key, value in artifact_context.items()})
+        return run_config
 
     async def _execute_fan_out(
         self,
@@ -1705,6 +1722,8 @@ class AgentRunnerExecutor:
         agent_runner_type: AgentRunnerType,
         agent_runner_config: dict[str, Any],
         step_id: str | None = None,
+        step_context: str | None = None,
+        run_config: dict[str, Any] | None = None,
         available_tools: list[str] | None = None,
         mcp_servers: list[Any] | None = None,
     ) -> None:
@@ -1749,7 +1768,15 @@ class AgentRunnerExecutor:
                 message="Cannot run agent without worktree_path set on run",
             )
         working_dir = run.worktree_path
-        prompt = generate_verifier_prompt(task_config, task_state)
+        # The verifier gets the same resolved contract as the builder, while
+        # retaining no builder transcript or prior-attempt feedback.
+        prompt = generate_verifier_prompt(
+            task_config,
+            task_state,
+            step_context=step_context,
+            run_config=run_config if run_config is not None else dict(run.config),
+            model=effective_verifier_config.get("model"),
+        )
         # Include both ID and description so agent can use the ID for callbacks
         requirements = [f"{item.req_id}: {item.desc}" for item in task_state.checklist]
         # Also build a map from description to ID for fuzzy matching

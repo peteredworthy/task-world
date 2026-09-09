@@ -254,6 +254,7 @@ def test_planner_patch_rejects_dynamic_nodes_without_required_input_edges() -> N
                     "state": "planned",
                     "task_region_id": "final-region",
                     "command_binding": "dynamic_feature_hidden_oracle",
+                    "command_definition": {"cmd": "true"},
                 },
             },
         ],
@@ -324,6 +325,7 @@ def test_planner_patch_accepts_dynamic_nodes_with_required_input_edges() -> None
                         "state": "planned",
                         "task_region_id": "final-region",
                         "command_binding": "dynamic_feature_hidden_oracle",
+                        "command_definition": {"cmd": "true"},
                     },
                 },
                 {

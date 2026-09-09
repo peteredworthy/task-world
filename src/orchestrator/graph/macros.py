@@ -13,6 +13,10 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from orchestrator.graph._error_rendering import safe_exception_reason
+from orchestrator.graph.command_bindings import (
+    has_dynamic_feature_context,
+    validate_check_command_binding,
+)
 from orchestrator.graph.models import (
     CheckResultRecord,
     GapClassificationRecord,
@@ -1263,6 +1267,14 @@ def _construct_reliable_plan_region(
         parent["reliable_plan_skeleton_id"], proposed_by_node_id, operation_key, patch_id
     )
     check_decisions = cast(list[dict[str, Any]], args["checks"])
+    if has_dynamic_feature_context([], projection=projection):
+        for check in check_decisions:
+            check_node = {
+                "node_id": check.get("name") or operation_key,
+                "kind": "check",
+                **check,
+            }
+            validate_check_command_binding(check_node, [], projection=projection)
     checks = [
         {
             "check_id": f"check-{token}-{index}",

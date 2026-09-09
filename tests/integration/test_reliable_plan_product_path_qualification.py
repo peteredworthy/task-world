@@ -718,6 +718,7 @@ async def test_production_reliable_plan_controller_path_gates_first_effectful_le
             run_config={
                 "feature_spec_path": "docs/spec.md",
                 "acceptance_command": "uv run pytest",
+                "hidden_oracle_command": "printf hidden-oracle",
                 "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
                 "reliable_plan_selected_runner_type": "codex_server",
                 "reliable_plan_model_assignments": evaluation.luna_arm.model_dump(mode="json"),

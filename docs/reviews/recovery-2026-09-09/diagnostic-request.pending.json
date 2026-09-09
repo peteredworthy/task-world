@@ -1,0 +1,82 @@
+{
+  "repo_name": "task-world-current",
+  "branch": "codex/recovery-stabilization",
+  "routine_embedded": {
+    "id": "recovery-run-diagnostic-luna-v1",
+    "name": "Recovery feedback: read-only run diagnostic",
+    "description": "Pending only: launch the committed recovery-bounded-task routine after validated runtime activation and Unicode correction.",
+    "execution_mode": "legacy",
+    "steps": [
+      {
+        "id": "S-01",
+        "title": "Deliver a trustworthy blocked-run diagnostic",
+        "step_context": "Implement the bounded public contract and submit through the normal workflow. Keep verification independent and preserve all existing checks.",
+        "tasks": [
+          {
+            "id": "T-01",
+            "title": "Implement public-API diagnostic CLI",
+            "task_context": "# Feedback task: explain a blocked run through public APIs\n\nCreate a small read-only developer utility at\n`examples/recovery/run_diagnostic.py`, real tests under\n`tests/unit/test_recovery_run_diagnostic.py` and\n`tests/integration/test_recovery_run_diagnostic_cli.py`, and concise usage in\n`examples/recovery/README.md`. Do not modify orchestrator server code, existing\ntests, gates, database, or run state. Use Luna and one fixed builder/check/verifier\nattempt. Do not merge, deploy, or start the orchestrator server.\n\nThe utility must help an operator understand the original cause when the run\nsummary only says that a graph node failed. Keep it small: no new framework,\ndashboard, background monitor, repair endpoint, or inferred recovery commands.\n\nPublic contract:\n\n1. Export Pydantic models `FailureDetail` and `RunDiagnostic` and pure\n   `build_diagnostic(run: dict, graph: dict | None,\n   node_details: tuple[dict, ...], unavailable: tuple[str, ...] = ())` returning\n   `RunDiagnostic`. `FailureDetail` has `node_id`, nullable `reason`, and nullable\n   `event_position`. `RunDiagnostic` has `run_id`, `status`, nullable\n   `pause_reason`, nullable `summary_error`, `failures`, and `unavailable`.\n   Validate malformed input at this boundary with a typed error; do not fabricate\n   success or silently use the wrong run's node details.\n2. Enumerate failed graph nodes in stable node-ID order. For each, prefer the\n   earliest nonempty runtime failure `reason` from `agent_died` or a failed\n   `node_state_changed` entry in `callback_history`/`events`. Deduplicate overlap\n   by event identity/position. Retain the exact graph position; absent evidence\n   yields null and an unavailable diagnostic. Preserve the run's summary error\n   separately. This incident must expose\n   `check command_definition requires non-empty argv or cmd` at position 486.\n3. CLI: `uv run python examples/recovery/run_diagnostic.py RUN_UUID\n   --base-url http://localhost:8000`. Validate the UUID and HTTP(S) base URL.\n   Fetch only public GET endpoints: run, graph for a graph-backed run, and at\n   most ten failed-node detail pages. URL-encode node path segments. Use async\n   HTTP with bounded connect/read timeouts, bounded response bytes, no automatic\n   retry, and no redirects. Report omitted nodes as unavailable. A non-graph\n   run needs only its run response.\n4. Print exactly one JSON diagnostic to stdout. Exit 0 for a fully read report\n   (even if the reported run failed), 1 for a partial report, 2 for usage or\n   inability to fetch/validate the run. Concise stderr diagnostics, no secrets\n   or tracebacks. A failed or missing graph/node endpoint must produce partial\n   evidence rather than an empty healthy-looking report.\n5. Unit tests use real data and pure functions; integration tests use a real\n   local HTTP fixture server and real subprocess CLI. Cover original-cause\n   selection, duplicate events, missing/partial data, wrong-run evidence,\n   invalid UUID/base URL, unavailable server, oversized responses, failed-node\n   cap, and a legacy run. No patch, MagicMock, monkeypatching, or credentials.\n6. Run focused tests and the unchanged submission checks. Then use the actual\n   CLI against existing run `d20ff4dd-9cd1-4f29-9df1-d344a0582907` through the\n   existing server. It must report the exact empty-command cause and position\n   if that readback is available. If unavailable, record partial evidence and\n   do not claim live validation. Submit for independent verification.\n\nAccept only if the real utility explains the incident, focused tests pass, and\nthe independent verifier checks the stated behavior and scope. Any expansion\noutside this contract needs a new task; do not turn the utility into a server\nrepair project.\n",
+            "requirements": [
+              {
+                "id": "R1",
+                "desc": "Pure typed diagnostic selects original failure cause and exact event position; preserves unknown and rejects wrong-run evidence.",
+                "priority": "critical"
+              },
+              {
+                "id": "R2",
+                "desc": "Real asynchronous read-only CLI uses bounded public API requests and truthful exit codes, partial reports and concise diagnostics.",
+                "priority": "critical"
+              },
+              {
+                "id": "R3",
+                "desc": "Real unit/integration tests, live incident invocation and concise usage prove the contract; changes stay within the authorized new files.",
+                "priority": "critical"
+              }
+            ],
+            "auto_verify": {
+              "items": [
+                {
+                  "id": "focused-tests",
+                  "cmd": "uv run pytest -n 0 tests/unit/test_recovery_run_diagnostic.py tests/integration/test_recovery_run_diagnostic_cli.py -q",
+                  "must": true
+                }
+              ]
+            },
+            "verifier": {
+              "rubric": [
+                {
+                  "id": "R1",
+                  "text": "A only if independently checked: Pure typed diagnostic selects original failure cause and exact event position; preserves unknown and rejects wrong-run evidence. Otherwise F with exact remediation."
+                },
+                {
+                  "id": "R2",
+                  "text": "A only if independently checked: Real asynchronous read-only CLI uses bounded public API requests and truthful exit codes, partial reports and concise diagnostics. Otherwise F with exact remediation."
+                },
+                {
+                  "id": "R3",
+                  "text": "A only if independently checked: Real unit/integration tests, live incident invocation and concise usage prove the contract; changes stay within the authorized new files. Otherwise F with exact remediation."
+                }
+              ]
+            },
+            "retry": {
+              "max_attempts": 1
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "execution_mode": "legacy",
+  "agent_runner_type": "codex_server",
+  "agent_runner_config": {
+    "model": "gpt-5.6-luna",
+    "restrictions": "managed",
+    "reasoning_effort": "medium"
+  },
+  "config": {
+    "recovery_campaign": "2026-09-09",
+    "purpose": "useful feedback after baseline acceptance",
+    "routine_template_path": "routines/recovery-bounded-task/routine.yaml",
+    "routine_template_commit": "REPLACE_WITH_VERIFIED_COMMIT"
+  }
+}

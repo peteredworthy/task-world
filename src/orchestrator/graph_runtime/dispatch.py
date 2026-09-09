@@ -59,6 +59,8 @@ from orchestrator.graph import (
     project_node_max_attempts,
     output_record_payloads_view,
     CheckResultRecord,
+    CheckCommandBindingError,
+    check_command_invocation,
     CandidateRecord,
     EventEnvelope,
     FileStatePolicy,
@@ -76,7 +78,7 @@ from orchestrator.graph import (
     VerificationReportRecord,
     StoredArtifactRef,
     initial_projection,
-    resolve_check_command_definition,
+    validate_check_command_binding,
     recovery_proof_hash,
     boundary_manifest_hash,
     cache_authority_binding,
@@ -2407,6 +2409,8 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     worktree_boundary=self._run_worktree_boundary,
                 )
                 await self._submit_check_result(context, record)
+        except CheckCommandBindingError as exc:
+            await self._invalid_execution_contract(context, str(exc))
         except Exception as exc:
             await self._agent_died(context, str(exc))
 
@@ -5263,7 +5267,7 @@ def _check_command_definition(
     events: list[EventEnvelope],
     projection: GraphProjection | None = None,
 ) -> dict[str, Any]:
-    command_definition = resolve_check_command_definition(node, events, projection=projection)
+    command_definition = validate_check_command_binding(node, events, projection=projection)
     if command_definition is None:
         msg = "check node missing command_definition"
         raise ValueError(msg)
@@ -5271,20 +5275,9 @@ def _check_command_definition(
 
 
 def _check_invocation(command_definition: dict[str, Any]) -> tuple[str | list[str], str, bool]:
-    raw_argv = command_definition.get("argv")
-    if isinstance(raw_argv, list):
-        raw_parts = cast(list[Any], raw_argv)
-        typed_argv = [part for part in raw_parts if isinstance(part, str)]
-        if len(typed_argv) != len(raw_parts):
-            typed_argv = []
-        if typed_argv:
-            return typed_argv, " ".join(typed_argv), False
-
-    command = command_definition.get("cmd")
-    if not isinstance(command, str):
-        command = command_definition.get("command")
-    if isinstance(command, str) and command.strip():
-        return command, command, True
+    invocation = check_command_invocation(command_definition)
+    if invocation is not None:
+        return invocation
 
     msg = "check command_definition requires non-empty argv or cmd"
     raise ValueError(msg)

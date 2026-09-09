@@ -61,6 +61,25 @@ async def test_two_effectful_horizons_materialize_only_after_accepted_evidence(
                     make_event(
                         "output_record_accepted",
                         {
+                            "record_id": "routine-snapshot-record",
+                            "record_kind": "graph_record",
+                            "record_type": "routine_snapshot",
+                            "producer_node_id": "routine-snapshot",
+                            "port": "snapshot",
+                            "schema": "RoutineSnapshot",
+                            "value": {
+                                "routine_id": "sequential-reliable-plan",
+                                "name": "Sequential reliable-plan fixture",
+                                "content_hash": "sequential-fixture",
+                                "step_count": 1,
+                                "task_count": 2,
+                                "dynamic_feature": {"acceptance_command": "true"},
+                            },
+                        },
+                    ),
+                    make_event(
+                        "output_record_accepted",
+                        {
                             "record_id": "plan-schema",
                             "record_kind": "graph_record",
                             "record_type": "semantic_schema_declaration",

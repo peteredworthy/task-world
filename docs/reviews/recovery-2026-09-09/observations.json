@@ -1,0 +1,69 @@
+{
+  "incident_run": "d20ff4dd-9cd1-4f29-9df1-d344a0582907",
+  "incident_worktree": "/Users/peter/code/task-world/worktrees/r215",
+  "source_sha": "f6f2d07d690262eb715917f3d25b973b64486219",
+  "failed_node": "check-batch-2-cli-integration--a12aa709ed10615e-1",
+  "binding": "dynamic_feature_hidden_oracle",
+  "configured_hidden_oracle": "",
+  "failure_position": 486,
+  "failure_reason": "check command_definition requires non-empty argv or cmd",
+  "operator_acceptance": {
+    "command": "uv run python /private/tmp/qualification-20260907/task1_oracle.py",
+    "exit_code": 0,
+    "stdout": "PASS: operator-owned JSONL acceptance checks",
+    "scope": "Independent worktree execution; not proof of final graph acceptance"
+  },
+  "baseline_run": "2a78847f-cc61-46db-b8f0-ce0203a9a85b",
+  "baseline_worktree": "/Users/peter/code/task-world/worktrees/r216",
+  "baseline_initial_oracle_exit_code": 0,
+  "baseline_independent_review": {
+    "status": "requirement_failure",
+    "cases": [
+      "U+2028 inside JSON string",
+      "U+0085 inside JSON string"
+    ],
+    "expected": [],
+    "actual": [
+      {
+        "line_number": 1,
+        "reason": "invalid_json"
+      },
+      {
+        "line_number": 2,
+        "reason": "invalid_json"
+      }
+    ],
+    "cause": "text.splitlines() treats Unicode separators as physical JSONL line boundaries"
+  },
+  "baseline_submission": {
+    "auto_commit_started_utc": "2026-09-09T00:51:03Z",
+    "health_timeout_seconds": 8,
+    "run_read_timeout_seconds": 15,
+    "observed_process_chain": [
+      "server child 9462",
+      "git commit 11855",
+      "pre-commit 11856",
+      "pytest 11973"
+    ],
+    "interpretation": "synchronous commit invoked from async service blocks event loop; repair not yet applied",
+    "auto_commit_finished_utc": "2026-09-09T00:57:32Z",
+    "candidate_commit": "e328421f9",
+    "server_responsive_after_checks": true,
+    "verifier_started_utc": "2026-09-09T00:57:39Z"
+  },
+  "baseline_final": {
+    "status": "completed",
+    "completed_at": "2026-09-09T01:02:08.675155Z",
+    "total_tokens_read": 2372825,
+    "total_tokens_write": 11648,
+    "total_tokens_cache": 2221312,
+    "total_num_actions": 31,
+    "independent_acceptance": "failed supplemental Unicode check despite A/A/A verifier grades"
+  },
+  "correction": {
+    "id": "7a03f18c-02b1-43f7-b7a1-c3e0e22372c5",
+    "status": "active",
+    "worktree_path": "/Users/peter/code/task-world/worktrees/r217",
+    "started_at": "2026-09-09T01:05:06.798298Z"
+  }
+}

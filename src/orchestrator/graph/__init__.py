@@ -26,9 +26,12 @@ from orchestrator.graph.callbacks import (
     validate_callback,
 )
 from orchestrator.graph.command_bindings import (
+    CheckCommandBindingError,
+    check_command_invocation,
     check_command_reference,
     check_command_uses_acceptance_fallback,
     resolve_check_command_definition,
+    validate_check_command_binding,
 )
 from orchestrator.graph.commands import (
     COMMAND_SPECS,
@@ -710,7 +713,9 @@ __all__ = [
     "accepted_output_records_by_node_port_view",
     "accepted_record_summaries_by_id_view",
     "build_projection",
+    "check_command_invocation",
     "check_command_reference",
+    "CheckCommandBindingError",
     "check_command_uses_acceptance_fallback",
     "claims_conflict",
     "cache_authority_binding",
@@ -877,6 +882,7 @@ __all__ = [
     "run_reliable_plan_scenarios",
     "serialize_authorized_reliable_plan_run_config",
     "resolve_check_command_definition",
+    "validate_check_command_binding",
     "run_scenario",
     "run_state",
     "schedule",

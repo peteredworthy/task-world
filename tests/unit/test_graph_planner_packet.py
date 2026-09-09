@@ -1150,6 +1150,65 @@ def test_planner_packet_includes_dynamic_feature_inputs() -> None:
     assert "dynamic_feature_hidden_oracle" in prompt
 
 
+def test_planner_packet_marks_absent_hidden_oracle_binding_unavailable() -> None:
+    context = _planner_context(_graph_events())
+    context.node_payload["dynamic_feature"] = {
+        "feature_spec_content": "Build the dynamic-smoke artifact.",
+        "acceptance_command": "uv run pytest tests/smoke -q",
+        "hidden_oracle_command": "",
+    }
+    packet = _planner_packet(context)
+
+    assert packet["dynamic_feature"]["hidden_oracle_binding"] == "unavailable"
+    assert packet["dynamic_feature"]["available_check_bindings"] == ["dynamic_feature_acceptance"]
+
+
+def test_unavailable_hidden_oracle_prompt_requires_batch_command_definition() -> None:
+    context = _planner_context(_graph_events())
+    context.node_payload["dynamic_feature"] = {
+        "feature_spec_content": "Build the dynamic-smoke artifact.",
+        "acceptance_command": "uv run pytest tests/smoke -q",
+        "hidden_oracle_command": "",
+    }
+    context.node_payload.update(
+        {
+            "semantic_stage": "successor_planning",
+            "reliable_plan_skeleton_id": "reliable-plan-test-v1",
+            "reliable_plan_remaining_horizons": 1,
+        }
+    )
+
+    packet = _planner_packet(context)
+    prompt = _prompt_for_node(context)
+    invariant_example = next(
+        example
+        for example in packet["patch_examples"]
+        if example["purpose"] == "create_invariant_check"
+    )
+    semantic_example = next(
+        example
+        for example in packet["patch_examples"]
+        if example["purpose"] == "construct_reliable_plan_region"
+    )
+
+    assert (
+        "use command_binding='dynamic_feature_hidden_oracle' only when the packet's "
+        "available_check_bindings includes it"
+    ) in prompt
+    assert (
+        "for dynamic_feature final invariant checks, use "
+        "command_binding='dynamic_feature_hidden_oracle'."
+    ) not in prompt
+    assert "otherwise provide an explicit batch-scoped command_definition" in prompt
+    assert "do not use dynamic_feature_acceptance as a semantic-region binding" in prompt
+    invariant_node = invariant_example["ops"][0]["node"]
+    semantic_check = semantic_example["checks"][0]
+    assert "command_binding" not in invariant_node
+    assert invariant_node["command_definition"] == {"cmd": "uv run pytest tests/batch -q"}
+    assert "command_binding" not in semantic_check
+    assert semantic_check["command_definition"] == {"cmd": "uv run pytest tests/batch -q"}
+
+
 def test_planner_packet_contract_fields_remain_stable() -> None:
     events = _graph_events()
     context = _planner_context(events)
@@ -1339,7 +1398,7 @@ def test_final_reliable_plan_horizon_gets_exact_finalization_guidance() -> None:
     assert construction["checks"] == [
         {
             "name": "bounded project check",
-            "command_binding": "dynamic_feature_hidden_oracle",
+            "command_definition": {"cmd": "uv run pytest tests/batch -q"},
         }
     ]
 

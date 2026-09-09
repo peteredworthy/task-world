@@ -656,6 +656,7 @@ def test_planner_can_create_check_with_dynamic_feature_oracle_binding() -> None:
                         "role": "invariant_gate",
                         "state": "planned",
                         "command_binding": "dynamic_feature_hidden_oracle",
+                        "command_definition": {"cmd": "true"},
                     },
                 },
                 {
@@ -680,6 +681,66 @@ def test_planner_can_create_check_with_dynamic_feature_oracle_binding() -> None:
     )
 
     assert result.accepted
+
+
+def test_patch_rejects_unavailable_dynamic_feature_oracle_before_topology_checks() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "check-blank-oracle",
+                        "kind": "check",
+                        "role": "invariant_gate",
+                        "state": "planned",
+                        "command_binding": "dynamic_feature_hidden_oracle",
+                    },
+                }
+            ]
+        ),
+        events_since_base=[
+            _event(
+                "node_created",
+                {
+                    "node_id": "routine-snapshot",
+                    "kind": "artifact",
+                    "state": "completed",
+                    "snapshot": {
+                        "dynamic_feature": {
+                            "hidden_oracle_command": "",
+                            "acceptance_command": "uv run pytest tests -q",
+                        }
+                    },
+                },
+            )
+        ],
+    )
+
+    assert result.accepted is False
+    assert result.rejection_reason is not None
+    assert "dynamic_feature_hidden_oracle" in result.rejection_reason
+    assert "non-empty hidden_oracle_command" in result.rejection_reason
+
+    no_authority = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "check-no-oracle-authority",
+                        "kind": "check",
+                        "role": "invariant_gate",
+                        "state": "planned",
+                        "command_binding": "dynamic_feature_hidden_oracle",
+                    },
+                }
+            ]
+        )
+    )
+    assert no_authority.accepted is False
+    assert no_authority.rejection_reason is not None
+    assert "routine snapshot" in no_authority.rejection_reason
 
 
 def test_planner_cannot_create_check_with_unknown_command_binding() -> None:
@@ -950,6 +1011,7 @@ def test_create_edge_rejects_unknown_source_port() -> None:
                         "role": "invariant_gate",
                         "state": "planned",
                         "command_binding": "dynamic_feature_hidden_oracle",
+                        "command_definition": {"cmd": "true"},
                     },
                 },
                 {
@@ -997,6 +1059,7 @@ def test_create_edge_rejects_unknown_target_port() -> None:
                         "role": "invariant_gate",
                         "state": "planned",
                         "command_binding": "dynamic_feature_hidden_oracle",
+                        "command_definition": {"cmd": "true"},
                     },
                 },
                 {
@@ -1221,6 +1284,7 @@ def test_create_edge_rejects_selector_incompatible_with_source_port() -> None:
                         "role": "invariant_gate",
                         "state": "planned",
                         "command_binding": "dynamic_feature_hidden_oracle",
+                        "command_definition": {"cmd": "true"},
                     },
                 },
                 {
@@ -2081,7 +2145,14 @@ def test_existing_live_shape_legacy_discovery_replays_without_rewrite() -> None:
     ("kind", "role", "extra"),
     [
         ("verifier", "verifier", {}),
-        ("check", "check", {"command_binding": "dynamic_feature_hidden_oracle"}),
+        (
+            "check",
+            "check",
+            {
+                "command_binding": "dynamic_feature_hidden_oracle",
+                "command_definition": {"cmd": "true"},
+            },
+        ),
         ("planner", "planner", {}),
     ],
 )

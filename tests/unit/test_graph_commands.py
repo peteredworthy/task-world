@@ -212,6 +212,90 @@ def _default_context(
     )
 
 
+def test_submit_patch_rejects_unavailable_check_before_projection_and_replays_valid_command() -> (
+    None
+):
+    base_events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "routine-snapshot-1",
+                "record_kind": "graph_record",
+                "record_type": "routine_snapshot",
+                "producer_node_id": "routine-snapshot",
+                "port": "snapshot",
+                "schema": "RoutineSnapshot",
+                "value": {
+                    "routine_id": "dynamic-feature",
+                    "name": "Dynamic feature",
+                    "content_hash": "routine-hash",
+                    "step_count": 1,
+                    "task_count": 1,
+                    "dynamic_feature": {"hidden_oracle_command": ""},
+                },
+            },
+            1,
+        ),
+    ]
+    unavailable = _apply(
+        base_events,
+        "submit_patch",
+        {
+            "patch_id": "patch-unavailable-check",
+            "base_graph_position": 1,
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "check-unavailable",
+                        "kind": "check",
+                        "role": "check",
+                        "command_binding": "dynamic_feature_hidden_oracle",
+                    },
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in unavailable] == ["graph_patch_rejected"]
+    assert (
+        unavailable[0]
+        .payload["reason"]
+        .startswith("check command binding 'dynamic_feature_hidden_oracle' unavailable")
+    )
+    assert node_payload_view(_project([*base_events, *unavailable]), "check-unavailable") is None
+
+    accepted = _apply(
+        base_events,
+        "submit_patch",
+        {
+            "patch_id": "patch-concrete-check",
+            "base_graph_position": 1,
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "check-concrete",
+                        "kind": "check",
+                        "role": "check",
+                        "command_definition": {"cmd": "printf valid"},
+                    },
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in accepted] == [
+        "graph_patch_accepted",
+        "node_created",
+    ]
+    replayed = _project([*base_events, *accepted])
+    assert node_payload_view(replayed, "check-concrete")["command_definition"] == {
+        "cmd": "printf valid"
+    }
+
+
 def _callback_payload(**overrides: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "node_id": "worker-1",

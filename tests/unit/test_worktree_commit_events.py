@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -29,7 +31,12 @@ from orchestrator.db import (
 )
 from orchestrator.git import WorktreeCommitError
 from orchestrator.state import Attempt, create_run_from_routine
-from orchestrator.workflow import LocalAutoVerifyRunner, PersistentEventEmitter, WorkflowService
+from orchestrator.workflow import (
+    LocalAutoVerifyRunner,
+    PersistentEventEmitter,
+    WorkflowService,
+    WorktreeMutationCoordinator,
+)
 
 pytestmark = pytest.mark.slow
 
@@ -89,7 +96,10 @@ async def _events(session, run_id: str) -> list[dict[str, Any]]:
     ]
 
 
-async def _service_with_building_run(repo_path: Path):
+async def _service_with_building_run(
+    repo_path: Path,
+    worktree_mutations: WorktreeMutationCoordinator | None = None,
+):
     engine = create_engine(":memory:")
     await init_db(engine)
     session_factory = create_session_factory(engine)
@@ -102,6 +112,7 @@ async def _service_with_building_run(repo_path: Path):
         event_store_v2=event_store,
         event_emitter=PersistentEventEmitter(event_store),
         auto_verify_runner=LocalAutoVerifyRunner(),
+        worktree_mutations=worktree_mutations,
     )
     run = create_run_from_routine(
         routine=_routine(),
@@ -117,6 +128,45 @@ async def _service_with_building_run(repo_path: Path):
     task.attempts.append(Attempt(attempt_num=1))
     run = await service.create_run(run)
     return engine, session, service, run.id, task.id
+
+
+def _install_waiting_hook(repo_path: Path, marker: Path, release: Path) -> None:
+    hook = repo_path / ".git" / "hooks" / "pre-commit"
+    hook.write_text(
+        "#!/bin/sh\n"
+        f"touch {shlex.quote(str(marker))}\n"
+        "attempt=0\n"
+        f"while [ ! -f {shlex.quote(str(release))} ] && [ $attempt -lt 500 ]; do\n"
+        "  attempt=$((attempt + 1))\n"
+        "  sleep 0.01\n"
+        "done\n"
+        f"[ -f {shlex.quote(str(release))} ] || exit 97\n"
+    )
+    hook.chmod(0o755)
+
+
+async def _wait_for_file(path: Path) -> None:
+    async with asyncio.timeout(2):
+        while not path.exists():
+            await asyncio.sleep(0.01)
+
+
+async def _second_service(
+    engine,
+    coordinator: WorktreeMutationCoordinator,
+) -> tuple[Any, WorkflowService]:
+    session_factory = create_session_factory(engine)
+    session = session_factory()
+    repo = RunRepository(session)
+    event_store = create_wired_event_store_v2(session)
+    return session, WorkflowService(
+        session=session,
+        repo=repo,
+        event_store_v2=event_store,
+        event_emitter=PersistentEventEmitter(event_store),
+        auto_verify_runner=LocalAutoVerifyRunner(),
+        worktree_mutations=coordinator,
+    )
 
 
 @pytest.mark.asyncio
@@ -205,4 +255,146 @@ async def test_submit_auto_commit_failure_blocks_verifying(
         if lock_path.exists():
             lock_path.unlink()
         await session.close()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_submit_waits_for_same_worktree_owner(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    initial_head = _init_repo(repo_path)
+    coordinator = WorktreeMutationCoordinator()
+    engine, session_one, service_one, run_id, task_id = await _service_with_building_run(
+        repo_path,
+        coordinator,
+    )
+    session_two, service_two = await _second_service(engine, WorktreeMutationCoordinator())
+    marker = tmp_path / "hook-started"
+    release = tmp_path / "hook-release"
+    _install_waiting_hook(repo_path, marker, release)
+    (repo_path / "tracked.txt").write_text("builder change\n")
+
+    try:
+        first = asyncio.create_task(service_one.submit_for_verification(run_id, task_id))
+        await _wait_for_file(marker)
+        duplicate = asyncio.create_task(service_two.submit_for_verification(run_id, task_id))
+        await asyncio.sleep(0.05)
+        assert not duplicate.done()
+
+        release.touch()
+        first_result, duplicate_result = await asyncio.gather(first, duplicate)
+
+        assert first_result.new_status == TaskStatus.VERIFYING
+        assert duplicate_result.new_status == TaskStatus.VERIFYING
+        head_after = _git(repo_path, "rev-parse", "HEAD")
+        assert head_after != initial_head
+        assert (repo_path / "tracked.txt").read_text() == "builder change\n"
+        events = await _events(session_one, run_id)
+        assert [event["event_type"] for event in events].count("run_worktree_commit_requested") == 1
+        assert [event["event_type"] for event in events].count("run_worktree_commit_completed") == 1
+    finally:
+        release.touch()
+        await session_two.close()
+        await session_one.close()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_submit_drains_commit_before_reset_takes_ownership(
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "repo"
+    _init_repo(repo_path)
+    coordinator = WorktreeMutationCoordinator()
+    engine, session_one, service_one, run_id, task_id = await _service_with_building_run(
+        repo_path,
+        coordinator,
+    )
+    session_two, service_two = await _second_service(engine, WorktreeMutationCoordinator())
+    marker = tmp_path / "hook-started"
+    release = tmp_path / "hook-release"
+    _install_waiting_hook(repo_path, marker, release)
+    (repo_path / "tracked.txt").write_text("builder change\n")
+
+    try:
+        submit = asyncio.create_task(service_one.submit_for_verification(run_id, task_id))
+        await _wait_for_file(marker)
+        submit.cancel()
+        reset = asyncio.create_task(
+            service_two._run_event_sourced_worktree_reset(
+                run_id=run_id,
+                worktree_path=str(repo_path),
+                reset_type="discard_changes",
+                reason="cancellation_race_test",
+            )
+        )
+        await asyncio.sleep(0.05)
+        assert not submit.done()
+        assert not reset.done()
+
+        release.touch()
+        with pytest.raises(asyncio.CancelledError):
+            await submit
+        await reset
+
+        assert (repo_path / "tracked.txt").read_text() == "builder change\n"
+        persisted = await service_two.get_task(run_id, task_id)
+        assert persisted.status == TaskStatus.VERIFYING
+        events = await _events(session_two, run_id)
+        event_types = [event["event_type"] for event in events]
+        assert event_types.index("run_worktree_commit_completed") < event_types.index(
+            "task_status_changed"
+        )
+        assert event_types.index("task_status_changed") < event_types.index(
+            "run_worktree_reset_requested"
+        )
+        completed = next(
+            event["payload"]
+            for event in events
+            if event["event_type"] == "run_worktree_commit_completed"
+        )
+        assert completed["commit_sha"] == _git(repo_path, "rev-parse", "HEAD")
+    finally:
+        release.touch()
+        await session_two.close()
+        await session_one.close()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_waiter_never_takes_worktree_ownership(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    _init_repo(repo_path)
+    coordinator = WorktreeMutationCoordinator()
+    engine, session_one, service_one, run_id, task_id = await _service_with_building_run(
+        repo_path,
+        coordinator,
+    )
+    session_two, service_two = await _second_service(engine, WorktreeMutationCoordinator())
+    marker = tmp_path / "hook-started"
+    release = tmp_path / "hook-release"
+    _install_waiting_hook(repo_path, marker, release)
+    (repo_path / "tracked.txt").write_text("builder change\n")
+
+    try:
+        owner = asyncio.create_task(service_one.submit_for_verification(run_id, task_id))
+        await _wait_for_file(marker)
+        waiter = asyncio.create_task(service_two.submit_for_verification(run_id, task_id))
+        await asyncio.sleep(0.05)
+        assert not waiter.done()
+
+        waiter.cancel()
+        async with asyncio.timeout(0.5):
+            with pytest.raises(asyncio.CancelledError):
+                await waiter
+        assert not owner.done()
+
+        release.touch()
+        result = await owner
+        assert result.new_status == TaskStatus.VERIFYING
+        events = await _events(session_one, run_id)
+        assert [event["event_type"] for event in events].count("run_worktree_commit_completed") == 1
+    finally:
+        release.touch()
+        await session_two.close()
+        await session_one.close()
         await engine.dispose()

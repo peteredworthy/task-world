@@ -212,6 +212,7 @@ _INVARIANT_CHECK = {
         "state": "planned",
         "task_region_id": "corrective_work_region",
         "command_binding": "dynamic_feature_hidden_oracle",
+        "command_definition": {"cmd": "true"},
     },
 }
 _CORRECTIVE_VERIFIER = {

@@ -391,6 +391,85 @@ async def test_prompt_returns_verifier_when_verifying(
     assert "## Requirements to Verify" in data["user"]
 
 
+async def test_verifier_prompt_endpoint_preserves_resolved_contract_and_observation(
+    client_with_repo: tuple[AsyncClient, Path, DrainFn],
+) -> None:
+    """The public verifier prompt includes the same contract as dispatch."""
+    client, repo, drain = client_with_repo
+    routine = {
+        "id": "verifier-context-regression",
+        "name": "Verifier context regression",
+        "description": "Prompt contract regression",
+        "steps": [
+            {
+                "id": "S-01",
+                "title": "Implementation",
+                "step_context": "This step owns the parser boundary.",
+                "tasks": [
+                    {
+                        "id": "T-01",
+                        "title": "Implement parser",
+                        "task_context": "Implement the {{feature}} parser.",
+                        "requirements": [{"id": "R1", "desc": "The parser works"}],
+                        "auto_verify": {
+                            "items": [
+                                {
+                                    "id": "acceptance",
+                                    "cmd": "printf '\\117\\102\\123\\105\\122\\126\\105\\104'",
+                                    "must": True,
+                                }
+                            ]
+                        },
+                        "verifier": {"rubric": [{"id": "Q1", "text": "Does it work?"}]},
+                    }
+                ],
+            }
+        ],
+    }
+    response = await client.post(
+        "/api/runs",
+        json={
+            "execution_mode": "legacy",
+            "repo_name": repo.name,
+            "branch": "main",
+            "routine_embedded": routine,
+            "config": {"feature": "unicode"},
+        },
+    )
+    assert response.status_code == 201
+    run_id = response.json()["id"]
+    task_id = response.json()["steps"][0]["tasks"][0]["id"]
+    start_response = await client.post(f"/api/runs/{run_id}/start")
+    assert start_response.status_code == 202
+    await drain(run_id)
+
+    task_start = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
+    assert task_start.status_code == 200
+    checklist = await client.patch(
+        f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1",
+        json={"status": "done"},
+    )
+    assert checklist.status_code == 200
+    submit = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+    assert submit.status_code == 200
+    await drain(run_id)
+
+    prompt_response = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
+    assert prompt_response.status_code == 200
+    prompt_data = prompt_response.json()
+    assert prompt_data["phase"] == "verifying"
+    user_prompt = prompt_data["user"]
+    assert "This step owns the parser boundary." in user_prompt
+    assert "Implement the unicode parser." in user_prompt
+    assert (
+        "[acceptance; must=True] printf '\\117\\102\\123\\105\\122\\126\\105\\104'" in user_prompt
+    )
+    assert "Current Attempt Auto-Verify Receipts" in user_prompt
+    assert "[acceptance] PASSED" in user_prompt
+    assert "exit_code=0" in user_prompt
+    assert "OBSERVED" in user_prompt
+
+
 async def test_prompt_rejects_pending_task(client: AsyncClient, repo_name: str) -> None:
     """Prompt endpoint returns 409 when task is in PENDING state."""
     run_id, task_id = await _setup_active_run(client, repo_name)

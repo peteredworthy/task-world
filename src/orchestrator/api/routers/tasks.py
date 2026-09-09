@@ -6,10 +6,16 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.runners import get_agent_system_prompt, resolve_agent_name
+from orchestrator.runners import (
+    get_agent_system_prompt,
+    resolve_agent_name,
+    resolve_model_for_profile,
+    resolve_verifier_config,
+)
 from orchestrator.api.deps import (
     get_current_user,
     get_routine_dirs,
@@ -44,7 +50,11 @@ from orchestrator.api.schemas.tasks import (
 )
 from orchestrator.config.enums import ChecklistStatus, RoutineSource, RunStatus, TaskStatus
 from orchestrator.config.models import MCPServerConfig, RoutineConfig
-from orchestrator.db import RunRepository, commit_with_event_outbox
+from orchestrator.db import (
+    AgentRunnerModelProfileDefaultModel,
+    RunRepository,
+    commit_with_event_outbox,
+)
 from orchestrator.git import WorktreeCommitError
 from orchestrator.config import discover_routines, RoutineNotFoundError
 from orchestrator.state.errors import ChecklistItemNotFoundError, TaskNotFoundError
@@ -782,7 +792,40 @@ async def get_task_prompt(
         return PromptResponse(system=system, user=prompt.user, phase="building", callback=callback)
     else:
         # TaskStatus.VERIFYING
-        prompt = generate_verifier_prompt(task_config, task_state, step_context=step_context)
+        verifier_config = dict(run.agent_runner_config)
+        if task_config.profile is not None and run.agent_runner_type is not None:
+            profile_rows = (
+                (
+                    await session.execute(
+                        select(AgentRunnerModelProfileDefaultModel).where(
+                            AgentRunnerModelProfileDefaultModel.runner_type
+                            == run.agent_runner_type.value
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            profile_defaults = {row.profile: row.model for row in profile_rows}
+            resolved_profile_model = resolve_model_for_profile(
+                task_config.profile,
+                profile_defaults,
+                fallback_model=run.agent_runner_config.get("model"),
+            )
+            if resolved_profile_model is not None:
+                verifier_config["model"] = resolved_profile_model
+        verifier_model = resolve_verifier_config(
+            verifier_config,
+            run.verifier_model,
+            task_has_profile=task_config.profile is not None,
+        ).get("model")
+        prompt = generate_verifier_prompt(
+            task_config,
+            task_state,
+            step_context=step_context,
+            run_config=run_config,
+            model=verifier_model,
+        )
         agent_name = resolve_agent_name(
             "verifier",
             task_config.verifier_agent,

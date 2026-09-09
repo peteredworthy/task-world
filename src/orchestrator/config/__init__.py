@@ -27,6 +27,7 @@ from orchestrator.config.json_schema import json_schema_declaration_error
 from orchestrator.config.models import (
     AutoVerifyConfig,
     AutoVerifyItemConfig,
+    ContextSource,
     DryRunConfig,
     RequirementConfig,
     RetryConfig,
@@ -41,6 +42,7 @@ from orchestrator.config.models import (
     TransitionCondition,
     VerifierConfig,
 )
+from orchestrator.config.template_vars import resolve_plain_variables
 from orchestrator.config.routines import (
     DiscoveredRoutine,
     ProjectRoutine,
@@ -61,6 +63,7 @@ __all__ = [
     "AgentRunnerType",
     "AutoVerifyConfig",
     "AutoVerifyItemConfig",
+    "ContextSource",
     "ChecklistStatus",
     "Complexity",
     "DryRunConfig",
@@ -106,4 +109,5 @@ __all__ = [
     "json_schema_declaration_error",
     "load_routine_from_path",
     "normalize_persisted_agent_runner_type",
+    "resolve_plain_variables",
 ]

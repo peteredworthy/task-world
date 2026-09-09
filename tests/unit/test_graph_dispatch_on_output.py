@@ -3151,6 +3151,42 @@ async def test_execute_check_command_resolves_bound_dynamic_feature_oracle(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_check_dispatch_reports_unavailable_binding_as_terminal_contract_failure(
+    tmp_path: Path,
+) -> None:
+    context = _context(
+        node_id="check-blank-oracle",
+        node_kind="check",
+        worktree_path=str(tmp_path),
+        node_payload={"command_binding": "dynamic_feature_hidden_oracle"},
+        graph_events=[
+            _event(
+                "node_created",
+                {
+                    "node_id": "routine-snapshot",
+                    "kind": "routine_snapshot",
+                    "state": "completed",
+                    "snapshot": {
+                        "dynamic_feature": {
+                            "hidden_oracle_command": "",
+                            "acceptance_command": "uv run pytest tests -q",
+                        }
+                    },
+                },
+                1,
+            )
+        ],
+    )
+    executor = RecordingExecutor()
+
+    await executor._run_check(context)
+
+    assert executor.submitted_checks == []
+    assert len(executor.failures) == 1
+    assert "non-empty hidden_oracle_command" in executor.failures[0]
+
+
+@pytest.mark.asyncio
 async def test_dynamic_acceptance_runs_mechanically_despite_passed_verification(
     tmp_path: Path,
 ) -> None:

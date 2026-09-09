@@ -304,7 +304,7 @@ def _prompt_for_node(context: GraphDispatchContext) -> str:
                     "- Use horizon_region_templates only for non-reliable-plan compatibility authoring and gap recovery.",
                     "- Read frontier, evidence, open_planner_proposals, accepted_planner_patches, and patch_rejections before proposing.",
                     "- If dynamic_feature is present, ground generated worker, verifier, gap-analysis, corrective-work, and final invariant regions in those feature inputs.",
-                    "- Check nodes must include command_definition or command_binding; for dynamic_feature final invariant checks, use command_binding='dynamic_feature_hidden_oracle'.",
+                    "- Check nodes must include command_definition or command_binding. For dynamic_feature semantic checks, use command_binding='dynamic_feature_hidden_oracle' only when the packet's available_check_bindings includes it; otherwise provide an explicit batch-scoped command_definition. The reliable-plan final acceptance check is controller-owned and must remain distinct; do not use dynamic_feature_acceptance as a semantic-region binding.",
                     "- Every required check, including final invariant checks, must have a failure continuation: bind failed check_result evidence into a gap planner or corrective-work path so a failed check cannot leave the graph quiescent with no schedulable recovery node.",
                     "- For gap planners, follow gap_analysis_contract and prefer corrective_work_region for corrective worker/verifier patches.",
                     "- A write worker cannot evade declared-batch semantics by using corrective_work. Use effectful_batch for implementation correction; use semantic_plan_revision only with exact failed SemanticArtifact and plan-verification record/topology facts from the packet.",
@@ -856,9 +856,24 @@ def _planner_visible_dynamic_feature(dynamic_feature: dict[str, Any]) -> dict[st
     visible = {
         key: value for key, value in dynamic_feature.items() if key != "hidden_oracle_command"
     }
-    if dynamic_feature.get("hidden_oracle_command"):
+    hidden_available = _nonempty_text(dynamic_feature.get("hidden_oracle_command"))
+    acceptance_available = _nonempty_text(dynamic_feature.get("acceptance_command"))
+    if hidden_available:
         visible["hidden_oracle_binding"] = "dynamic_feature_hidden_oracle"
+        visible["available_check_bindings"] = [
+            "dynamic_feature_hidden_oracle",
+            *(["dynamic_feature_acceptance"] if acceptance_available else []),
+        ]
+    else:
+        visible["hidden_oracle_binding"] = "unavailable"
+        visible["available_check_bindings"] = (
+            ["dynamic_feature_acceptance"] if acceptance_available else []
+        )
     return visible
+
+
+def _nonempty_text(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
 def _planner_frontier(
@@ -1240,6 +1255,11 @@ def _planner_patch_examples(
 ) -> list[dict[str, Any]]:
     base_position = int(packet.get("current_graph_position", 0))
     examples: list[dict[str, Any]] = []
+    invariant_command = (
+        {"command_binding": "dynamic_feature_hidden_oracle"}
+        if _hidden_oracle_binding_available(packet)
+        else {"command_definition": {"cmd": "uv run pytest tests/batch -q"}}
+    )
 
     if {"create_node", "create_edge"}.issubset(PLANNER_OPS):
         region_id = (
@@ -1485,7 +1505,7 @@ def _planner_patch_examples(
                             "role": "invariant_gate",
                             "state": "planned",
                             "task_region_id": "region-example",
-                            "command_binding": "dynamic_feature_hidden_oracle",
+                            **invariant_command,
                         },
                     },
                     {
@@ -1630,6 +1650,17 @@ def _reliable_plan_semantic_region_example(
             (batch_id for batch_id in declared_batch_ids if batch_id not in materialized), None
         )
     )
+    check = (
+        {
+            "name": "bounded project check",
+            "command_binding": "dynamic_feature_hidden_oracle",
+        }
+        if _hidden_oracle_binding_available(packet)
+        else {
+            "name": "bounded project check",
+            "command_definition": {"cmd": "uv run pytest tests/batch -q"},
+        }
+    )
     return {
         "purpose": "construct_reliable_plan_region",
         "patch_id": "stable-logical-operation-key",
@@ -1640,14 +1671,20 @@ def _reliable_plan_semantic_region_example(
         "requirement_ids": ["exact-bound-requirement-id"],
         "dependencies": [],
         "acceptance": ["the batch obligations and required checks pass"],
-        "checks": [
-            {
-                "name": "bounded project check",
-                "command_binding": "dynamic_feature_hidden_oracle",
-            }
-        ],
+        "checks": [check],
         "rubric": ["the exact batch and bound requirements are satisfied"],
     }
+
+
+def _hidden_oracle_binding_available(packet: dict[str, Any]) -> bool:
+    dynamic_feature = packet.get("dynamic_feature")
+    if not isinstance(dynamic_feature, dict):
+        return False
+    typed_feature = cast(dict[str, Any], dynamic_feature)
+    available = typed_feature.get("available_check_bindings")
+    return isinstance(available, list) and "dynamic_feature_hidden_oracle" in cast(
+        list[Any], available
+    )
 
 
 def legacy_reliable_plan_finalization_example(

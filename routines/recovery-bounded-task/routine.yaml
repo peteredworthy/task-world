@@ -1,0 +1,54 @@
+routine:
+  id: recovery-bounded-task
+  name: Bounded Recovery Task
+  description: One bounded implementation attempt with configured checks and fresh independent verification.
+  execution_mode: legacy
+  inputs:
+    - name: request
+      required: true
+      description: Complete task contract, allowed paths, and verification instructions
+    - name: acceptance_command
+      required: true
+      description: Operator-selected acceptance command run unchanged in the candidate worktree
+  steps:
+    - id: S-01
+      title: Implement and independently verify the bounded task
+      step_context: Follow the supplied task contract, preserve existing checks, and submit through the normal workflow.
+      tasks:
+        - id: T-01
+          title: Deliver the requested behavior
+          task_context: |
+            {{request}}
+
+            The configured acceptance command is:
+            {{acceptance_command}}
+
+            Keep changes within the requested scope. Do not modify the
+            operator-owned acceptance command or weaken existing checks.
+            Do not merge, deploy, or start servers. Submit through the normal
+            orchestrator callback for a fresh independent verifier.
+          requirements:
+            - id: R1
+              desc: The complete supplied task contract is satisfied by the actual candidate.
+              priority: critical
+            - id: R2
+              desc: The configured acceptance command passes unchanged against the candidate.
+              priority: critical
+            - id: R3
+              desc: Changes respect the allowed scope, include the requested real tests and documentation, and preserve required submission checks.
+              priority: critical
+          auto_verify:
+            items:
+              - id: acceptance
+                cmd: "{{acceptance_command}}"
+                must: true
+          verifier:
+            rubric:
+              - id: R1
+                text: "A only if the actual behavior satisfies the complete task contract, including edge cases; otherwise F with a reproducible discrepancy."
+              - id: R2
+                text: "A only if the exact configured acceptance command passes against the current candidate; otherwise F with the command and result."
+              - id: R3
+                text: "A only if scope, tests, documentation and required submission checks meet the task contract. Use current check evidence and focused verification; additional checks are appropriate for a specific unresolved concern. Do not substitute an invented command for a configured acceptance command."
+          retry:
+            max_attempts: 1

@@ -8,6 +8,7 @@ from typing import Any, cast
 from orchestrator.graph.command_bindings import (
     canonicalize_check_command_definition,
     is_known_check_command_binding,
+    validate_check_command_binding,
 )
 from orchestrator.graph.contracts import (
     binding_policy,
@@ -257,6 +258,8 @@ def normalize_patch_node_payload(
     if is_new_format:
         node["cache_authority_hash"] = projected_hash
     canonicalize_check_command_definition(node, list(events), projection=projection)
+    if node.get("kind") == "check":
+        validate_check_command_binding(node, list(events), projection=projection)
     return node
 
 

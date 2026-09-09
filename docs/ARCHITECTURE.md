@@ -298,6 +298,7 @@ task-world/
 │       ├── completion.py      # Run completion logic
 │       ├── dry_run.py         # Dry run execution
 │       ├── locks.py           # Task-level pessimistic locking
+│       ├── worktree_mutations.py # Process-external checkout ownership; drains cancelled Git work
 │       ├── graph_driver.py    # Production driver for graph-mode runs
 │       ├── graph_recovery.py  # Startup recovery selection for graph-mode runs
 │       ├── agent/             # Agent interaction layer

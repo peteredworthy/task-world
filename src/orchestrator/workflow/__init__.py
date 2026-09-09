@@ -58,6 +58,7 @@ from orchestrator.workflow.locks import (
     LockTimeoutError,
     TaskLockedError,
 )
+from orchestrator.workflow.worktree_mutations import WorktreeMutationCoordinator
 from orchestrator.workflow.events import (
     AgentChangedEvent,
     AgentDiedEvent,
@@ -346,6 +347,7 @@ __all__ = [
     "LockTimeoutError",
     "MergeReadiness",
     "TaskLockedError",
+    "WorktreeMutationCoordinator",
     # Events
     "AgentChangedEvent",
     "AgentDiedEvent",

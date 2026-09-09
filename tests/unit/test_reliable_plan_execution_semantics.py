@@ -142,10 +142,21 @@ def _macro_patch_for_planner(*, patch_id: str, invocations: list[dict[str, Any]]
 def _atomic_nonfinal_batch_patch(args: dict[str, Any]) -> PatchEnvelope:
     batch_id = str(args["batch_id"])
     planning_horizon = int(args["planning_horizon"])
+    macro_args = dict(args)
+    macro_args["checks"] = [
+        {
+            **check,
+            "command_definition": {"cmd": "true"}
+            if check.get("command_binding") == "dynamic_feature_hidden_oracle"
+            and "command_definition" not in check
+            else check.get("command_definition"),
+        }
+        for check in args["checks"]
+    ]
     return _macro_patch_for_planner(
         patch_id=f"patch-atomic-{batch_id}",
         invocations=[
-            {"macro": "create_effectful_batch", "args": args},
+            {"macro": "create_effectful_batch", "args": macro_args},
             {
                 "macro": "create_successor_planner",
                 "args": {
@@ -1649,6 +1660,7 @@ def test_effectful_batch_macro_requires_plan_verification_checks_and_distinct_re
                         {
                             "check_id": "check-batch-1",
                             "command_binding": "dynamic_feature_hidden_oracle",
+                            "command_definition": {"cmd": "true"},
                         }
                     ],
                     "rubric": ["candidate satisfies batch 1 and REQ-1"],

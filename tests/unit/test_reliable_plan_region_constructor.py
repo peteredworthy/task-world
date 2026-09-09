@@ -192,6 +192,40 @@ def _expand(projection: Any, args: dict[str, Any], *, patch_id: str = "patch-sta
     )
 
 
+def test_constructor_rejects_unavailable_hidden_oracle_from_routine_snapshot() -> None:
+    projection = build_projection(
+        [
+            *_base_events(successor=True),
+            event(
+                "output_record_accepted",
+                {
+                    "record_id": "routine-snapshot-record",
+                    "record_kind": "graph_record",
+                    "record_type": "routine_snapshot",
+                    "producer_node_id": "routine-snapshot",
+                    "port": "snapshot",
+                    "schema": "RoutineSnapshot",
+                    "value": {
+                        "routine_id": "dynamic-graph-feature",
+                        "name": "Dynamic graph feature",
+                        "content_hash": "hash",
+                        "step_count": 1,
+                        "task_count": 1,
+                        "dynamic_feature": {
+                            "hidden_oracle_command": "",
+                            "acceptance_command": "uv run pytest tests -q",
+                        },
+                    },
+                },
+                position=4,
+            ),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="non-empty hidden_oracle_command"):
+        _expand(projection, _semantic_args(scope="batch-1"))
+
+
 def test_constructor_builds_atomic_initial_region_without_planner_graph_ids() -> None:
     projection = build_projection(_base_events(successor=False))
     args = {**_semantic_args(scope="whole feature"), "checks": []}
@@ -880,6 +914,29 @@ def test_gap_planner_replaces_finalization_after_failed_independent_audit() -> N
             position=23,
         ),
         event("output_record_accepted", classification, position=24),
+        event(
+            "output_record_accepted",
+            {
+                "record_id": "routine-snapshot-record",
+                "record_kind": "graph_record",
+                "record_type": "routine_snapshot",
+                "producer_node_id": "routine-snapshot",
+                "port": "snapshot",
+                "schema": "RoutineSnapshot",
+                "value": {
+                    "routine_id": "dynamic-graph-feature",
+                    "name": "Dynamic graph feature",
+                    "content_hash": "hash",
+                    "step_count": 1,
+                    "task_count": 1,
+                    "dynamic_feature": {
+                        "hidden_oracle_command": "printf hidden-oracle",
+                        "acceptance_command": "printf acceptance",
+                    },
+                },
+            },
+            position=25,
+        ),
     ]
 
     ops = _expand(

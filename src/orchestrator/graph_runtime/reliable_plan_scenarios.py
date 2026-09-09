@@ -530,7 +530,10 @@ class ReliablePlanProductPathRunner:
                                 "checks": [
                                     {
                                         "check_id": "check-batch-combined",
-                                        "command_binding": "dynamic_feature_hidden_oracle",
+                                        "command_definition": {
+                                            "id": "check-batch-combined",
+                                            "cmd": "printf amended-batch-check",
+                                        },
                                     }
                                 ],
                                 "rubric": ["candidate satisfies the amended batch"],

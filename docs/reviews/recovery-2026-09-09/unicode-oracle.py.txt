@@ -1,0 +1,33 @@
+"""Operator-owned supplemental Unicode acceptance; run from candidate root."""
+
+import importlib.util
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+path = Path.cwd() / "examples/qualification/jsonl_validator.py"
+spec = importlib.util.spec_from_file_location("recovery_unicode_candidate", path)
+assert spec is not None and spec.loader is not None
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+for separator in ("\u0085", "\u2028", "\u2029"):
+    text = json.dumps({"text": f"before{separator}after"}, ensure_ascii=False) + "\n"
+    assert module.validate_jsonl(text) == (), repr(text)
+    issues = module.validate_jsonl(text + "\nBAD\n[]\n")
+    assert [(x.line_number, x.reason) for x in issues] == [
+        (3, "invalid_json"), (4, "non_object")
+    ], issues
+    with tempfile.TemporaryDirectory(prefix="recovery-unicode-") as directory:
+        source = Path(directory) / "unicode input.jsonl"
+        source.write_text(text, encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(path), str(source)],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0, result
+        assert json.loads(result.stdout) == {"valid": True, "issues": []}, result
+print("PASS: supplemental Unicode JSONL acceptance")
