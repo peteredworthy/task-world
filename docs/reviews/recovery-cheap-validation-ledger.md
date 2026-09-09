@@ -190,6 +190,67 @@ limited to documentation/evidence outside the committed harness and routine;
 the exact dirty-file list is not serialized. Verifier invocation 3 is admitted,
 one reserve remains, and no further planner retry is allowed.
 
+### Stage 2 invocation 3 — verifier behavior (executed, passed)
+
+- Hypothesis: in one fresh Luna-medium verifier context, the model will run the
+  two exact independent oracle commands, grade the committed good control
+  `R-GOOD` exactly once as A, grade the deliberately defective
+  `R-MISSING-NODE-STATES` exactly once as D or F with a reason naming
+  `node_states`, call submit exactly once, and leave the fixture unchanged.
+- Deterministic limit: the harness and independent setup commands prove the two
+  fixtures separate: inside the oracle, the good candidate rejects missing
+  `node_states` and the defective candidate falsely exits zero; the outer oracle
+  therefore exits 0 for the good control and 1 for the defective fixture. These
+  deterministic results cannot establish that a real fresh verifier notices the
+  defect and authors the exact bounded grade contract.
+- Source: commit `0e6e5e88c829da679cf09b72d1031f44eb09577b`, tree
+  `9b14064ed07d77c1198b1d2c30d7da7b4e7517cc`; harness SHA-256
+  `1bea679ad83943887c0bdda2164d1fab06a87f26174ee5326e362216297ffde2`;
+  routine SHA-256
+  `53a3d9a559833b9791a6a34f5fe8d3e6738994b28e3e626b228caf8228f6af48`.
+- Invocation: `UV_CACHE_DIR=/tmp/orchestrator-recovery-uv uv run --no-sync
+  python examples/recovery/model_phase_probe.py verifier`; role `verifier`,
+  model `gpt-5.6-luna`, reasoning `medium`, one paid execution, no retry. This
+  is paid Stage 2 invocation 3; one reserve remains unspent.
+- Expected evidence: both independent command identities, return codes,
+  durations, and output hashes; one successful runner result; the exact two
+  grades and defect reason; one submit; unchanged committed fixture; drained
+  execution task; source/fixture identities, setup/model/total durations, and
+  usage.
+- Budget and stop: 180 seconds operator-enforced model wall time, setup measured
+  separately, and no native token/action limit. Stop after the one accepted
+  submit or after cancellation/draining at timeout. An expiry is incomplete.
+- Next decision: a strict pass completes the Stage 2 initial planner/verifier
+  evidence gate and admits Stage 3 planning, not an automatic live run. A
+  failure gets an evidence review; the final reserve may be used only for a
+  specific demonstrated correctable contract or reasoning gap, never an
+  unchanged retry.
+- Environment note: the verifier probe is a direct isolated Codex Server agent
+  phase and does not use the local REST lifecycle. No server start, live run, or
+  historical-run resume is part of this invocation.
+
+Result recorded immediately after invocation 3: **passed**, not timed out.
+Luna graded `R-GOOD` exactly once as A, graded
+`R-MISSING-NODE-STATES` exactly once as F with a reason explicitly identifying
+the missing `node_states` false-complete defect, and submitted exactly once. The
+independent oracle returned 0 for the good control and 1 for the defective
+fixture, matching the harness setup contract; both command identities, output
+hashes, and 50 ms durations are retained. The runner result succeeded, no
+cancellation was requested, the task drained, and the committed fixture was
+unchanged. Model and total wall times were 21,201 ms and 21,790 ms. Usage was
+74,462 input, 870 output, 42,240 cache-read input, and 129 reasoning-output
+tokens across 13 actions. The exact emitted JSON is retained as
+`recovery-2026-09-09/stage2-verifier-invocation-3.json`. This counts as paid
+invocation 3; the initial Stage 2 planner/verifier questions are answered, one
+reserve remains unspent, and no additional model execution is automatically
+authorized. Fresh evidence validation parsed the JSON as `ProbeEvidence`,
+matched the source/harness/routine/fixture/Git-tree identities, replayed the
+oracle exits and command/output hashes exactly, and confirmed every strict pass
+predicate. The bounded record proves Luna's exact grading and submission
+behavior; it does not retain a model shell-tool transcript independently proving
+that Luna itself ran both commands. Stage 2 is complete. Stage 3 is admitted
+only after its separate experiment/budget card and live readiness check.
+
 ## Retained gate accounting
 
 All values below are retained observations, not projections. The repeated
