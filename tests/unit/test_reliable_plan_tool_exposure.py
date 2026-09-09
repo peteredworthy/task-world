@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from jsonschema import Draft202012Validator
 import pytest
 
+from orchestrator.graph import reliable_plan_check_decision_tool_schema
 from orchestrator.graph_runtime.graph_mcp_tools import build_graph_mcp_server
 from orchestrator.runners import (
     RELIABLE_PLAN_REQUIRED_TOOL_NAMES,
@@ -80,6 +82,51 @@ def test_one_missing_required_macro_fails_closed() -> None:
     assert raised.value.missing_tools == ("construct_reliable_plan_region",)
 
 
+def test_codex_reliable_plan_checks_use_canonical_decision_schema() -> None:
+    context = ExecutionContext(
+        run_id="run-schema-parity",
+        task_id="planner-schema-parity",
+        working_dir="/tmp/reliable-plan",
+        prompt="Plan the graph.",
+        requirements=[],
+        node_kind="planner",
+        node_role="planner",
+        available_tools=["construct_reliable_plan_region"],
+    )
+    construct = next(
+        spec
+        for spec in build_dynamic_tool_specs(context=context)
+        if spec["name"] == "construct_reliable_plan_region"
+    )
+
+    assert "dependencies" not in construct["inputSchema"]["required"]
+    assert (
+        construct["inputSchema"]["properties"]["checks"]["items"]
+        == reliable_plan_check_decision_tool_schema()
+    )
+
+
+def test_reliable_plan_check_schema_matches_exactly_one_non_null_command() -> None:
+    schema = reliable_plan_check_decision_tool_schema()
+    properties = schema["properties"]
+    assert properties["command_binding"]["type"] == "string"
+    assert properties["command_binding"]["const"] == "dynamic_feature_hidden_oracle"
+    assert properties["command_definition"]["type"] == "object"
+    assert "default" not in properties["command_binding"]
+    assert "default" not in properties["command_definition"]
+
+    validator = Draft202012Validator(schema)
+    valid_binding = {
+        "name": "hidden check",
+        "command_binding": "dynamic_feature_hidden_oracle",
+    }
+    valid_definition = {"name": "project tests", "command_definition": {"cmd": "true"}}
+    assert list(validator.iter_errors(valid_binding)) == []
+    assert list(validator.iter_errors(valid_definition)) == []
+    assert list(validator.iter_errors({"name": "null binding", "command_binding": None}))
+    assert list(validator.iter_errors({"name": "null definition", "command_definition": None}))
+
+
 def test_malformed_required_schema_fails_closed_with_exact_tool() -> None:
     specs = [
         dict(spec)
@@ -136,11 +183,24 @@ async def test_shared_graph_mcp_registers_and_routes_reliable_macros() -> None:
         allowed_tools=allowed,
         required_tools=RELIABLE_PLAN_REQUIRED_TOOL_NAMES,
     )
-    names = tuple(mcp._tool_manager._tools)
+    tools = await mcp.list_tools()
+    names = tuple(tool.name for tool in tools)
     assert names == (
         "submit_graph_patch",
         *RELIABLE_PLAN_REQUIRED_TOOL_NAMES,
     )
+    mcp_construct = next(tool for tool in tools if tool.name == "construct_reliable_plan_region")
+    mcp_checks = mcp_construct.inputSchema["properties"]["checks"]
+    codex_construct = next(
+        spec
+        for spec in build_dynamic_tool_specs(
+            context=_context(["submit_graph_patch", *RELIABLE_PLAN_REQUIRED_TOOL_NAMES])
+        )
+        if spec["name"] == "construct_reliable_plan_region"
+    )
+    codex_checks = codex_construct["inputSchema"]["properties"]["checks"]
+    assert mcp_checks == codex_checks
+    assert mcp_checks["items"] == reliable_plan_check_decision_tool_schema()
 
     await mcp.call_tool(
         "construct_reliable_plan_region",
@@ -151,7 +211,6 @@ async def test_shared_graph_mcp_registers_and_routes_reliable_macros() -> None:
             "scope": "batch-2",
             "objective": "Implement batch 2.",
             "requirement_ids": ["REQ-2"],
-            "dependencies": ["batch-1"],
             "acceptance": ["batch 2 passes"],
             "checks": [
                 {
@@ -160,6 +219,25 @@ async def test_shared_graph_mcp_registers_and_routes_reliable_macros() -> None:
                 }
             ],
             "rubric": ["REQ-2 is satisfied"],
+        },
+    )
+    await mcp.call_tool(
+        "construct_reliable_plan_region",
+        {
+            "patch_id": "patch-2",
+            "base_graph_position": 5,
+            "operation_key": "batch-3-attempt-1",
+            "scope": "batch-3",
+            "objective": "Implement batch 3.",
+            "requirement_ids": ["REQ-3"],
+            "acceptance": ["batch 3 passes"],
+            "checks": [
+                {
+                    "name": "project tests",
+                    "command_definition": {"cmd": "uv run pytest -q"},
+                }
+            ],
+            "rubric": ["REQ-3 is satisfied"],
         },
     )
     assert calls == [
@@ -174,7 +252,6 @@ async def test_shared_graph_mcp_registers_and_routes_reliable_macros() -> None:
                         "scope": "batch-2",
                         "objective": "Implement batch 2.",
                         "requirement_ids": ["REQ-2"],
-                        "dependencies": ["batch-1"],
                         "acceptance": ["batch 2 passes"],
                         "checks": [
                             {
@@ -186,7 +263,30 @@ async def test_shared_graph_mcp_registers_and_routes_reliable_macros() -> None:
                     },
                 }
             ],
-        }
+        },
+        {
+            "patch_id": "patch-2",
+            "base_graph_position": 5,
+            "macro_invocations": [
+                {
+                    "macro": "construct_reliable_plan_region",
+                    "args": {
+                        "operation_key": "batch-3-attempt-1",
+                        "scope": "batch-3",
+                        "objective": "Implement batch 3.",
+                        "requirement_ids": ["REQ-3"],
+                        "acceptance": ["batch 3 passes"],
+                        "checks": [
+                            {
+                                "name": "project tests",
+                                "command_definition": {"cmd": "uv run pytest -q"},
+                            }
+                        ],
+                        "rubric": ["REQ-3 is satisfied"],
+                    },
+                }
+            ],
+        },
     ]
 
 

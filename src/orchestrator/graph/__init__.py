@@ -120,7 +120,10 @@ from orchestrator.graph.file_state import (
     default_file_state_policy,
     secret_name_matches,
 )
-from orchestrator.graph.macros import expand_patch_macros
+from orchestrator.graph.macros import (
+    expand_patch_macros,
+    reliable_plan_check_decision_tool_schema,
+)
 from orchestrator.graph.reliable_plan_evaluation import (
     RELIABLE_PLAN_INCIDENT_ID,
     RELIABLE_PLAN_RUNNER_ID,
@@ -618,6 +621,7 @@ __all__ = [
     "GraphPatchRejectedPayload",
     "HeartbeatRecordedPayload",
     "GraphProjection",
+    "reliable_plan_check_decision_tool_schema",
     "ProjectionReplayConflictError",
     "GraphProjectionSnapshot",
     "GraphRunOutcome",

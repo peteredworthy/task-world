@@ -43,7 +43,6 @@ _RELIABLE_PLAN_REQUIRED_SCHEMA_FIELDS: dict[str, frozenset[str]] = {
             "scope",
             "objective",
             "requirement_ids",
-            "dependencies",
             "acceptance",
             "checks",
             "rubric",

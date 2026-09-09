@@ -350,6 +350,30 @@ class ConstructReliablePlanRegionArgs(MacroArgs):
     rubric: list[str] = Field(min_length=1)
 
 
+def reliable_plan_check_decision_tool_schema() -> dict[str, Any]:
+    """Return the shared public schema for one reliable-plan check decision."""
+    schema = ReliablePlanCheckDecision.model_json_schema()
+    schema.pop("title", None)
+    properties = cast(dict[str, dict[str, Any]], schema["properties"])
+    for field_name in ("command_binding", "command_definition"):
+        property_schema = properties[field_name]
+        alternatives = cast(list[dict[str, Any]], property_schema.pop("anyOf"))
+        non_null = [
+            alternative for alternative in alternatives if alternative.get("type") != "null"
+        ]
+        if len(non_null) != 1:
+            raise RuntimeError(f"unexpected nullable schema for {field_name}")
+        properties[field_name] = {
+            **non_null[0],
+            "title": property_schema["title"],
+        }
+    schema["oneOf"] = [
+        {"required": ["command_binding"]},
+        {"required": ["command_definition"]},
+    ]
+    return schema
+
+
 _MACRO_SPECS = {
     "create_work_region": CreateWorkRegionArgs,
     "create_corrective_region": CreateCorrectiveRegionArgs,

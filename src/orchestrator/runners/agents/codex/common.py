@@ -23,7 +23,7 @@ from typing import Any, cast
 
 from typing_extensions import Protocol
 
-from orchestrator.graph import RecordSelector
+from orchestrator.graph import RecordSelector, reliable_plan_check_decision_tool_schema
 from orchestrator.state.models import ActionLog
 from orchestrator.runners.graph_tool_routing import (
     GRAPH_MACRO_TOOL_NAMES,
@@ -620,7 +620,6 @@ def build_dynamic_tool_specs(
                     "scope",
                     "objective",
                     "requirement_ids",
-                    "dependencies",
                     "acceptance",
                     "checks",
                     "rubric",
@@ -655,30 +654,12 @@ def build_dynamic_tool_specs(
                     },
                     "checks": {
                         "type": "array",
+                        "title": "Checks",
                         "description": (
                             "May be empty for initial discovery; effectful horizons require "
                             "at least one mechanical check."
                         ),
-                        "items": {
-                            "type": "object",
-                            "required": ["name"],
-                            "properties": {
-                                "name": {"type": "string", "minLength": 1},
-                                "command_binding": {
-                                    "type": "string",
-                                    "enum": ["dynamic_feature_hidden_oracle"],
-                                },
-                                "command_definition": {
-                                    "type": "object",
-                                    "additionalProperties": True,
-                                },
-                            },
-                            "oneOf": [
-                                {"required": ["command_binding"]},
-                                {"required": ["command_definition"]},
-                            ],
-                            "additionalProperties": False,
-                        },
+                        "items": reliable_plan_check_decision_tool_schema(),
                     },
                     "rubric": {
                         "type": "array",

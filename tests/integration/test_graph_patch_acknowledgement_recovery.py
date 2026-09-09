@@ -221,7 +221,7 @@ async def test_macro_mcp_callback_accepts_omitted_ops_through_controller(tmp_pat
     mcp = build_graph_mcp_server(
         on_patch,
         None,
-        allowed_tools=["construct_reliable_plan_region"],
+        allowed_tools=["submit_graph_patch", "construct_reliable_plan_region"],
     )
     result = await mcp.call_tool(
         "construct_reliable_plan_region",
@@ -234,7 +234,12 @@ async def test_macro_mcp_callback_accepts_omitted_ops_through_controller(tmp_pat
             "requirement_ids": ["dynamic_feature_acceptance"],
             "dependencies": [],
             "acceptance": ["the plan is complete"],
-            "checks": [],
+            "checks": [
+                {
+                    "name": "project tests",
+                    "command_definition": {"cmd": "true"},
+                }
+            ],
             "rubric": ["the plan is independently executable"],
         },
     )
@@ -248,6 +253,61 @@ async def test_macro_mcp_callback_accepts_omitted_ops_through_controller(tmp_pat
         for event in updated_events
     )
     assert max(event.position for event in updated_events) > base_position
+
+    lease_grants_before_null = {
+        event.event_id for event in updated_events if event.event_type == "lease_granted"
+    }
+    explicit_null_result = await mcp.call_tool(
+        "submit_graph_patch",
+        {
+            "patch_id": "macro-mcp-explicit-null",
+            "base_graph_position": max(event.position for event in updated_events),
+            "ops": None,
+        },
+    )
+    rendered_null = " ".join(str(item) for item in explicit_null_result)
+    assert "graph patch macro-mcp-explicit-null rejected" in rendered_null
+    assert '"path":"ops"' in rendered_null
+    assert "list_type" in rendered_null
+    async with sessions() as session:
+        updated_events = await GraphEventStore(session).read_run(run_id)
+    lease_grants_after_null = {
+        event.event_id for event in updated_events if event.event_type == "lease_granted"
+    }
+    assert len(lease_grants_after_null) == len(lease_grants_before_null)
+    assert lease_grants_after_null == lease_grants_before_null
+    assert not any(
+        event.event_type == "graph_patch_accepted"
+        and event.payload.get("patch_id") == "macro-mcp-explicit-null"
+        for event in updated_events
+    )
+
+    null_command_result = await mcp.call_tool(
+        "construct_reliable_plan_region",
+        {
+            "patch_id": "macro-mcp-null-command",
+            "base_graph_position": max(event.position for event in updated_events),
+            "operation_key": "macro-mcp-null-command-operation",
+            "scope": "bounded feature",
+            "objective": "Construct the initial plan region.",
+            "requirement_ids": ["dynamic_feature_acceptance"],
+            "dependencies": [],
+            "acceptance": ["the plan is complete"],
+            "checks": [{"name": "null-check", "command_binding": None}],
+            "rubric": ["the plan is independently executable"],
+        },
+    )
+    rendered_null_command = " ".join(str(item) for item in null_command_result)
+    assert "invalid macro arguments" in rendered_null_command
+    assert "value_error" in rendered_null_command
+    assert '"path":"macro_invocations[0].args.checks[0]"' in rendered_null_command
+    async with sessions() as session:
+        updated_events = await GraphEventStore(session).read_run(run_id)
+    assert not any(
+        event.event_type == "graph_patch_accepted"
+        and event.payload.get("patch_id") == "macro-mcp-null-command"
+        for event in updated_events
+    )
 
     rejected_result = await mcp.call_tool(
         "construct_reliable_plan_region",
