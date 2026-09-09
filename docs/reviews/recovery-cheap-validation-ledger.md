@@ -130,6 +130,66 @@ Pyright reports 0 errors and 0 warnings; and `git diff --check` passes. A fresh
 validator also reproduced the exact pre-fix artifact-store exception and found
 the reserved correction/retest justified after this clean repair boundary.
 
+### Stage 2 invocation 2 — planner correction/retest (executed, passed)
+
+- Hypothesis: with only the probe workspace spelling corrected, a fresh
+  Luna-medium planner will again call `construct_reliable_plan_region` with an
+  accepted explicit check and will now complete the subsequent plain-submit
+  callback/finalization sequence without changing the committed fixture.
+- Why another model execution is necessary: invocation 1 already answered the
+  model-selection and macro-authoring question positively, but its deterministic
+  harness failure prevented observation of completed phase behavior. Real
+  artifact-store regression tests prove the corrected publication boundary;
+  they cannot prove how the fresh model turn behaves after accepted planning.
+- Correction basis: the exact pre-fix exception was independently reproduced
+  through public `FilesystemArtifactStore.publication()`. The repair only
+  canonicalizes the disposable temp parent and leaves `ArtifactRootLock` and its
+  no-follow protection unchanged. Commit `9285529a2` passed every configured
+  hook after focused and independent validation.
+- Source: commit `9285529a2cd70827eaacc9783566ac94cd701da3`, tree
+  `695c78d2cd4147adbceaf95764ac77cbe4fd1dad`; harness SHA-256
+  `1bea679ad83943887c0bdda2164d1fab06a87f26174ee5326e362216297ffde2`;
+  routine SHA-256
+  `53a3d9a559833b9791a6a34f5fe8d3e6738994b28e3e626b228caf8228f6af48`.
+- Invocation: the same planner CLI as invocation 1; role `planner`, model
+  `gpt-5.6-luna`, reasoning `medium`, one paid execution, no retry. This is paid
+  Stage 2 invocation 2 and consumes one of the two reserved correction/retests.
+- Expected evidence: one successful result; one accepted macro patch; exactly
+  one each of submit staged, completion witnessed, execution finalized,
+  callback accepted, and lease released; no runner failure/recovery event; one
+  planner lease/dispatch; zero downstream work; unchanged fixture; zero owned
+  processes; bound source/fixture identities, durations, and usage.
+- Budget and stop: 180 seconds operator-enforced model wall time, with setup
+  measured separately and no native token/action limit. Stop at the completed
+  accepted callback or exact-owner quiescence on timeout. Do not retry this
+  planner question again if it fails.
+- Next decision: a strict pass admits the prepared verifier probe as paid
+  invocation 3. Any failure stops planner spending and requires an evidence
+  review before a different Stage 2 question is considered.
+- Environment note: this isolated probe does not use the local REST lifecycle;
+  no server start or historical-run resume is authorized or required.
+
+Result recorded immediately after invocation 2: **passed**, not timed out.
+Luna called the real `construct_reliable_plan_region` macro and produced accepted
+patch `dynamic-feature-discovery-region-corrected` at graph position 30. The
+strict harness then observed exactly one each of `runner_submission_staged`,
+`runner_completion_witnessed`, `runner_execution_finalized`,
+`callback_accepted`, and `lease_released`, with no runner failure/recovery event.
+There was one planner lease/dispatch, zero downstream leases/dispatches, one
+successful execution result, an unchanged committed fixture, and zero owned
+processes after cleanup. Model wall time was 61,000 ms; usage was 184,416 input,
+3,592 output, 155,904 cache-read input, and 1,037 reasoning-output tokens across
+25 actions. The exact emitted JSON, including its bounded graph event-ID list,
+is retained as
+`recovery-2026-09-09/stage2-planner-invocation-2.json`. This counts as paid
+invocation 2 and answers the isolated completed-planner-phase question. Fresh
+evidence validation parsed the record as `ProbeEvidence`, independently matched
+the source tree plus harness/routine hashes, and confirmed every serialized pass
+predicate and the 2-of-4 paid-execution accounting. `source_dirty: true` is
+limited to documentation/evidence outside the committed harness and routine;
+the exact dirty-file list is not serialized. Verifier invocation 3 is admitted,
+one reserve remains, and no further planner retry is allowed.
+
 ## Retained gate accounting
 
 All values below are retained observations, not projections. The repeated
