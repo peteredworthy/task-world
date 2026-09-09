@@ -3016,9 +3016,7 @@ def _apply_patch_command(
             "base_graph_position": payload.base_graph_position,
         }
         if isinstance(exc, MacroCheckBindingError):
-            rejected_payload["reason"] = (
-                "The check command binding is unavailable [unavailable_command_binding]"
-            )
+            rejected_payload["reason"] = f"{exc.message} [{exc.code}]"
             rejected_payload["diagnostics"] = exc.diagnostics
         elif isinstance(exc, MacroInvocationValidationError):
             rejected_payload["reason"] = "invalid macro arguments [invalid_macro_arguments]"

@@ -27,6 +27,7 @@ from orchestrator.graph.callbacks import (
 )
 from orchestrator.graph.command_bindings import (
     CheckCommandBindingError,
+    check_command_definition_tool_schema,
     check_command_invocation,
     check_command_reference,
     check_command_uses_acceptance_fallback,
@@ -123,6 +124,7 @@ from orchestrator.graph.file_state import (
 from orchestrator.graph.macros import (
     expand_patch_macros,
     reliable_plan_check_decision_tool_schema,
+    reliable_plan_dependencies_tool_schema,
 )
 from orchestrator.graph.reliable_plan_evaluation import (
     RELIABLE_PLAN_INCIDENT_ID,
@@ -622,6 +624,7 @@ __all__ = [
     "HeartbeatRecordedPayload",
     "GraphProjection",
     "reliable_plan_check_decision_tool_schema",
+    "reliable_plan_dependencies_tool_schema",
     "ProjectionReplayConflictError",
     "GraphProjectionSnapshot",
     "GraphRunOutcome",
@@ -735,6 +738,7 @@ __all__ = [
     "callback_idempotency_events_view",
     "execution_attempts_view",
     "check_results_view",
+    "check_command_definition_tool_schema",
     "cleanup_applied_ids_view",
     "cleanup_requested_events_view",
     "classify_file_state",

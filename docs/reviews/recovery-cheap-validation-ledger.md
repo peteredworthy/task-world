@@ -251,6 +251,183 @@ behavior; it does not retain a model shell-tool transcript independently proving
 that Luna itself ran both commands. Stage 2 is complete. Stage 3 is admitted
 only after its separate experiment/budget card and live readiness check.
 
+## Stage 3 one-shot platform smoke — executed, failed and paused
+
+- Question: can the repaired production runtime carry one deliberately tiny
+  dynamic feature from REST create/start through a fresh worktree, reliable-plan
+  graph construction, one real file mutation, candidate submission, mechanical
+  checking, fresh verification/final audit, terminal completion, and quiescent
+  cleanup without a manual repair?
+- Fixture: fresh repository
+  `/private/tmp/orchestrator-stage3-smoke.DA0X5r/fixture`, root commit
+  `db05b2baf813d0e3a73451265b4b94d632d80cba`, tree
+  `43daf723b0ac2df380da7d9686ae202b9d4e49e7`, containing only committed
+  `SMOKE_SPEC.md` (SHA-256
+  `7f8966f5a5977a784d936a7cf34ba865bd243262624003500b764defb6b512c1`).
+  The spec permits exactly one new file, `stage3-smoke.txt`, with exact bytes
+  `stage3-smoke-ok\n`.
+- Check: operator-owned executable
+  `/private/tmp/orchestrator-stage3-smoke.DA0X5r/stage3_oracle.sh` (SHA-256
+  `201b7ad3f67c8c199a287894de4640362daa0d10cd60a7c8a011b91b129f1672`).
+  It compares the run checkout with its root commit, rejects every changed path
+  except `stage3-smoke.txt`, and checks the file's exact byte sequence. The
+  baseline fails and the exact candidate passes. It is the declared acceptance
+  command with a 10-second timeout; there is no additional hidden oracle.
+- Why this fixture: the retained `dynamic-smoke-feature-spec.md` intentionally
+  asks for weak-then-strengthened validation and sequential correction. That is
+  too adaptation-heavy for this lifecycle smoke and would retest a later value
+  question rather than isolate platform completion.
+- Runtime identity: the five Stage 1 production files were guarded from the
+  prior `98ca9f6c` overlay to validated source `2085edfaf` only after confirming
+  zero active runs. Their hashes exactly match the hook-clean repair worktree.
+  The existing reload manager started child PID 81602, reported application
+  ready at 19:30:14Z, and then returned health `ok` with zero active runs. Full
+  before/after hashes are in
+  `recovery-2026-09-09/stage3-activation-manifest.json`. A fresh reliable-plan
+  qualification must be issued and consumed by this same child instance.
+- Run contract: local routine `dynamic-graph-feature`, graph mode, selected
+  runner `codex_server`, Luna for planner, discovery, implementation,
+  correction, verifier, and successor assignments, reasoning `medium`, managed
+  restrictions, `patch_budget: 3`, `gap_policy_profile: standard`, and no hidden
+  oracle. `agent_runner_config` explicitly carries `model: gpt-5.6-luna` and
+  `reasoning_effort: medium`; each of the six assignment objects carries its
+  required runner type, Luna model, and profile. The patch budget permits the
+  two expected accepted horizons plus one in-session corrected proposal; it
+  does not authorize a second run.
+- Expected happy-path topology: root planner; discovery worker; independent plan
+  verifier; one successor planner; one effectful implementation worker and its
+  mechanical batch check; one batch verifier; controller-bound final acceptance
+  check; fresh final-audit verifier; final gate and run finalization. Failure-only
+  gap planners may be created but must not dispatch on passing evidence. This is
+  at most seven paid model phases (two planners, two workers, three verifiers).
+- Budget: Stage 2 measured 61.0 seconds for the isolated planner and 21.2 seconds
+  for the isolated verifier. Discovery, implementation, successor planning, and
+  full-run callback overhead remain uncertain; older large-repository timings
+  are not treated as fixture-equivalent. The hard operator ceilings are seven
+  started/charged model phases, 480 seconds cumulative reported model duration,
+  and 600 seconds wall time from accepted start. The oracle is capped at 10
+  seconds. These are ceilings, not completion forecasts, and there is no native
+  total token/action limit.
+- Stop/no-rerun: stop successfully only at terminal `completed` with the oracle
+  passing, exactly the one allowed path changed, a clean finalized worktree, no
+  pending actions, no active leases, and complete run/graph receipts. On any
+  pause, failure, cancellation, unexpected approval, qualification/server drift,
+  attempted eighth model-phase dispatch, graph-budget exhaustion, extra mutation, or 600-second
+  wall expiry, capture bounded evidence and pause if still active. Do not resume,
+  recover, correct manually, extend the budget, or start a second smoke.
+- Readback: retain create/start responses; bounded run/activity/patch/node/
+  region/scheduler/final-blocker/pending-action views; per-phase model timing and
+  token accounting; final worktree commit/status/diff, exact file bytes/modes,
+  and an independent operator-oracle result.
+- Scope limit: a pass proves the named happy-path platform stages only. It does
+  not prove restart/recovery, sequential adaptation, correction loops,
+  concurrency, approvals, failure handling, merge-back, other runners/models,
+  representative feature quality, or dynamic-graph value. Historical run r220
+  remains paused and untouched.
+
+Independent card validation matched the fixture, tree, file and oracle hashes,
+replayed the oracle's fail/pass and extra-path rejection behavior, and accepted
+the patch/model/wall ceilings after the wording corrections above. Registration
+must precede the single-use qualification: first confirm no repository named
+`fixture`, register the exact local path through `POST /api/repos`, recheck PID
+81602, health, zero active runs, runner availability and routine visibility,
+then issue and immediately consume one qualification in the create request.
+
+Pre-start state: repository registration returned 201; the same server child,
+health, zero-active-run, runner, and routine checks passed; qualification returned
+201 with all 10 scenarios passing and was consumed once. Run
+`c3a1cf27-f309-4540-b381-02185297b608` was created at
+19:39:25Z in `draft` with intended seed
+`db05b2baf813d0e3a73451265b4b94d632d80cba` and the exact contract above.
+Bounded qualification, request, and create-response records are retained in the
+Stage 3 evidence directory. No model had started at this checkpoint.
+
+Start was accepted with HTTP 202 at 19:40:18Z and correctly returned the
+pre-consumption `draft` projection because lifecycle signals apply
+asynchronously. The 600-second one-shot observation window begins at that
+timestamp; the bounded start response is retained with the other Stage 3
+evidence.
+
+Result: **failed; operator-paused at the predeclared stop boundary; no rerun**.
+The root planner reached accepted patch
+`stage3-smoke-reliable-horizon-1-final` after two typed rejections. Discovery
+and independent plan verification then completed, and the plan verifier passed.
+The successor planner could not construct the effectful second horizon. Its
+first execution issued ten rejected commands, exited without a successful
+submit, and triggered `runner_recovery_requested`,
+`runner_recovery_completed`, and an automatic same-node retry. The retry issued
+four more rejected commands. Across root and successor planning the graph
+recorded 16 rejections: 10 generic `malformed_patch`, four typed
+`invalid_macro_arguments`, one `initial_dependencies_forbidden`, and one
+`unavailable_command_binding`. This materially exceeded the card's one
+corrected-proposal allowance, so the operator requested pause at 19:45:29Z;
+the run reached `paused`/`manual_pause` at 19:45:32Z, 314.121 seconds after the
+accepted start.
+
+Five model phases started and four retained usage. Root planning, discovery and
+plan verification finalized normally; the first successor-planner execution
+reported 111,938 ms, 279,326 input, 6,571 output, 245,248 cache-read input, and
+1,590 reasoning-output tokens before its unsuccessful exit. The automatically
+retried successor phase was cancelled by the pause before any usage record.
+Cumulative retained model duration was 215,885 ms with 494,891 input, 10,052
+output, 393,728 cache-read input and 2,182 reasoning-output tokens across 37
+actions. This remained below the seven-phase, 480-second model and 600-second
+wall ceilings; the earlier behavioral stop rule, not resource exhaustion,
+ended the experiment.
+
+Final readback shows zero pending actions and no active or suspended leases. The
+successor planner remains ready rather than completed; implementation, candidate
+submission, final acceptance, final audit and run finalization never ran. The
+run worktree remains at the exact seed commit with no committed or tracked diff,
+but contains unexpected untracked `.gitignore` bytes `.orchestrator/\n`; the
+requested `stage3-smoke.txt` is absent and the independent operator oracle exits
+1. The result therefore proves only that worktree creation, root planning,
+discovery, plan verification and bounded pause cleanup operated. It does not
+prove the Stage 3 completion path.
+
+Durable bounded result:
+`recovery-2026-09-09/stage3-smoke-result.json`. Per the Stage 3 failure rule,
+the next action returns to Stage 1 deterministic diagnosis of the successor
+reliable-plan construction boundary. Ten generic `malformed_patch` events
+retain neither argument-level diagnostics nor original arguments, so no exact
+reproduction is claimed and no unchanged smoke or isolated model retry is
+authorized.
+
+### Deterministic return to Stage 1 after the failed smoke
+
+The retained live events identify the failing boundary but not the rejected
+arguments. The following results therefore close reproducible error classes at
+that boundary; they do **not** establish which class caused any of the ten live
+generic rejections:
+
+- The public MCP → dispatcher → controller → SQLite path accepts the one-batch
+  final topology with `dependencies: []` and an exact absolute command. The same
+  harness retains its prior non-final successor acceptance case. Final-horizon
+  topology and concrete-command admission are therefore not inherently broken
+  in deterministic execution.
+- Self, undeclared and declared-but-not-yet-materialized batch dependencies
+  previously collapsed to generic `malformed_patch` at this boundary. They now
+  return `dependency_self_reference`, `dependency_not_declared` and
+  `dependency_not_materialized`, respectively, at the exact safe path
+  `macro_invocations[0].args.dependencies`.
+- An absent command binding, a blank concrete `cmd`, and a malformed concrete
+  `argv` now return `unavailable_command_binding` or
+  `invalid_command_definition` at the indexed `checks[0].command_binding` or
+  `checks[0].command_definition` path. The durable rejection event is asserted
+  not to contain the supplied sentinel command text.
+- Codex and FastMCP now share the same dependency description: only previously
+  materialized accepted batch IDs are permitted, and the first or only batch
+  uses `[]`. They also share an executable command-definition schema requiring
+  non-empty `argv`, `cmd`, or `command`; schema checks reject missing and empty
+  executable definitions before dispatch where the client honors JSON Schema.
+
+The focused recovery closure passes **317 tests** with **11 known Pydantic
+schema warnings** in **7.91s**. Scoped Ruff passes, scoped Pyright reports
+**0 errors, 0 warnings**, and `git diff --check` passes. A fresh independent
+failure-mode validator also passes the current boundary and confirms the
+incident-cause limitation above. No model call, live run mutation, Stage 3
+rerun, or use of the Stage 2 reserve was part of this return.
+
 ## Retained gate accounting
 
 All values below are retained observations, not projections. The repeated

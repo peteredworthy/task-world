@@ -18,7 +18,10 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.tools import Tool
 from pydantic import WithJsonSchema
 
-from orchestrator.graph import reliable_plan_check_decision_tool_schema
+from orchestrator.graph import (
+    reliable_plan_check_decision_tool_schema,
+    reliable_plan_dependencies_tool_schema,
+)
 from orchestrator.runners import submission_tool_input_schema, validate_reliable_plan_tool_specs
 from orchestrator.runners.graph_tool_routing import route_tool_call
 from orchestrator.runners.types import (
@@ -510,6 +513,10 @@ def build_graph_mcp_server(
                 "items": check_decision_schema,
             }
         ),
+    ]
+    construct_reliable_plan_region.__annotations__["dependencies"] = Annotated[
+        list[str] | None,
+        WithJsonSchema(reliable_plan_dependencies_tool_schema()),
     ]
 
     _add_tool(

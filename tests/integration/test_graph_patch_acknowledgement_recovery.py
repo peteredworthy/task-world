@@ -215,8 +215,8 @@ class _FailIfCalledAgentFactory:
             {"name": "blank-command", "command_definition": {"cmd": "   "}},
             None,
             False,
-            "unavailable_command_binding",
-            '"path":"macro_invocations[0].args"',
+            "invalid_command_definition",
+            '"path":"macro_invocations[0].args.checks[0].command_definition"',
             id="blank-cmd",
         ),
         pytest.param(
@@ -226,8 +226,8 @@ class _FailIfCalledAgentFactory:
             },
             None,
             False,
-            "unavailable_command_binding",
-            '"path":"macro_invocations[0].args"',
+            "invalid_command_definition",
+            '"path":"macro_invocations[0].args.checks[0].command_definition"',
             id="malformed-argv-first-token",
         ),
         pytest.param(
@@ -251,7 +251,7 @@ class _FailIfCalledAgentFactory:
             None,
             False,
             "unavailable_command_binding",
-            '"path":"macro_invocations[0].args"',
+            '"path":"macro_invocations[0].args.checks[0].command_binding"',
             id="acceptance-does-not-replace-absent-hidden-oracle",
         ),
     ],
@@ -358,6 +358,7 @@ async def test_check_admission_matrix_crosses_mcp_controller_and_store(
         assert expected_code is not None and expected_code in rendered
         assert expected_path is not None and expected_path in rendered
         assert "--must-not-run" not in rendered
+        assert "--must-not-run" not in str(after_events)
 
     await engine.dispose()
 
@@ -541,7 +542,7 @@ async def test_macro_mcp_callback_accepts_omitted_ops_through_controller(tmp_pat
     rendered_unavailable = " ".join(str(item) for item in unavailable_result)
     assert "check command binding is unavailable" in rendered_unavailable
     assert "unavailable_command_binding" in rendered_unavailable
-    assert '"path":"macro_invocations[0].args"' in rendered_unavailable
+    assert '"path":"macro_invocations[0].args.checks[0].command_binding"' in rendered_unavailable
     assert "list_type" not in rendered_unavailable
     assert '"path":"ops"' not in rendered_unavailable
 
@@ -581,7 +582,28 @@ async def test_macro_mcp_callback_accepts_omitted_ops_through_controller(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_successor_macro_crosses_mcp_controller_and_store(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("batch_ids", "remaining_horizons", "dependencies", "expected_rejection_code"),
+    [
+        (["batch-1", "batch-2"], 2, [], None),
+        (["batch-1"], 1, [], None),
+        (["batch-1"], 1, ["batch-1"], "dependency_self_reference"),
+        (["batch-1"], 1, ["not-a-plan-batch"], "dependency_not_declared"),
+        (
+            ["batch-1", "batch-2"],
+            2,
+            ["batch-2"],
+            "dependency_not_materialized",
+        ),
+    ],
+)
+async def test_successor_macro_crosses_mcp_controller_and_store(
+    tmp_path: Path,
+    batch_ids: list[str],
+    remaining_horizons: int,
+    dependencies: list[str],
+    expected_rejection_code: str | None,
+) -> None:
     engine = create_engine(tmp_path / "successor-mcp.db")
     await init_db(engine)
     sessions = create_session_factory(engine)
@@ -599,7 +621,7 @@ async def test_successor_macro_crosses_mcp_controller_and_store(tmp_path: Path) 
             "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
             "reliable_plan_selected_runner_type": "codex_server",
             "reliable_plan_one_horizon_authorized": True,
-            "reliable_plan_remaining_horizons": 2,
+            "reliable_plan_remaining_horizons": remaining_horizons,
             "reliable_plan_qualification_evidence_hash": "sha256:" + "b" * 64,
             "reliable_plan_model_assignments": {
                 "arm_id": "successor-public-path",
@@ -641,7 +663,7 @@ async def test_successor_macro_crosses_mcp_controller_and_store(tmp_path: Path) 
             "semantic_role": "implementation_plan",
             "schema_id": "ordered-plan",
             "schema_version": 1,
-            "content": {"batches": [{"batch_id": "batch-1"}, {"batch_id": "batch-2"}]},
+            "content": {"batches": [{"batch_id": batch_id} for batch_id in batch_ids]},
             "provenance": {"source": "discovery"},
             "source_record_ids": ["requirement-dynamic-feature-acceptance"],
             "requirement_ids": ["dynamic_feature_acceptance"],
@@ -704,7 +726,7 @@ async def test_successor_macro_crosses_mcp_controller_and_store(tmp_path: Path) 
                         "generation_index": 1,
                         "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
                         "reliable_plan_one_horizon_authorized": True,
-                        "reliable_plan_remaining_horizons": 2,
+                        "reliable_plan_remaining_horizons": remaining_horizons,
                         "reliable_plan_assignment_carrier": carrier,
                         "reliable_plan_assignment_role": "successor_planner",
                         "reliable_plan_selected_runner_type": "codex_server",
@@ -796,13 +818,39 @@ async def test_successor_macro_crosses_mcp_controller_and_store(tmp_path: Path) 
             "scope": "batch-1",
             "objective": "Implement and verify the first declared batch.",
             "requirement_ids": ["dynamic_feature_acceptance"],
-            "dependencies": [],
+            "dependencies": dependencies,
             "acceptance": ["batch-1 obligations pass"],
-            "checks": [{"name": "batch check", "command_definition": {"cmd": "true"}}],
+            "checks": [
+                {
+                    "name": "batch check",
+                    "command_definition": {"cmd": "/private/tmp/stage3_oracle.sh"},
+                }
+            ],
             "rubric": ["the first batch is independently verified"],
         },
     )
     rendered = " ".join(str(item) for item in result)
+    if expected_rejection_code is not None:
+        assert expected_rejection_code in rendered
+        assert '"path":"macro_invocations[0].args.dependencies"' in rendered
+        async with sessions() as session:
+            rejected_events = await GraphEventStore(session).read_run(run_id)
+        matching_rejections = [
+            event
+            for event in rejected_events
+            if event.event_type == "command_rejected" and event.payload.get("patch_id") == patch_id
+        ]
+        assert len(matching_rejections) == 1
+        assert matching_rejections[0].payload["diagnostics"]["errors"] == [
+            {
+                "path": "macro_invocations[0].args.dependencies",
+                "code": expected_rejection_code,
+                "message": matching_rejections[0].payload["diagnostics"]["errors"][0]["message"],
+            }
+        ]
+        assert factory.calls == 0
+        await engine.dispose()
+        return
     assert f"graph patch {patch_id} accepted" in rendered
     async with sessions() as session:
         after_events = await GraphEventStore(session).read_run(run_id)
@@ -845,12 +893,23 @@ async def test_successor_macro_crosses_mcp_controller_and_store(tmp_path: Path) 
         for payload in created_payloads
         if payload.get("semantic_stage") == "successor_planning"
     ]
-    assert len(successors) == 1
-    assert successors[0]["planning_horizon"] == 2
-    assert successors[0]["generation_index"] == 2
-    assert successors[0]["reliable_plan_remaining_horizons"] == 1
-    assert successors[0]["reliable_plan_assignment_carrier"] == carrier
-    assert successors[0]["runner_model_override"] == "user-selected-model"
+    if remaining_horizons > 1:
+        assert len(successors) == 1
+        assert successors[0]["planning_horizon"] == 2
+        assert successors[0]["generation_index"] == 2
+        assert successors[0]["reliable_plan_remaining_horizons"] == 1
+        assert successors[0]["reliable_plan_assignment_carrier"] == carrier
+        assert successors[0]["runner_model_override"] == "user-selected-model"
+    else:
+        assert successors == []
+        assert (
+            sum(payload.get("semantic_stage") == "final_acceptance" for payload in created_payloads)
+            == 1
+        )
+        assert (
+            sum(payload.get("semantic_stage") == "final_audit" for payload in created_payloads) == 1
+        )
+        assert sum(payload.get("kind") == "final_gate" for payload in created_payloads) == 1
     await engine.dispose()
 
 

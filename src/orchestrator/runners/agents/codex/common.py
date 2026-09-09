@@ -23,7 +23,11 @@ from typing import Any, cast
 
 from typing_extensions import Protocol
 
-from orchestrator.graph import RecordSelector, reliable_plan_check_decision_tool_schema
+from orchestrator.graph import (
+    RecordSelector,
+    reliable_plan_check_decision_tool_schema,
+    reliable_plan_dependencies_tool_schema,
+)
 from orchestrator.state.models import ActionLog
 from orchestrator.runners.graph_tool_routing import (
     GRAPH_MACRO_TOOL_NAMES,
@@ -643,10 +647,7 @@ def build_dynamic_tool_specs(
                         "items": {"type": "string"},
                         "minItems": 1,
                     },
-                    "dependencies": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
+                    "dependencies": reliable_plan_dependencies_tool_schema(),
                     "acceptance": {
                         "type": "array",
                         "items": {"type": "string"},

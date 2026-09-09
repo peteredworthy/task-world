@@ -100,6 +100,9 @@ def test_codex_reliable_plan_checks_use_canonical_decision_schema() -> None:
     )
 
     assert "dependencies" not in construct["inputSchema"]["required"]
+    dependency_description = construct["inputSchema"]["properties"]["dependencies"]["description"]
+    assert "Previously materialized accepted batch IDs" in dependency_description
+    assert "Never include the current scope" in dependency_description
     assert (
         construct["inputSchema"]["properties"]["checks"]["items"]
         == reliable_plan_check_decision_tool_schema()
@@ -123,6 +126,12 @@ def test_reliable_plan_check_schema_matches_exactly_one_non_null_command() -> No
     valid_definition = {"name": "project tests", "command_definition": {"cmd": "true"}}
     assert list(validator.iter_errors(valid_binding)) == []
     assert list(validator.iter_errors(valid_definition)) == []
+    assert list(
+        validator.iter_errors({"name": "missing executable", "command_definition": {"cwd": "/tmp"}})
+    )
+    assert list(
+        validator.iter_errors({"name": "empty executable", "command_definition": {"cmd": ""}})
+    )
     assert list(validator.iter_errors({"name": "null binding", "command_binding": None}))
     assert list(validator.iter_errors({"name": "null definition", "command_definition": None}))
 
@@ -199,8 +208,13 @@ async def test_shared_graph_mcp_registers_and_routes_reliable_macros() -> None:
         if spec["name"] == "construct_reliable_plan_region"
     )
     codex_checks = codex_construct["inputSchema"]["properties"]["checks"]
+    mcp_dependencies = mcp_construct.inputSchema["properties"]["dependencies"]
+    codex_dependencies = codex_construct["inputSchema"]["properties"]["dependencies"]
     assert mcp_checks == codex_checks
     assert mcp_checks["items"] == reliable_plan_check_decision_tool_schema()
+    for field in ("type", "items", "description"):
+        assert mcp_dependencies[field] == codex_dependencies[field]
+    assert "dependencies" not in mcp_construct.inputSchema["required"]
 
     await mcp.call_tool(
         "construct_reliable_plan_region",

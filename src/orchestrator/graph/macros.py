@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from orchestrator.graph._error_rendering import safe_exception_reason, safe_validation_diagnostics
 from orchestrator.graph.command_bindings import (
     CheckCommandBindingError,
+    check_command_definition_tool_schema,
     has_dynamic_feature_context,
     validate_check_command_binding,
 )
@@ -78,6 +79,9 @@ ReliablePlanMacroCode = Literal[
     "unknown_requirement_identity",
     "initial_dependencies_forbidden",
     "implementation_plan_schema_unavailable",
+    "dependency_not_declared",
+    "dependency_self_reference",
+    "dependency_not_materialized",
 ]
 
 
@@ -101,7 +105,7 @@ class ReliablePlanMacroError(ValueError):
             self.code,
             self.message,
             str(self),
-            path=f"macro_invocations[{index}].args",
+            path=self.path.replace("[]", f"[{index}]", 1),
         )
 
     @property
@@ -122,14 +126,27 @@ class ReliablePlanMacroError(ValueError):
 class MacroCheckBindingError(ValueError):
     """Safe structured diagnostics for an unavailable check command binding."""
 
-    def __init__(self, detail: str, *, path: str = "macro_invocations[].args") -> None:
+    def __init__(
+        self,
+        detail: str,
+        *,
+        code: str = "unavailable_command_binding",
+        message: str = (
+            "The check command binding is unavailable; provide a concrete command_definition."
+        ),
+        path: str = "macro_invocations[].args",
+    ) -> None:
         super().__init__(detail)
+        self.code = code
+        self.message = message
         self.path = path
 
     def with_index(self, index: int) -> "MacroCheckBindingError":
         return MacroCheckBindingError(
             str(self),
-            path=f"macro_invocations[{index}].args",
+            code=self.code,
+            message=self.message,
+            path=self.path.replace("[]", f"[{index}]", 1),
         )
 
     @property
@@ -139,11 +156,8 @@ class MacroCheckBindingError(ValueError):
             "errors": [
                 {
                     "path": self.path,
-                    "code": "unavailable_command_binding",
-                    "message": (
-                        "The check command binding is unavailable; provide a concrete "
-                        "command_definition."
-                    ),
+                    "code": self.code,
+                    "message": self.message,
                 }
             ],
             "omitted_error_count": 0,
@@ -355,23 +369,39 @@ def reliable_plan_check_decision_tool_schema() -> dict[str, Any]:
     schema = ReliablePlanCheckDecision.model_json_schema()
     schema.pop("title", None)
     properties = cast(dict[str, dict[str, Any]], schema["properties"])
-    for field_name in ("command_binding", "command_definition"):
-        property_schema = properties[field_name]
-        alternatives = cast(list[dict[str, Any]], property_schema.pop("anyOf"))
-        non_null = [
-            alternative for alternative in alternatives if alternative.get("type") != "null"
-        ]
-        if len(non_null) != 1:
-            raise RuntimeError(f"unexpected nullable schema for {field_name}")
-        properties[field_name] = {
-            **non_null[0],
-            "title": property_schema["title"],
-        }
+    binding_schema = properties["command_binding"]
+    binding_alternatives = cast(list[dict[str, Any]], binding_schema.pop("anyOf"))
+    non_null_bindings = [
+        alternative for alternative in binding_alternatives if alternative.get("type") != "null"
+    ]
+    if len(non_null_bindings) != 1:
+        raise RuntimeError("unexpected nullable schema for command_binding")
+    properties["command_binding"] = {
+        **non_null_bindings[0],
+        "title": binding_schema["title"],
+    }
+    properties["command_definition"] = {
+        **check_command_definition_tool_schema(),
+        "title": properties["command_definition"]["title"],
+    }
     schema["oneOf"] = [
         {"required": ["command_binding"]},
         {"required": ["command_definition"]},
     ]
     return schema
+
+
+def reliable_plan_dependencies_tool_schema() -> dict[str, Any]:
+    """Return the shared public semantics for reliable-plan batch dependencies."""
+    return {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": (
+            "Previously materialized accepted batch IDs only. Use an empty array for the "
+            "first or only batch. Never include the current scope, node IDs, record IDs, "
+            "or requirement IDs."
+        ),
+    }
 
 
 _MACRO_SPECS = {
@@ -418,8 +448,14 @@ def expand_patch_macros(
             )
         except MacroInvocationValidationError as exc:
             raise exc.with_index(index) from exc
+        except MacroCheckBindingError as exc:
+            raise exc.with_index(index) from exc
         except CheckCommandBindingError as exc:
-            raise MacroCheckBindingError(str(exc)).with_index(index) from exc
+            raise MacroCheckBindingError(
+                str(exc),
+                code=exc.code,
+                message=exc.safe_message,
+            ).with_index(index) from exc
         except ReliablePlanMacroError as exc:
             raise exc.with_index(index) from exc
     macro_ops.extend(
@@ -1407,13 +1443,22 @@ def _construct_reliable_plan_region(
     )
     check_decisions = cast(list[dict[str, Any]], args["checks"])
     if has_dynamic_feature_context([], projection=projection):
-        for check in check_decisions:
+        for check_index, check in enumerate(check_decisions):
             check_node = {
                 "node_id": check.get("name") or operation_key,
                 "kind": "check",
                 **check,
             }
-            validate_check_command_binding(check_node, [], projection=projection)
+            try:
+                validate_check_command_binding(check_node, [], projection=projection)
+            except CheckCommandBindingError as exc:
+                field = "command_definition" if "command_definition" in check else "command_binding"
+                raise MacroCheckBindingError(
+                    str(exc),
+                    code=exc.code,
+                    message=exc.safe_message,
+                    path=f"macro_invocations[].args.checks[{check_index}].{field}",
+                ) from exc
     checks = [
         {
             "check_id": f"check-{token}-{index}",
@@ -1521,18 +1566,27 @@ def _construct_reliable_plan_region(
     declared_batch_ids = _declared_batch_ids_from_plan(plan_record)
     unknown_dependencies = sorted(set(dependencies) - set(declared_batch_ids))
     if unknown_dependencies:
-        raise ValueError(
-            "reliable-plan dependencies are not declared batches: "
-            + ", ".join(unknown_dependencies)
+        raise ReliablePlanMacroError(
+            "dependency_not_declared",
+            "Dependencies must reference batches declared by the accepted plan.",
+            "reliable-plan dependencies include undeclared batches",
+            path="macro_invocations[].args.dependencies",
         )
     if scope in dependencies:
-        raise ValueError("reliable-plan batch cannot depend on itself")
+        raise ReliablePlanMacroError(
+            "dependency_self_reference",
+            "The current reliable-plan batch cannot depend on itself.",
+            "reliable-plan batch contains a self dependency",
+            path="macro_invocations[].args.dependencies",
+        )
     existing_batch_verifiers = _batch_verifier_ids(projection)
     unresolved_dependencies = sorted(set(dependencies) - set(existing_batch_verifiers))
     if unresolved_dependencies:
-        raise ValueError(
-            "reliable-plan dependencies are not yet materialized: "
-            + ", ".join(unresolved_dependencies)
+        raise ReliablePlanMacroError(
+            "dependency_not_materialized",
+            "Dependencies must reference previously materialized accepted batches.",
+            "reliable-plan dependencies include batches that are not yet materialized",
+            path="macro_invocations[].args.dependencies",
         )
 
     schema_id = plan_record.value.schema_id
