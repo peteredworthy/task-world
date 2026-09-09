@@ -16,7 +16,8 @@ import sys
 import tempfile
 import time
 from collections import Counter
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -173,6 +174,20 @@ def _file_sha256(path: Path) -> str:
 
 def _argv_sha256(argv: list[str]) -> str:
     return hashlib.sha256(json.dumps(argv, separators=(",", ":")).encode()).hexdigest()
+
+
+@contextmanager
+def _temporary_probe_workspace(phase: str) -> Iterator[Path]:
+    """Create a disposable workspace below the canonical system temp path."""
+
+    canonical_temp = Path(tempfile.gettempdir()).resolve(strict=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f"recovery-{phase}-probe-", dir=canonical_temp
+    ) as raw_workspace:
+        workspace = Path(raw_workspace).resolve(strict=True)
+        if workspace.parent != canonical_temp:
+            raise ProbeFailure("temporary probe workspace escaped the canonical temp directory")
+        yield workspace
 
 
 def _metrics(result: ExecutionResult | None) -> dict[str, Any]:
@@ -590,8 +605,7 @@ node_states. Call grade once for each ID, then call submit once and stop.
 async def _run_cli(phase: str, timeout_seconds: float) -> tuple[ProbeEvidence, int]:
     if timeout_seconds <= 0 or timeout_seconds > DEFAULT_TIMEOUT_SECONDS:
         raise ProbeFailure("timeout must be greater than zero and at most 180 seconds")
-    with tempfile.TemporaryDirectory(prefix=f"recovery-{phase}-probe-") as raw_workspace:
-        workspace = Path(raw_workspace)
+    with _temporary_probe_workspace(phase) as workspace:
         evidence = (
             await run_planner_probe(workspace, timeout_seconds=timeout_seconds)
             if phase == "planner"

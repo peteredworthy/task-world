@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "record_kind": "operator-curated bounded result summary",
+  "provenance_note": "Transcribed from the CLI result immediately after execution; the unbounded graph event-ID list is intentionally omitted.",
+  "probe_id": "stage2-planner-a2a69f10-7ac3-46dc-81fd-a863caf468b0",
+  "phase": "planner",
+  "status": "failed",
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "medium",
+  "timeout_seconds": 180.0,
+  "limit_policy": "operator-enforced wall timeout; no native token/action limit",
+  "source_commit": "89bcb4be0d8883dcf6de05d65ba2075d0f29f248",
+  "source_tree": "d4282ee9a9f2dafc4f4024582a026777601d9066",
+  "source_dirty": true,
+  "harness_sha256": "3863dbaba7b4a50668b23255d491ba7c0dd590472d3f162c9d5d3c8e6b1f05a2",
+  "fixture_commit": "13b700f1e48938263da8aeed942471baf5effecc",
+  "fixture_tree": "990b27063c9032c74f7d165f5b80058fbb703a90",
+  "fixture_sha256": "81a485a630e2bf513632f0a0d9467285da76b8427579eb23e3705ec88bc35194",
+  "fixture_unchanged": true,
+  "setup_duration_ms": 640,
+  "model_duration_ms": 27686,
+  "total_duration_ms": 28399,
+  "timed_out": false,
+  "metrics": {
+    "duration_ms": 26864,
+    "num_actions": 13,
+    "input_tokens": 110325,
+    "output_tokens": 1491,
+    "cache_read_input_tokens": 83968,
+    "reasoning_output_tokens": 429,
+    "finish_reasons": ["stop"]
+  },
+  "observations": {
+    "macro_name": "construct_reliable_plan_region",
+    "accepted_patch_id": "dynamic-feature-read-only-discovery-region-v2",
+    "accepted_position": 24,
+    "lease_node_ids": ["planner-s-01"],
+    "dispatch_node_ids": ["planner-s-01"],
+    "downstream_lease_count": 0,
+    "downstream_dispatch_count": 0,
+    "owned_process_count_after": 0,
+    "execution_result_count": 1,
+    "execution_result_success": true,
+    "plain_submit_event_counts": {
+      "runner_submission_staged": 0,
+      "runner_completion_witnessed": 0,
+      "runner_execution_finalized": 0,
+      "callback_accepted": 0,
+      "lease_released": 0
+    },
+    "plain_submit_finalized": false,
+    "runner_failure_event_types": ["runner_recovery_requested"],
+    "submit_rejection": {
+      "category": "submission_format_rejected",
+      "diagnostic": "generic artifact lock parent is not a safe directory"
+    },
+    "routine_sha256": "53a3d9a559833b9791a6a34f5fe8d3e6738994b28e3e626b228caf8228f6af48",
+    "declared_check": {
+      "command_definition": {"cmd": "true"},
+      "command_sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+      "executed": false
+    }
+  }
+}

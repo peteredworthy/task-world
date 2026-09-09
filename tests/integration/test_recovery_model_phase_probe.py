@@ -7,11 +7,13 @@ import importlib.util
 import json
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.config import AgentRunnerType
 from orchestrator.runners import CodexServerAgent
 
@@ -23,6 +25,24 @@ assert _SPEC and _SPEC.loader
 probe = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = probe
 _SPEC.loader.exec_module(probe)
+
+
+@pytest.mark.asyncio
+async def test_cli_workspace_is_canonical_and_supports_real_artifact_publication() -> None:
+    canonical_temp = Path(tempfile.gettempdir()).resolve(strict=True)
+    content = b"canonical recovery probe artifact"
+
+    with probe._temporary_probe_workspace("planner") as workspace:
+        assert workspace.parent == canonical_temp
+        assert workspace.is_relative_to(canonical_temp)
+
+        store = FilesystemArtifactStore(workspace / "artifacts")
+        async with store.publication():
+            ref = await store.put(content, media_type="text/plain", encoding="utf-8")
+
+        assert await store.read(ref) == content
+
+    assert not workspace.exists()
 
 
 def _response(request_id: int, result: dict[str, Any]) -> dict[str, Any]:

@@ -47,14 +47,88 @@ Deterministic validation command:
 UV_CACHE_DIR=/tmp/orchestrator-recovery-uv uv run --no-sync pytest -n 0 -q tests/integration/test_recovery_model_phase_probe.py
 ```
 
-Current corrected result: the harness suite passes **9 tests in 5.60s**. The
+Current corrected result: the harness suite passes **10 tests in 6.70s**. The
 combined harness, dispatch-packet, tool-exposure, and Codex transport command
-passes **54 tests, 1 deselected, 1 known schema warning in 7.19s** under fresh
+passes **55 tests, 1 deselected, 1 known schema warning in 8.54s** under fresh
 independent validation. It includes
 negative proof for missing planner submit/finalization, weak or duplicate
 verifier grades, planner/verifier timeout draining, and bounded unexpected-error
-JSON. Scoped Ruff and Pyright pass. A clean commit is required before either
-invocation card is recorded or a model is called.
+JSON. Scoped Ruff and Pyright pass. Commit `89bcb4be0` passed every configured
+hook, including the full test suite and UI checks.
+
+### Stage 2 invocation 1 — planner/tool-use (executed, failed)
+
+- Hypothesis: a fresh Luna-medium planner can consume the production planner
+  packet, call the actual Codex dynamic tool `construct_reliable_plan_region`
+  exactly once with a valid explicit `true` check, receive authoritative
+  acceptance, then call plain `submit` and stop without editing the fixture.
+- Deterministic limit: Stage 1 and the harness tests prove schema exposure,
+  routing, acceptance, finalization, and cleanup, but cannot establish that the
+  real model selects and authors the supported tool contract.
+- Source: commit `89bcb4be0d8883dcf6de05d65ba2075d0f29f248`, tree
+  `d4282ee9a9f2dafc4f4024582a026777601d9066`; harness SHA-256
+  `3863dbaba7b4a50668b23255d491ba7c0dd590472d3f162c9d5d3c8e6b1f05a2`;
+  routine SHA-256
+  `53a3d9a559833b9791a6a34f5fe8d3e6738994b28e3e626b228caf8228f6af48`.
+- Invocation: `UV_CACHE_DIR=/tmp/orchestrator-recovery-uv uv run --no-sync
+  python examples/recovery/model_phase_probe.py planner`; role `planner`, model
+  `gpt-5.6-luna`, reasoning `medium`, one paid execution, no retry.
+- Expected evidence: one successful runner result; one accepted macro patch;
+  exact submit/witness/finalize/callback/lease-release facts; one planner lease
+  and dispatch; zero downstream leases/dispatches; unchanged committed fixture;
+  source/fixture identities plus setup/model/total durations and usage.
+- Budget: 180 seconds of operator-enforced model wall time; no native
+  token/action cap is available. Deterministic setup is timed separately.
+- Stop: accepted macro followed by one plain submit and turn completion, or
+  exact-owner quiescence at 180 seconds. Timeout is incomplete and still counts
+  as invocation 1. No unchanged retry.
+- Next decision: pass admits the separately prepared verifier invocation; a
+  typed contract rejection may use one reserved correction/retest only after
+  its smallest cause is recorded. Any other failure stops planner spending.
+- Environment note: the local REST server became unreachable immediately before
+  this card. The probe does not use the REST lifecycle, and no server was
+  started; this fact is retained rather than inferred as live-run state.
+
+Result recorded immediately after invocation 1: **failed**, not timed out. Luna
+called the real macro and produced accepted patch
+`dynamic-feature-read-only-discovery-region-v2` at graph position 24, then the
+plain submit callback rejected with `submission_format_rejected: generic
+artifact lock parent is not a safe directory`. The runner returned success, but
+no submit/witness/finalization/callback/lease-release facts were recorded and a
+`runner_recovery_requested` fact was present, so the strict harness correctly
+did not pass the probe. The single planner lease/dispatch had no downstream
+lease/dispatch, the fixture commit/tree remained unchanged, and owned process
+count returned to zero. Model wall time was 27,686 ms; usage was 110,325 input,
+1,491 output, 83,968 cache-read input and 429 reasoning-output tokens across 13
+actions. Durable result:
+`recovery-2026-09-09/stage2-planner-invocation-1.json`, an operator-curated
+bounded summary transcribed from the CLI result rather than raw stdout; the
+unbounded graph event-ID list is intentionally omitted. This counts as paid
+invocation 1. It is positive evidence for Luna's supported macro selection and
+authoring, but not for completed planner phase behavior. No unchanged retry is
+allowed; the reserved correction/retest requires a deterministic diagnosis and
+validated harness repair first.
+
+Deterministic diagnosis confirmed a harness-only cause: on macOS,
+`tempfile.gettempdir()` supplied the symlinked `/var/folders/...` spelling, so
+the planner artifact root reached `ArtifactRootLock` through a path component
+that its no-follow traversal correctly rejects. The harness now resolves the
+system temp parent with `Path(tempfile.gettempdir()).resolve(strict=True)`
+*before* creating its disposable workspace, so the artifact root is passed
+under the canonical `/private/var/...` spelling. Artifact coordination itself
+is unchanged. A real regression creates a workspace through the helper, proves
+that it is a direct child of the canonical temp parent, and completes a
+`FilesystemArtifactStore.publication()` plus put/read round trip. This is a
+deterministic harness repair only; invocation 2 is neither recorded nor
+authorized by this entry.
+
+Focused post-repair validation passes: the 10-test harness file completes in
+6.70s; the real artifact-store and artifact-coordination unit files pass 20
+tests in 0.48s; the combined phase-boundary command passes 55 tests with one
+deselection and one known schema warning in 8.54s; scoped Ruff passes; scoped
+Pyright reports 0 errors and 0 warnings; and `git diff --check` passes. A fresh
+validator also reproduced the exact pre-fix artifact-store exception and found
+the reserved correction/retest justified after this clean repair boundary.
 
 ## Retained gate accounting
 
