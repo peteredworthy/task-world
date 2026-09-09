@@ -12,8 +12,9 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from orchestrator.graph._error_rendering import safe_exception_reason
+from orchestrator.graph._error_rendering import safe_exception_reason, safe_validation_diagnostics
 from orchestrator.graph.command_bindings import (
+    CheckCommandBindingError,
     has_dynamic_feature_context,
     validate_check_command_binding,
 )
@@ -44,6 +45,109 @@ class MacroInvocation(BaseModel):
 
     macro: str = Field(min_length=1)
     args: dict[str, Any] = Field(default_factory=dict)
+
+
+class MacroInvocationValidationError(ValueError):
+    """Safe structured diagnostics for one invalid macro invocation."""
+
+    def __init__(self, macro: str, diagnostics: dict[str, Any], detail: str) -> None:
+        super().__init__(detail)
+        self.macro = macro
+        self.diagnostics = diagnostics
+
+    def with_index(self, index: int) -> "MacroInvocationValidationError":
+        errors = [
+            {
+                **error,
+                "path": f"macro_invocations[{index}].args.{error['path']}",
+            }
+            for error in self.diagnostics["errors"]
+        ]
+        return MacroInvocationValidationError(
+            self.macro,
+            {
+                **self.diagnostics,
+                "errors": errors,
+            },
+            str(self),
+        )
+
+
+ReliablePlanMacroCode = Literal[
+    "reliable_plan_planner_required",
+    "unknown_requirement_identity",
+    "initial_dependencies_forbidden",
+    "implementation_plan_schema_unavailable",
+]
+
+
+class ReliablePlanMacroError(ValueError):
+    """Safe static classification for controller-owned reliable-plan guards."""
+
+    def __init__(
+        self,
+        code: ReliablePlanMacroCode,
+        message: str,
+        detail: str,
+        path: str = "macro_invocations[].args",
+    ) -> None:
+        super().__init__(detail)
+        self.code: ReliablePlanMacroCode = code
+        self.message = message
+        self.path = path
+
+    def with_index(self, index: int) -> "ReliablePlanMacroError":
+        return ReliablePlanMacroError(
+            self.code,
+            self.message,
+            str(self),
+            path=f"macro_invocations[{index}].args",
+        )
+
+    @property
+    def diagnostics(self) -> dict[str, Any]:
+        return {
+            "error_count": 1,
+            "errors": [
+                {
+                    "path": self.path,
+                    "code": self.code,
+                    "message": self.message,
+                }
+            ],
+            "omitted_error_count": 0,
+        }
+
+
+class MacroCheckBindingError(ValueError):
+    """Safe structured diagnostics for an unavailable check command binding."""
+
+    def __init__(self, detail: str, *, path: str = "macro_invocations[].args") -> None:
+        super().__init__(detail)
+        self.path = path
+
+    def with_index(self, index: int) -> "MacroCheckBindingError":
+        return MacroCheckBindingError(
+            str(self),
+            path=f"macro_invocations[{index}].args",
+        )
+
+    @property
+    def diagnostics(self) -> dict[str, Any]:
+        return {
+            "error_count": 1,
+            "errors": [
+                {
+                    "path": self.path,
+                    "code": "unavailable_command_binding",
+                    "message": (
+                        "The check command binding is unavailable; provide a concrete "
+                        "command_definition."
+                    ),
+                }
+            ],
+            "omitted_error_count": 0,
+        }
 
 
 class MacroArgs(BaseModel):
@@ -276,17 +380,24 @@ def expand_patch_macros(
     """Expand validated macro invocations into patch operations."""
 
     macro_ops: list[dict[str, Any]] = []
-    for invocation in invocations:
-        invocation = _validate_invocation(invocation)
-        macro_ops.extend(
-            _expand_macro(
-                invocation.macro,
-                invocation.args,
-                proposed_by_node_id,
-                projection=projection,
-                patch_id=patch_id,
+    for index, invocation in enumerate(invocations):
+        try:
+            invocation = _validate_invocation(invocation)
+            macro_ops.extend(
+                _expand_macro(
+                    invocation.macro,
+                    invocation.args,
+                    proposed_by_node_id,
+                    projection=projection,
+                    patch_id=patch_id,
+                )
             )
-        )
+        except MacroInvocationValidationError as exc:
+            raise exc.with_index(index) from exc
+        except CheckCommandBindingError as exc:
+            raise MacroCheckBindingError(str(exc)).with_index(index) from exc
+        except ReliablePlanMacroError as exc:
+            raise exc.with_index(index) from exc
     macro_ops.extend(
         _controller_reliable_plan_continuation_ops(
             [*macro_ops, *ops],
@@ -470,13 +581,13 @@ def _validate_invocation(invocation: MacroInvocation) -> MacroInvocation:
     try:
         typed_args = args_model.model_validate(invocation.args)
     except ValidationError as exc:
-        raise ValueError(
-            safe_exception_reason(
-                exc,
-                code="invalid_macro_arguments",
-                message=f"{invocation.macro} args invalid",
-            )
-        ) from exc
+        diagnostics = safe_validation_diagnostics(exc)
+        detail = safe_exception_reason(
+            exc,
+            code="invalid_macro_arguments",
+            message=f"{invocation.macro} args invalid",
+        )
+        raise MacroInvocationValidationError(invocation.macro, diagnostics, detail) from exc
     return invocation.model_copy(update={"args": typed_args.model_dump(exclude_none=True)})
 
 
@@ -1254,7 +1365,11 @@ def _construct_reliable_plan_region(
     """
     parent = node_payload_view(projection, proposed_by_node_id) or {}
     if not isinstance(parent.get("reliable_plan_skeleton_id"), str):
-        raise ValueError("construct_reliable_plan_region requires a reliable-plan planner")
+        raise ReliablePlanMacroError(
+            "reliable_plan_planner_required",
+            "The caller is not an authorized reliable-plan planner.",
+            "construct_reliable_plan_region requires a reliable-plan planner",
+        )
     operation_key = _required_str(args, "operation_key")
     scope = _required_str(args, "scope")
     objective = _required_str(args, "objective")
@@ -1308,7 +1423,11 @@ def _construct_reliable_plan_region(
 
     if parent.get("semantic_stage") != "successor_planning":
         if dependencies:
-            raise ValueError("initial reliable-plan construction cannot declare batch dependencies")
+            raise ReliablePlanMacroError(
+                "initial_dependencies_forbidden",
+                "Initial reliable-plan construction cannot declare dependencies.",
+                "initial reliable-plan construction cannot declare batch dependencies",
+            )
         schema_id, schema_version = _implementation_plan_schema(projection)
         discovery_id = f"worker-discovery-{token}"
         verifier_id = f"verifier-plan-{token}"
@@ -1864,7 +1983,11 @@ def _resolve_requirement_bindings(
         if binding is None and node_kinds_view(projection).get(requirement_id) == "requirement":
             binding = (requirement_id, requirement_id)
         if binding is None:
-            raise ValueError(f"unknown reliable-plan requirement identity: {requirement_id}")
+            raise ReliablePlanMacroError(
+                "unknown_requirement_identity",
+                "The requested reliable-plan requirement is unavailable.",
+                f"unknown reliable-plan requirement identity: {requirement_id}",
+            )
         bindings.append(binding)
     return bindings
 
@@ -1876,8 +1999,10 @@ def _implementation_plan_schema(projection: GraphProjection) -> tuple[str, int]:
         if declaration.value.semantic_role == "implementation_plan"
     ]
     if len(candidates) != 1:
-        raise ValueError(
-            "reliable-plan construction requires exactly one implementation-plan schema"
+        raise ReliablePlanMacroError(
+            "implementation_plan_schema_unavailable",
+            "Exactly one implementation-plan schema is required.",
+            "reliable-plan construction requires exactly one implementation-plan schema",
         )
     return candidates[0]
 

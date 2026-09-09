@@ -5,7 +5,8 @@ from typing import Any
 
 import pytest
 
-from orchestrator.config import RoutineConfig
+from orchestrator.artifacts import FilesystemArtifactStore
+from orchestrator.config import AgentRunnerType, RoutineConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import (
     EventEnvelope,
@@ -22,9 +23,13 @@ from orchestrator.graph import (
     planner_generations_view,
 )
 from orchestrator.graph_runtime import (
+    build_graph_mcp_server,
     GraphController,
+    GraphDispatchContext,
+    GraphDispatchExecutor,
     GraphEventStore,
     PatchOperationConflictError,
+    StaticGraphAgentFactory,
     StaleProjectionError,
 )
 
@@ -167,6 +172,164 @@ async def _active_planner(
     accepted = await controller.handle_command(run_id, seeded.projection_position, "accept_run")
     started = await controller.handle_command(run_id, accepted.projection_position, "start")
     return started.projection_position
+
+
+@pytest.mark.asyncio
+async def test_macro_mcp_callback_accepts_omitted_ops_through_controller(tmp_path: Path) -> None:
+    """Exercise the production MCP normalization and dispatch callback together."""
+    engine = create_engine(tmp_path / "macro-mcp.db")
+    await init_db(engine)
+    sessions = create_session_factory(engine)
+    clock = FakeClock()
+    ids = _Ids("macro-mcp")
+    controller = GraphController(sessions, clock, ids, auto_dispatch=False)
+    run_id = "macro-mcp-run"
+    base_position = await _active_planner(controller, run_id, clock, ids)
+    projection = await controller.read_projection(run_id)
+    async with sessions() as session:
+        events = await GraphEventStore(session).read_run(run_id)
+    planner_payload = node_payload_view(projection, "planner-plan")
+    assert isinstance(planner_payload, dict)
+    context = GraphDispatchContext(
+        run_id=run_id,
+        node_id="planner-plan",
+        node_kind="planner",
+        node_role="planner",
+        node_payload=planner_payload,
+        requirements=[],
+        worktree_path=str(tmp_path),
+        lease_id="lease-mcp",
+        lease_generation=1,
+        execution_id="execution-mcp",
+        base_snapshot_id="routine-snapshot",
+        dispatch_event_id="dispatch-mcp",
+        graph_projection=projection,
+        graph_events=list(events),
+        graph_position=base_position,
+    )
+    executor = GraphDispatchExecutor(
+        sessions,
+        controller,
+        StaticGraphAgentFactory(AgentRunnerType.CODEX_SERVER),
+        worktree_path=tmp_path,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+    )
+
+    async def on_patch(payload: dict[str, Any]) -> str:
+        return await executor._submit_graph_patch_callback(context, payload)
+
+    mcp = build_graph_mcp_server(
+        on_patch,
+        None,
+        allowed_tools=["construct_reliable_plan_region"],
+    )
+    result = await mcp.call_tool(
+        "construct_reliable_plan_region",
+        {
+            "patch_id": "macro-mcp-patch",
+            "base_graph_position": base_position,
+            "operation_key": "macro-mcp-operation",
+            "scope": "bounded feature",
+            "objective": "Construct the initial plan region.",
+            "requirement_ids": ["dynamic_feature_acceptance"],
+            "dependencies": [],
+            "acceptance": ["the plan is complete"],
+            "checks": [],
+            "rubric": ["the plan is independently executable"],
+        },
+    )
+
+    assert "graph patch macro-mcp-patch accepted" in " ".join(str(item) for item in result)
+    async with sessions() as session:
+        updated_events = await GraphEventStore(session).read_run(run_id)
+    assert any(
+        event.event_type == "graph_patch_accepted"
+        and event.payload.get("patch_id") == "macro-mcp-patch"
+        for event in updated_events
+    )
+    assert max(event.position for event in updated_events) > base_position
+
+    rejected_result = await mcp.call_tool(
+        "construct_reliable_plan_region",
+        {
+            "patch_id": "macro-mcp-invalid-requirement",
+            "base_graph_position": max(event.position for event in updated_events),
+            "operation_key": "macro-mcp-invalid-operation",
+            "scope": "bounded feature",
+            "objective": "Construct the initial plan region.",
+            "requirement_ids": ["unknown-requirement"],
+            "dependencies": [],
+            "acceptance": ["the plan is complete"],
+            "checks": [],
+            "rubric": ["the plan is independently executable"],
+        },
+    )
+    rendered_rejection = " ".join(str(item) for item in rejected_result)
+    assert "requested reliable-plan requirement is unavailable" in rendered_rejection
+    assert "unknown_requirement_identity" in rendered_rejection
+    assert '"path":"macro_invocations[0].args"' in rendered_rejection
+    assert "list_type" not in rendered_rejection
+    assert '"path":"ops"' not in rendered_rejection
+    async with sessions() as session:
+        after_rejection_events = await GraphEventStore(session).read_run(run_id)
+
+    unavailable_result = await mcp.call_tool(
+        "construct_reliable_plan_region",
+        {
+            "patch_id": "macro-mcp-unavailable-binding",
+            "base_graph_position": max(event.position for event in after_rejection_events),
+            "operation_key": "macro-mcp-unavailable-operation",
+            "scope": "bounded feature",
+            "objective": "Construct the initial plan region.",
+            "requirement_ids": ["dynamic_feature_acceptance"],
+            "dependencies": [],
+            "acceptance": ["the plan is complete"],
+            "checks": [
+                {"name": "hidden-check", "command_binding": "dynamic_feature_hidden_oracle"}
+            ],
+            "rubric": ["the plan is independently executable"],
+        },
+    )
+    rendered_unavailable = " ".join(str(item) for item in unavailable_result)
+    assert "check command binding is unavailable" in rendered_unavailable
+    assert "unavailable_command_binding" in rendered_unavailable
+    assert '"path":"macro_invocations[0].args"' in rendered_unavailable
+    assert "list_type" not in rendered_unavailable
+    assert '"path":"ops"' not in rendered_unavailable
+
+    async with sessions() as session:
+        after_unavailable_events = await GraphEventStore(session).read_run(run_id)
+    invalid_args_result = await mcp.call_tool(
+        "construct_reliable_plan_region",
+        {
+            "patch_id": "macro-mcp-invalid-arguments",
+            "base_graph_position": max(event.position for event in after_unavailable_events),
+            "operation_key": "macro-mcp-invalid-arguments-operation",
+            "scope": "bounded feature",
+            "objective": "Construct the initial plan region.",
+            "requirement_ids": ["dynamic_feature_acceptance"],
+            "dependencies": [],
+            "acceptance": ["the plan is complete"],
+            "checks": [
+                {
+                    "name": "invalid-check",
+                    "command_binding": "unsupported-sentinel",
+                    "secret_token": "must-not-be-returned",
+                }
+            ],
+            "rubric": ["the plan is independently executable"],
+        },
+    )
+    rendered_invalid_args = " ".join(str(item) for item in invalid_args_result)
+    assert "invalid macro arguments" in rendered_invalid_args
+    assert "literal_error" in rendered_invalid_args
+    assert '"path":"macro_invocations[0].args.checks[0].command_binding"' in (rendered_invalid_args)
+    assert '"path":"macro_invocations[0].args.checks[0].<redacted>"' in rendered_invalid_args
+    assert "unsupported-sentinel" not in rendered_invalid_args
+    assert "must-not-be-returned" not in rendered_invalid_args
+    assert "list_type" not in rendered_invalid_args
+    assert '"path":"ops"' not in rendered_invalid_args
+    await engine.dispose()
 
 
 @pytest.mark.asyncio

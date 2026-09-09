@@ -61,7 +61,12 @@ from orchestrator.graph.event_registry import (
     EVENT_PAYLOAD_MODELS,
     validate_emitted_event_type,
 )
-from orchestrator.graph.macros import expand_patch_macros
+from orchestrator.graph.macros import (
+    MacroCheckBindingError,
+    MacroInvocationValidationError,
+    ReliablePlanMacroError,
+    expand_patch_macros,
+)
 from orchestrator.graph.reliable_plan_evaluation import (
     ReliablePlanAssignmentCarrier,
     ReliablePlanAssignmentRole,
@@ -3010,6 +3015,17 @@ def _apply_patch_command(
             "proposed_by_node_id": context.proposed_by_node_id,
             "base_graph_position": payload.base_graph_position,
         }
+        if isinstance(exc, MacroCheckBindingError):
+            rejected_payload["reason"] = (
+                "The check command binding is unavailable [unavailable_command_binding]"
+            )
+            rejected_payload["diagnostics"] = exc.diagnostics
+        elif isinstance(exc, MacroInvocationValidationError):
+            rejected_payload["reason"] = "invalid macro arguments [invalid_macro_arguments]"
+            rejected_payload["diagnostics"] = exc.diagnostics
+        elif isinstance(exc, ReliablePlanMacroError):
+            rejected_payload["reason"] = f"{exc.message} [{exc.code}]"
+            rejected_payload["diagnostics"] = exc.diagnostics
         if isinstance(exc, ValidationError):
             rejected_payload["diagnostics"] = safe_validation_diagnostics(exc)
         return [

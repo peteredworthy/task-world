@@ -324,15 +324,17 @@ def _full_raw_patch_validation_diagnostics(
         diagnostics.extend(_prefixed_validation_errors(exc, prefix))
     command_error_paths = {item["path"] for item in diagnostics}
     try:
-        PatchEnvelope.model_validate(
-            {
-                "patch_id": envelope.get("patch_id"),
-                "proposed_by_node_id": proposed_by_node_id,
-                "base_graph_position": envelope.get("base_graph_position"),
-                "ops": envelope.get("ops"),
-                "rationale_record_id": envelope.get("rationale_record_id"),
-            }
-        )
+        patch_envelope: dict[str, Any] = {
+            "patch_id": envelope.get("patch_id"),
+            "proposed_by_node_id": proposed_by_node_id,
+            "base_graph_position": envelope.get("base_graph_position"),
+            # Macro-only tool calls omit ``ops``; preserve that optional
+            # transport shape as an empty operation list.  An explicitly
+            # supplied null still reaches strict validation and is rejected.
+            "ops": envelope["ops"] if "ops" in envelope else [],
+            "rationale_record_id": envelope.get("rationale_record_id"),
+        }
+        PatchEnvelope.model_validate(patch_envelope)
     except ValidationError as exc:
         diagnostics.extend(
             item

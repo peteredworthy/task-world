@@ -1663,6 +1663,29 @@ def test_raw_patch_tool_feedback_includes_all_locations_beyond_durable_cap() -> 
     assert all(item["message"] == "Extra field is not allowed" for item in diagnostics["errors"])
 
 
+def test_macro_patch_preflight_defaults_omitted_ops_but_rejects_explicit_null() -> None:
+    macro_payload = {
+        "patch_id": "macro-only",
+        "base_graph_position": 3,
+        "macro_invocations": [{"macro": "create_join", "args": {"join_id": "join-1"}}],
+    }
+
+    assert _full_raw_patch_validation_diagnostics(macro_payload, "planner-1") is None
+    diagnostics = _full_raw_patch_validation_diagnostics(
+        {**macro_payload, "ops": None},
+        "planner-1",
+    )
+
+    assert diagnostics is not None
+    assert diagnostics["errors"] == [
+        {
+            "path": "ops",
+            "code": "list_type",
+            "message": "Input must be a list",
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     "payload, expected_path",
     [
