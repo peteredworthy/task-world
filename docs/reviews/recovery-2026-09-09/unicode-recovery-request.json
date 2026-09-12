@@ -1,0 +1,13 @@
+{
+  "target_task_id": "6ee42b95-e6fe-4553-b879-14ae5844c601",
+  "additional_attempts": 1,
+  "agent_runner_type": "codex_server",
+  "agent_runner_config": {
+    "model": "gpt-5.6-luna",
+    "restrictions": "managed",
+    "reasoning_effort": "medium"
+  },
+  "preserve_checklist": false,
+  "reset_branch": false,
+  "guidance": "Preserve the current corrected candidate and inspect it before making changes. The operator found the original Unicode separator bug; your previous candidate fixed it and both configured acceptance commands passed. The previous verifier lacked the full task context and configured commands. The runtime prompt wiring was repaired separately; do not edit orchestrator code or existing checks. Independently run the exact original JSONL acceptance command and supplemental Unicode command specified by this task against this checkout, plus focused utility tests. If the complete task contract is already satisfied, submit it without unnecessary file changes for fresh verification. Preserve the normal submission gates; report any genuine failures with complete reproducible details. The previous verifier interrupted an extra full suite before failure details were captured, so do not claim that incomplete run passed. Keep scope limited to the JSONL utility, its new tests and usage documentation. Do not merge, deploy, start servers, inspect sibling worktrees, or modify either operator-owned oracle."
+}

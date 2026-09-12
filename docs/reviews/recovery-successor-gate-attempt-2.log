@@ -1,0 +1,200 @@
+ruff (legacy alias)......................................................Passed
+- hook id: ruff
+- duration: 0.02s
+
+All checks passed!
+
+ruff format..............................................................Passed
+- hook id: ruff-format
+- duration: 0.02s
+
+45 files left unchanged
+
+Detect hardcoded secrets.................................................Passed
+- hook id: gitleaks
+- duration: 0.06s
+
+○
+    │╲
+    │ ○
+    ○ ░
+    ░    gitleaks
+
+[90m9:56AM[0m [32mINF[0m 0 commits scanned.
+[90m9:56AM[0m [32mINF[0m scan completed in 36.4ms
+[90m9:56AM[0m [32mINF[0m no leaks found
+
+pyright..................................................................Passed
+- hook id: pyright
+- duration: 13.2s
+
+0 errors, 0 warnings, 0 informations
+WARNING: there is a new pyright version available (v1.1.408 -> v1.1.414).
+Please install the new version or set PYRIGHT_PYTHON_FORCE_VERSION to `latest`
+
+graph-projection-boundaries..............................................Passed
+- hook id: graph-projection-boundaries
+- duration: 10.87s
+pytest...................................................................Failed
+- hook id: pytest
+- duration: 530.35s
+- files were modified by this hook
+
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-9.0.2, pluggy-1.6.0
+rootdir: /Users/peter/code/task-world/worktrees/recovery-stabilization
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.9.0, libtmux-0.53.0, xdist-3.8.0, timeout-2.4.0, hypothesis-6.156.1, asyncio-1.3.0, testmon-2.2.0
+timeout: 30.0s
+timeout method: signal
+timeout func_only: False
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=module, asyncio_default_test_loop_scope=function
+created: 8/8 workers
+8 workers [6087 items]
+
+........................................................................ [  1%]
+........................................................................ [  2%]
+........................................................................ [  3%]
+........................................................................ [  4%]
+........................................................................ [  5%]
+........................................................................ [  7%]
+........................................................................ [  8%]
+........................................................................ [  9%]
+........................................................................ [ 10%]
+........................................................................ [ 11%]
+........................................................................ [ 13%]
+........................................................................ [ 14%]
+........................................................................ [ 15%]
+........................................................................ [ 16%]
+........................................................................ [ 17%]
+........................................................................ [ 18%]
+........................................................................ [ 20%]
+........................................................................ [ 21%]
+........................................................................ [ 22%]
+........................................................................ [ 23%]
+........................................................................ [ 24%]
+........................................................................ [ 26%]
+........................................................................ [ 27%]
+........................................................................ [ 28%]
+........................................................................ [ 29%]
+........................................................................ [ 30%]
+........................................................................ [ 31%]
+........................................................................ [ 33%]
+........................................................................ [ 34%]
+........................................................................ [ 35%]
+........................................................................ [ 36%]
+........................................................................ [ 37%]
+........................................................................ [ 39%]
+........................................................................ [ 40%]
+........................................................................ [ 41%]
+........................................................................ [ 42%]
+........................................................................ [ 43%]
+........................................................................ [ 44%]
+........................................................................ [ 46%]
+........................................................................ [ 47%]
+........................................................................ [ 48%]
+.....................................s.................................. [ 49%]
+........................................................................ [ 50%]
+........................................................................ [ 52%]
+........................................................................ [ 53%]
+........................................................................ [ 54%]
+........................................................................ [ 55%]
+........................................................................ [ 56%]
+........................................................................ [ 57%]
+........................................................................ [ 59%]
+........................................................................ [ 60%]
+........................................................................ [ 61%]
+........................................................................ [ 62%]
+........................................................................ [ 63%]
+........................................................................ [ 65%]
+........................................................................ [ 66%]
+........................................................................ [ 67%]
+........................................................................ [ 68%]
+........................................................................ [ 69%]
+........................................................................ [ 70%]
+........................................................................ [ 72%]
+........................................................................ [ 73%]
+........................................................................ [ 74%]
+........................................................................ [ 75%]
+........................................................................ [ 76%]
+........................................................................ [ 78%]
+........................................................................ [ 79%]
+........................................................................ [ 80%]
+........................................................................ [ 81%]
+........................................................................ [ 82%]
+........................................................................ [ 83%]
+........................................................................ [ 85%]
+........................................................................ [ 86%]
+........................................................................ [ 87%]
+........................................................................ [ 88%]
+........................................................................ [ 89%]
+........................................................................ [ 91%]
+........................................................................ [ 92%]
+........................................................................ [ 93%]
+.............................ss.ss...................................... [ 94%]
+........................................................................ [ 95%]
+........................................................................ [ 96%]
+........................................................................ [ 98%]
+........................................................................ [ 99%]
+.......................................                                  [100%]
+=============================== warnings summary ===============================
+tests/unit/test_graph_dispatch_on_output.py::test_graph_mcp_route_mounted_during_execute_and_unmounted_after
+tests/integration/test_graph_mcp_second_runner_smoke.py::test_real_graph_mcp_server_is_reachable_through_the_real_dispatcher
+  /Users/peter/code/task-world/worktrees/recovery-stabilization/.venv/lib/python3.12/site-packages/pydantic/json_schema.py:2448: PydanticJsonSchemaWarning: Default value <object object at 0x10dce7460> is not JSON serializable; excluding default from JSON schema [non-serializable-default]
+    warnings.warn(message, PydanticJsonSchemaWarning)
+
+tests/unit/test_graph_runner_boundary_commands.py::test_recovery_authority_collapses_identical_roots_retained_in_phase_history
+  /Users/peter/code/task-world/worktrees/recovery-stabilization/src/orchestrator/graph/projection_collections.py:98: UserWarning: Pydantic serializer warnings:
+    PydanticSerializationUnexpectedValue(Expected `RunnerCacheRoot` - serialized value may not be as expected [field_name='baseline_cache_roots', input_value={'path': '.pytest_cache', 'kind': 'ignored'}, input_type=dict])
+    PydanticSerializationUnexpectedValue(Expected `str` - serialized value may not be as expected [field_name='baseline_cache_roots', input_value={'path': '.pytest_cache', 'kind': 'ignored'}, input_type=dict])
+    PydanticSerializationUnexpectedValue(Expected `RunnerCacheRoot` - serialized value may not be as expected [field_name='baseline_cache_roots', input_value={'path': '.pytest_cache', 'kind': 'ignored'}, input_type=dict])
+    PydanticSerializationUnexpectedValue(Expected `str` - serialized value may not be as expected [field_name='baseline_cache_roots', input_value={'path': '.pytest_cache', 'kind': 'ignored'}, input_type=dict])
+    return handler(dict(backend))
+
+tests/unit/test_projectors.py::test_run_status_changed_clears_completed_at_for_recovery_pause
+tests/unit/test_projectors.py::test_clarification_responded_clears_pending
+tests/unit/test_projectors.py::test_clarification_responded_empty_answers_inserts_response_row
+  /Users/peter/code/task-world/worktrees/recovery-stabilization/.venv/lib/python3.12/site-packages/aiosqlite/core.py:63: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    result = function()
+
+tests/integration/test_graph_patch_acknowledgement_recovery.py::test_macro_mcp_callback_accepts_omitted_ops_through_controller
+  /Users/peter/code/task-world/worktrees/recovery-stabilization/.venv/lib/python3.12/site-packages/pydantic/json_schema.py:2448: PydanticJsonSchemaWarning: Default value <object object at 0x10bab7460> is not JSON serializable; excluding default from JSON schema [non-serializable-default]
+    warnings.warn(message, PydanticJsonSchemaWarning)
+
+tests/unit/test_graph_mcp_tools.py::test_builder_server_has_submit_graph_patch_and_macro_tools_but_not_grade
+tests/unit/test_graph_mcp_tools.py::test_verifier_server_has_graph_grade_tool
+tests/unit/test_graph_mcp_tools.py::test_submit_graph_patch_tool_calls_the_closure
+tests/unit/test_graph_mcp_tools.py::test_submit_graph_patch_advertises_typed_flat_envelope_without_defaults
+tests/unit/test_graph_mcp_tools.py::test_submit_graph_patch_preserves_atomic_macro_invocation_order
+tests/unit/test_graph_mcp_tools.py::test_submit_graph_patch_preserves_explicit_null_ops
+tests/unit/test_graph_mcp_tools.py::test_create_work_region_tool_normalizes_and_calls_the_closure
+tests/unit/test_graph_mcp_tools.py::test_graph_grade_tool_calls_the_closure
+  /Users/peter/code/task-world/worktrees/recovery-stabilization/.venv/lib/python3.12/site-packages/pydantic/json_schema.py:2448: PydanticJsonSchemaWarning: Default value <object object at 0x10e1b7460> is not JSON serializable; excluding default from JSON schema [non-serializable-default]
+    warnings.warn(message, PydanticJsonSchemaWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========== 6082 passed, 5 skipped, 15 warnings in 526.67s (0:08:46) ===========
+
+module-imports...........................................................Passed
+- hook id: module-imports
+- duration: 0.34s
+signal-routing...........................................................Passed
+- hook id: signal-routing
+- duration: 0.15s
+enum-drift...........................................(no files to check)Skipped
+- hook id: enum-drift
+ui-lint..................................................................Passed
+- hook id: ui-lint
+- duration: 7.95s
+
+> ui@0.0.0 lint
+> eslint .
+
+ui-typecheck.............................................................Passed
+- hook id: ui-typecheck
+- duration: 3.95s
+
+> ui@0.0.0 typecheck
+> tsc -b
+

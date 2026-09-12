@@ -65,6 +65,7 @@ from orchestrator.runners.types import (
 from orchestrator.runners import (
     build_codex_server_prompt,
     build_dynamic_tool_specs,
+    CodexServerAgent,
     validate_reliable_plan_tool_specs,
 )
 from orchestrator.runners.graph_tool_routing import normalize_patch_payload
@@ -1149,6 +1150,99 @@ class RecordingExecutorWithGraphMcp(RecordingExecutor):
         super().__init__()
         self._graph_mcp_registry = registry
         self._base_url = "http://test-base:9000"
+
+
+class _NeverFinishingCodexTransport:
+    """Injected real-adapter transport that blocks after one tool call."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict[str, Any]] = []
+        self.recv_cancelled = False
+        self._messages: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        for message in (
+            {"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "test"}},
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {"thread": {"id": "thread-capped"}},
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "result": {"turn": {"id": "turn-capped", "status": "inProgress"}},
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 10,
+                "method": "item/tool/call",
+                "params": {
+                    "tool": "construct_reliable_plan_region",
+                    "arguments": {
+                        "patch_id": "capped-invalid",
+                        "base_graph_position": 1,
+                        "operation_key": "capped-invalid",
+                        "scope": "batch",
+                        "objective": "invalid proposal",
+                        "requirement_ids": ["R1"],
+                        "dependencies": [],
+                        "acceptance": ["pass"],
+                        "checks": [],
+                        "rubric": ["valid"],
+                    },
+                },
+            },
+        ):
+            self._messages.put_nowait(message)
+
+    async def send(self, message: dict[str, Any]) -> None:
+        self.sent.append(message)
+
+    async def recv(self) -> dict[str, Any]:
+        try:
+            return await self._messages.get()
+        except asyncio.CancelledError:
+            self.recv_cancelled = True
+            raise
+
+    async def close(self) -> None:
+        return None
+
+
+class _CappedRecordingExecutor(RecordingExecutor):
+    async def _reliable_plan_rejection_limit_reached(self, context: GraphDispatchContext) -> bool:
+        del context
+        return True
+
+
+@pytest.mark.asyncio
+async def test_capped_reliable_plan_rejection_cancels_nonterminating_codex_execution() -> None:
+    transport = _NeverFinishingCodexTransport()
+    agent = CodexServerAgent(api_key=None, _transport=transport, _environ={})
+    executor = _CappedRecordingExecutor(
+        graph_patch_feedback="graph patch capped-invalid rejected: invalid macro arguments"
+    )
+    context = _context(
+        node_id="planner-capped",
+        node_kind="planner",
+        node_role="planner",
+        node_payload={
+            "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
+            "available_tools": ["construct_reliable_plan_region"],
+        },
+    )
+
+    task = asyncio.create_task(executor._run_agent(context, agent))
+    await asyncio.wait_for(task, timeout=1)
+
+    assert transport.recv_cancelled is True
+    tool_response = next(message for message in transport.sent if message.get("id") == 10)
+    assert tool_response["result"]["contentItems"] == [
+        {
+            "type": "inputText",
+            "text": "graph patch capped-invalid rejected: invalid macro arguments",
+        }
+    ]
+    assert executor.graph_patches[0][1]["patch_id"] == "capped-invalid"
 
 
 @pytest.mark.asyncio

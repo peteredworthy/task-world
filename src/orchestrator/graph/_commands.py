@@ -87,6 +87,7 @@ from orchestrator.graph.models import (
     CleanupRequestedPayload,
     CleanupRequestedProjection,
     CompletionDecisionRecord,
+    DecisionAnswerRecord,
     DecisionRequestRecord,
     DecisionRecord,
     EdgeProjection,
@@ -155,6 +156,7 @@ from orchestrator.graph.retry_policy import (
     effective_node_attempt_number,
     effective_node_max_attempts,
 )
+from orchestrator.graph.decisions import resolve_decision_applicability
 from orchestrator.graph.projection_queries import (
     EvidenceClosureError,
     node_failed_candidates_view,
@@ -205,6 +207,7 @@ from orchestrator.graph.projection_queries import (
     ready_nodes_view,
     recorded_node_usage_keys_view,
     reliable_plan_successor_horizon_materialized,
+    routine_snapshot_dynamic_feature_view,
     recovery_nodes_by_record_id_view,
     recovery_blockers_by_node_view,
     retry_not_before_by_node_view,
@@ -2086,6 +2089,24 @@ def _accepted_output_record_events(
                 )
             )
             continue
+        if record_payload.get("record_type") == "decision_answer":
+            try:
+                record = DecisionAnswerRecord.model_validate(record_payload)
+            except ValueError:
+                continue
+            payload = record.model_dump(mode="json", by_alias=True)
+            output.append(make_event("output_record_accepted", payload))
+            output.extend(
+                _input_bound_events_for_record(
+                    projection,
+                    record.producer_node_id,
+                    record.port,
+                    record.record_id,
+                    payload,
+                    make_event,
+                )
+            )
+            continue
         try:
             record = OutputRecord.model_validate(record_payload)
         except ValueError:
@@ -3586,6 +3607,8 @@ def _stamp_reliable_plan_successor_authority(
     )
     parent_is_successor = parent.get("semantic_stage") == "successor_planning"
     child_remaining = max(remaining - (1 if parent_is_successor else 0), 0)
+    dynamic_feature = routine_snapshot_dynamic_feature_view(projection) or {}
+    planner_execution_limit = dynamic_feature.get("max_planner_executions_per_node")
     stamped: list[dict[str, Any]] = []
     for op in ops:
         copied: dict[str, Any] = {}
@@ -3597,6 +3620,37 @@ def _stamp_reliable_plan_successor_authority(
         effective_kind = node.get("kind", default_kind)
         if effective_kind not in {"planner", "worker", "verifier"}:
             continue
+        requested_remaining = node.get("reliable_plan_remaining_horizons")
+        same_horizon_amendment = (
+            parent_is_successor
+            and effective_kind == "planner"
+            and isinstance(node.get("accepted_plan_amendment_record_id"), str)
+            and node.get("planning_horizon") == parent.get("planning_horizon")
+        )
+        effective_child_remaining = child_remaining
+        deferred_plan_successor = (
+            parent.get("semantic_stage") == "discovery"
+            and effective_kind == "planner"
+            and node.get("node_id") == parent.get("decision_successor_node_id")
+            and node.get("planning_horizon") == 1
+        )
+        if same_horizon_amendment or deferred_plan_successor:
+            patch_budget = dynamic_feature.get("patch_budget")
+            horizon = parent.get("planning_horizon") if same_horizon_amendment else 1
+            if (
+                not isinstance(requested_remaining, int)
+                or isinstance(requested_remaining, bool)
+                or requested_remaining < 1
+                or not isinstance(patch_budget, int)
+                or isinstance(patch_budget, bool)
+                or not isinstance(horizon, int)
+                or isinstance(horizon, bool)
+                or horizon - 1 + requested_remaining > patch_budget
+            ):
+                raise ValueError(
+                    "reliable-plan successor exceeds frozen dynamic-feature patch budget"
+                )
+            effective_child_remaining = requested_remaining
         for field_name in (
             "reliable_plan_assignment_carrier",
             "reliable_plan_assignment_role",
@@ -3633,8 +3687,10 @@ def _stamp_reliable_plan_successor_authority(
             node["runner_model_override"] = assignment.model
             node["profile"] = assignment.profile.value
             if effective_kind == "planner":
-                node["reliable_plan_one_horizon_authorized"] = child_remaining > 0
-                node["reliable_plan_remaining_horizons"] = child_remaining
+                node["reliable_plan_one_horizon_authorized"] = effective_child_remaining > 0
+                node["reliable_plan_remaining_horizons"] = effective_child_remaining
+                if planner_execution_limit is not None:
+                    node["max_attempts"] = planner_execution_limit
     return _stamp_failed_verification_correction_lineage(projection, stamped)
 
 
@@ -3763,9 +3819,27 @@ def _reliable_plan_successor_authority_rejection(
         if isinstance(raw_remaining, int) and not isinstance(raw_remaining, bool)
         else (1 if parent.get("reliable_plan_one_horizon_authorized") is True else 0)
     )
-    if remaining <= 1 and parent.get("semantic_stage") == "successor_planning":
+    amendment_successor_ids = {
+        op.node.get("node_id")
+        for op in patch.ops
+        if op.op == "create_node"
+        and isinstance(op.node, dict)
+        and isinstance(op.node.get("accepted_plan_amendment_record_id"), str)
+        and op.node.get("semantic_stage") == "successor_planning"
+    }
+    all_successors_are_amendments = bool(successor_node_ids) and set(successor_node_ids) == (
+        amendment_successor_ids
+    )
+    deferred_plan_successor = parent.get(
+        "semantic_stage"
+    ) == "discovery" and successor_node_ids == [parent.get("decision_successor_node_id")]
+    if (
+        remaining <= 1
+        and parent.get("semantic_stage") == "successor_planning"
+        and not all_successors_are_amendments
+    ):
         return "reliable_plan_successor_planning_not_authorized"
-    if remaining <= 0:
+    if remaining <= 0 and not all_successors_are_amendments and not deferred_plan_successor:
         return "reliable_plan_successor_planning_not_authorized"
     expected_horizon = (
         int(parent.get("planning_horizon", 0)) + 1
@@ -3778,7 +3852,12 @@ def _reliable_plan_successor_authority_rejection(
             continue
         if op.node.get("node_id") not in successor_node_ids:
             continue
-        if op.node.get("planning_horizon") != expected_horizon:
+        same_horizon_amendment = (
+            parent.get("semantic_stage") in {"successor_planning", "gap_planning"}
+            and isinstance(op.node.get("accepted_plan_amendment_record_id"), str)
+            and op.node.get("planning_horizon") == parent.get("planning_horizon")
+        )
+        if not same_horizon_amendment and op.node.get("planning_horizon") != expected_horizon:
             return "reliable_plan_authority_requires_next_sequential_horizon"
     return None
 
@@ -5581,7 +5660,13 @@ def _apply_agent_died(
             ),
         ]
 
-    if non_gap_planner_completion_contract_satisfied(projection, node_id):
+    try:
+        legacy_completion_shortcut = resolve_decision_applicability(projection, node_id) is None
+    except ValueError:
+        legacy_completion_shortcut = False
+    if legacy_completion_shortcut and non_gap_planner_completion_contract_satisfied(
+        projection, node_id
+    ):
         return [
             make_event("agent_died", event_payload),
             make_event(
@@ -7524,6 +7609,27 @@ def _resource_claim_payload(claim: Any) -> dict[str, Any]:
 
 command_rejected = _command_rejected
 event_factory = _event_factory
+
+
+def reliable_plan_proposal_rejection_limit(
+    projection: GraphProjection,
+    context: PatchCommandContext,
+) -> int | None:
+    """Return the configured limit only for a root or successor reliable planner."""
+    planner = node_payload_view(projection, context.proposed_by_node_id) or {}
+    if (
+        context.actor_role != "planner"
+        or planner.get("kind") != "planner"
+        or planner.get("role") == "gap_planner"
+        or not isinstance(planner.get("reliable_plan_skeleton_id"), str)
+    ):
+        return None
+    dynamic_feature = routine_snapshot_dynamic_feature_view(projection) or {}
+    value = dynamic_feature.get("max_rejected_plan_proposals_per_planner")
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None
+
 
 apply_lifecycle_command = _apply_lifecycle_command
 apply_record_heartbeat = _apply_record_heartbeat

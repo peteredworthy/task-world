@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+import subprocess
 from typing import Any
 
 import pytest
@@ -16,6 +18,7 @@ from orchestrator.graph import (
     compile_routine,
     edges_view,
     event_factory,
+    execution_attempts_view,
     expand_patch_macros,
     node_kinds_view,
     node_payload_view,
@@ -29,10 +32,12 @@ from orchestrator.graph_runtime import (
     GraphDispatchContext,
     GraphDispatchExecutor,
     GraphEventStore,
+    OutboxDispatcher,
     PatchOperationConflictError,
     StaticGraphAgentFactory,
     StaleProjectionError,
 )
+from orchestrator.runners import CodexServerAgent
 
 
 class _AcknowledgementLost(RuntimeError):
@@ -132,6 +137,8 @@ async def _active_planner(
     ids: _Ids,
     *,
     hidden_oracle_command: str | None = None,
+    max_rejected_plan_proposals_per_planner: int | None = None,
+    max_planner_executions_per_node: int | None = None,
 ) -> int:
     run_config: dict[str, Any] = {
         "acceptance_command": "true",
@@ -161,6 +168,12 @@ async def _active_planner(
     }
     if hidden_oracle_command is not None:
         run_config["hidden_oracle_command"] = hidden_oracle_command
+    if max_rejected_plan_proposals_per_planner is not None:
+        run_config["max_rejected_plan_proposals_per_planner"] = (
+            max_rejected_plan_proposals_per_planner
+        )
+    if max_planner_executions_per_node is not None:
+        run_config["max_planner_executions_per_node"] = max_planner_executions_per_node
     seeded = await controller.handle_command(
         run_id,
         0,
@@ -180,6 +193,136 @@ async def _active_planner(
     return started.projection_position
 
 
+@pytest.mark.asyncio
+async def test_reliable_plan_rejection_limit_survives_executor_reconstruction(
+    tmp_path: Path,
+) -> None:
+    engine = create_engine(tmp_path / "proposal-limit.db")
+    await init_db(engine)
+    sessions = create_session_factory(engine)
+    clock = FakeClock()
+    ids = _Ids("proposal-limit")
+    controller = GraphController(sessions, clock, ids, auto_dispatch=False)
+    run_id = "proposal-limit-run"
+    await _active_planner(
+        controller,
+        run_id,
+        clock,
+        ids,
+        max_rejected_plan_proposals_per_planner=2,
+        max_planner_executions_per_node=1,
+    )
+
+    async def reject_with(
+        executor: GraphDispatchExecutor,
+        patch_id: str,
+        *,
+        malformed_command: bool = False,
+    ) -> str:
+        projection = await controller.read_projection(run_id)
+        async with sessions() as session:
+            events = await GraphEventStore(session).read_run(run_id)
+        planner_payload = node_payload_view(projection, "planner-plan")
+        assert isinstance(planner_payload, dict)
+        context = GraphDispatchContext(
+            run_id=run_id,
+            node_id="planner-plan",
+            node_kind="planner",
+            node_role="planner",
+            node_payload=planner_payload,
+            requirements=[],
+            worktree_path=str(tmp_path),
+            lease_id="lease-limit",
+            lease_generation=1,
+            execution_id="execution-limit",
+            base_snapshot_id="routine-snapshot",
+            dispatch_event_id="dispatch-limit",
+            graph_projection=projection,
+            graph_events=list(events),
+            graph_position=max(event.position for event in events),
+        )
+        request: dict[str, Any] = {
+            "patch_id": patch_id,
+            "base_graph_position": max(event.position for event in events),
+            "macro_invocations": [
+                {
+                    "macro": "construct_reliable_plan_region",
+                    "args": {
+                        "operation_key": patch_id,
+                        "scope": "bounded feature",
+                        "objective": "invalid request",
+                        "requirement_ids": ["missing-requirement"],
+                        "dependencies": [],
+                        "acceptance": ["never accepted"],
+                        "checks": [],
+                        "rubric": ["must be valid"],
+                    },
+                }
+            ],
+        }
+        if malformed_command:
+            request.pop("base_graph_position")
+        return await executor._submit_graph_patch_callback(context, request)
+
+    try:
+        first_executor = GraphDispatchExecutor(
+            sessions,
+            controller,
+            _FailIfCalledAgentFactory(),
+            worktree_path=tmp_path,
+            artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+        )
+        async with sessions() as session:
+            initial_events = await GraphEventStore(session).read_run(run_id)
+        initial_dispatch_ids = {
+            event.event_id
+            for event in initial_events
+            if event.event_type == "agent_dispatch_requested"
+        }
+
+        first = await reject_with(
+            first_executor,
+            "invalid-1",
+            malformed_command=True,
+        )
+        assert "invalid_command_payload" in first
+
+        reconstructed = GraphDispatchExecutor(
+            sessions,
+            GraphController(sessions, clock, _Ids("rebuilt"), auto_dispatch=False),
+            _FailIfCalledAgentFactory(),
+            worktree_path=tmp_path,
+            artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+        )
+        second = await reject_with(reconstructed, "invalid-2")
+        assert "unknown_requirement_identity" in second
+        third = await reject_with(reconstructed, "must-not-evaluate")
+        assert "proposal_rejection_limit_exhausted" in third
+        assert "unknown_requirement_identity" not in third
+
+        async with sessions() as session:
+            store = GraphEventStore(session)
+            assert await store.reliable_plan_rejection_count(run_id, "planner-plan") == 3
+            events = await store.read_run(run_id)
+        exhaustion = [
+            event
+            for event in events
+            if event.event_type == "command_rejected"
+            and event.payload.get("reason") == "proposal_rejection_limit_exhausted"
+        ]
+        assert len(exhaustion) == 1
+        assert exhaustion[0].payload["budget"] == 2
+        assert exhaustion[0].payload["count"] == 2
+        planner = node_payload_view(await controller.read_projection(run_id), "planner-plan")
+        assert planner is not None and planner["max_attempts"] == 1
+        assert "missing-requirement" not in str(exhaustion[0].payload)
+        assert {
+            event.event_id for event in events if event.event_type == "agent_dispatch_requested"
+        } == initial_dispatch_ids
+    finally:
+        await engine.dispose()
+
+
 class _FailIfCalledAgentFactory:
     def __init__(self) -> None:
         self.calls = 0
@@ -191,6 +334,219 @@ class _FailIfCalledAgentFactory:
     def create_runner(self, *_args: Any, **_kwargs: Any) -> Any:
         self.calls += 1
         raise AssertionError("patch admission must not create an agent runner")
+
+
+class _SingleCodexFactory:
+    def __init__(self, agent: CodexServerAgent) -> None:
+        self._agent = agent
+
+    def preflight(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def create_runner(self, *_args: Any, **_kwargs: Any) -> CodexServerAgent:
+        return self._agent
+
+
+class _NeverFinishingPlannerTransport:
+    def __init__(self, base_graph_position: int) -> None:
+        self.sent: list[dict[str, Any]] = []
+        self.recv_cancelled = False
+        self._messages: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        for message in (
+            {"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "test"}},
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {"thread": {"id": "thread-capped"}},
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "result": {"turn": {"id": "turn-capped", "status": "inProgress"}},
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 10,
+                "method": "item/tool/call",
+                "params": {
+                    "tool": "construct_reliable_plan_region",
+                    "arguments": {
+                        "patch_id": "terminal-invalid-plan",
+                        "base_graph_position": base_graph_position,
+                        "operation_key": "terminal-invalid-plan",
+                        "scope": "bounded feature",
+                        "objective": "invalid proposal",
+                        "requirement_ids": ["missing-requirement"],
+                        "dependencies": [],
+                        "acceptance": ["never accepted"],
+                        "checks": [],
+                        "rubric": ["must be valid"],
+                    },
+                },
+            },
+        ):
+            self._messages.put_nowait(message)
+
+    async def send(self, message: dict[str, Any]) -> None:
+        self.sent.append(message)
+
+    async def recv(self) -> dict[str, Any]:
+        try:
+            return await self._messages.get()
+        except asyncio.CancelledError:
+            self.recv_cancelled = True
+            raise
+
+    async def close(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rejection_before_dispatch", [False, True])
+async def test_managed_capped_planner_stops_transport_and_terminalizes_without_retry(
+    tmp_path: Path,
+    rejection_before_dispatch: bool,
+) -> None:
+    engine = create_engine(tmp_path / "managed-proposal-limit.db")
+    await init_db(engine)
+    sessions = create_session_factory(engine)
+    clock = FakeClock()
+    ids = _Ids("managed-limit")
+    artifact_store = FilesystemArtifactStore(tmp_path / "managed-limit-artifacts")
+    controller = GraphController(sessions, clock, ids, auto_dispatch=False)
+    run_id = "managed-proposal-limit-run"
+    start_position = await _active_planner(
+        controller,
+        run_id,
+        clock,
+        ids,
+        max_rejected_plan_proposals_per_planner=1,
+        max_planner_executions_per_node=3,
+    )
+    worktree = tmp_path / "managed-limit-worktree"
+    worktree.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=worktree, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=worktree, check=True)
+    (worktree / "README.md").write_text("# bounded planner\n")
+    subprocess.run(["git", "add", "README.md"], cwd=worktree, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "Initial"], cwd=worktree, check=True)
+
+    try:
+        if rejection_before_dispatch:
+            projection = await controller.read_projection(run_id)
+            async with sessions() as session:
+                initial_events = await GraphEventStore(session).read_run(run_id)
+            planner_payload = node_payload_view(projection, "planner-plan")
+            assert isinstance(planner_payload, dict)
+            rejection_context = GraphDispatchContext(
+                run_id=run_id,
+                node_id="planner-plan",
+                node_kind="planner",
+                node_role="planner",
+                node_payload=planner_payload,
+                requirements=[],
+                worktree_path=str(worktree),
+                lease_id="pre-crash-lease",
+                lease_generation=1,
+                execution_id="pre-crash-execution",
+                base_snapshot_id="routine-snapshot",
+                dispatch_event_id="pre-crash-dispatch",
+                graph_projection=projection,
+                graph_events=initial_events,
+                graph_position=start_position,
+            )
+            pre_crash_executor = GraphDispatchExecutor(
+                sessions,
+                controller,
+                _FailIfCalledAgentFactory(),
+                worktree_path=worktree,
+                artifact_store=artifact_store,
+            )
+            feedback = await pre_crash_executor._submit_graph_patch_callback(
+                rejection_context,
+                {
+                    "patch_id": "persisted-before-cancel",
+                    "base_graph_position": start_position,
+                    "macro_invocations": [
+                        {
+                            "macro": "construct_reliable_plan_region",
+                            "args": {
+                                "operation_key": "persisted-before-cancel",
+                                "scope": "bounded feature",
+                                "objective": "invalid proposal",
+                                "requirement_ids": ["missing-requirement"],
+                                "dependencies": [],
+                                "acceptance": ["never accepted"],
+                                "checks": [],
+                                "rubric": ["must be valid"],
+                            },
+                        }
+                    ],
+                },
+            )
+            assert "unknown_requirement_identity" in feedback
+
+        scheduled = await controller.handle_command(
+            run_id,
+            await controller.current_position(run_id),
+            "schedule_tick",
+            {
+                "max_grants": 1,
+                "lease_seconds": 60,
+                "base_snapshot_id": "baseline",
+                "priorities": {"planner-plan": 100},
+            },
+        )
+        dispatch_item = next(
+            item for item in scheduled.outbox_items if item.kind == "agent_dispatch"
+        )
+        transport = _NeverFinishingPlannerTransport(scheduled.projection_position)
+        executor = GraphDispatchExecutor(
+            sessions,
+            controller,
+            _SingleCodexFactory(CodexServerAgent(api_key=None, _transport=transport, _environ={})),
+            worktree_path=worktree,
+            artifact_store=artifact_store,
+        )
+
+        await executor.dispatch(dispatch_item)
+        await asyncio.wait_for(executor.wait_for_all(), timeout=2)
+        await asyncio.sleep(0)
+        assert transport.recv_cancelled is (not rejection_before_dispatch)
+        assert executor.is_running(str(dispatch_item.payload["execution_id"])) is False
+
+        before_recovery = await controller.read_projection(run_id)
+        attempt = next(iter(execution_attempts_view(before_recovery).values()))
+        assert attempt.state == "recovery_requested"
+        assert attempt.recovery_reason == "invalid_planner_proposal"
+        assert attempt.retry_after_recovery is False
+
+        completed = await OutboxDispatcher(sessions, executor, clock).dispatch_pending(
+            run_id=run_id,
+            allowed_kinds=frozenset({"runner_recovery"}),
+        )
+        assert [item.kind for item in completed] == ["runner_recovery"]
+        async with sessions() as session:
+            events = await GraphEventStore(session).read_run(run_id)
+        assert any(
+            event.event_type == "node_state_changed"
+            and event.payload.get("node_id") == "planner-plan"
+            and event.payload.get("new_state") == "failed"
+            and event.payload.get("trigger") == "invalid_planner_proposal"
+            for event in events
+        )
+        assert not any(event.event_type == "runtime_retry_scheduled" for event in events)
+        assert sum(event.event_type == "agent_dispatch_requested" for event in events) == 1
+        if rejection_before_dispatch:
+            assert transport.sent == []
+        else:
+            tool_response = next(message for message in transport.sent if message.get("id") == 10)
+            assert (
+                "unknown_requirement_identity" in tool_response["result"]["contentItems"][0]["text"]
+            )
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -722,6 +1078,7 @@ async def test_successor_macro_crosses_mcp_controller_and_store(
                         "role": "planner",
                         "state": "planned",
                         "semantic_stage": "successor_planning",
+                        "task_region_id": "successor-region-h1",
                         "planning_horizon": 1,
                         "generation_index": 1,
                         "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",

@@ -5,13 +5,20 @@ from __future__ import annotations
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 import pytest
 
+from orchestrator.graph import (
+    BATCH_DECISION_SCHEMA_ID,
+    BATCH_DECISION_SCHEMA_VERSION,
+    batch_decision_schema,
+)
 from orchestrator.graph_runtime.graph_mcp_tools import build_graph_mcp_server
 from orchestrator.runners import (
     SubmissionAcknowledgement,
     SubmissionContract,
     SubmissionOutputContract,
+    submission_tool_input_schema,
 )
 
 
@@ -96,6 +103,8 @@ async def test_semantic_worker_server_exposes_three_way_submit_acknowledgement(
 
     assert await _tool_names(mcp) == {"submit"}
     submit_tool = next(tool for tool in await mcp.list_tools() if tool.name == "submit")
+    assert submit_tool.inputSchema["title"] == "submitArguments"
+    assert "additionalProperties" not in submit_tool.inputSchema
     assert submit_tool.inputSchema["required"] == ["outputs"]
     outputs_schema = submit_tool.inputSchema["properties"]["outputs"]
     assert outputs_schema["required"] == ["semantic_artifact"]
@@ -106,12 +115,78 @@ async def test_semantic_worker_server_exposes_three_way_submit_acknowledgement(
         "properties": {"batches": {"type": "array"}},
     }
     result = await mcp.call_tool(
-        "submit", {"outputs": {"semantic_artifact": {"batches": [{"batch_id": "b1"}]}}}
+        "submit",
+        {
+            "outputs": {"semantic_artifact": {"batches": [{"batch_id": "b1"}]}},
+            "legacy_extra": True,
+        },
     )
     assert calls == [{"outputs": {"semantic_artifact": {"batches": [{"batch_id": "b1"}]}}}]
     rendered = " ".join(str(item) for item in result)
     assert disposition in rendered
     assert message in rendered
+
+
+async def test_decision_submit_schema_is_self_contained_and_matches_codex_contract() -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def on_submit_graph_patch(payload: dict[str, Any]) -> str:
+        return "ok"
+
+    async def on_submit(args: dict[str, Any]) -> SubmissionAcknowledgement:
+        calls.append(args)
+        return SubmissionAcknowledgement(
+            disposition="durably_staged",
+            message="staged",
+            execution_id="execution-1",
+            graph_position=12,
+        )
+
+    contract = SubmissionContract(
+        interaction_contract="decision-v1",
+        outputs=(
+            SubmissionOutputContract(
+                port="decision",
+                schema_name="BatchDecision",
+                semantic_schema_id=BATCH_DECISION_SCHEMA_ID,
+                semantic_schema_version=BATCH_DECISION_SCHEMA_VERSION,
+                semantic_role="batch_decision",
+                content_json_schema=batch_decision_schema(),
+            ),
+        ),
+    )
+    canonical = submission_tool_input_schema(contract)
+    mcp = build_graph_mcp_server(
+        on_submit_graph_patch,
+        None,
+        allowed_tools=[],
+        on_submit=on_submit,
+        submission_contract=contract,
+    )
+    submit_tool = next(tool for tool in await mcp.list_tools() if tool.name == "submit")
+
+    assert submit_tool.inputSchema["required"] == canonical["required"]
+    assert submit_tool.inputSchema["properties"]["outputs"]["required"] == ["decision"]
+    assert (
+        submit_tool.inputSchema["properties"]["outputs"]["properties"]["decision"]
+        == canonical["properties"]["outputs"]["properties"]["decision"]
+    )
+    assert '"$ref"' not in str(submit_tool.inputSchema)
+    valid = {
+        "outputs": {
+            "decision": {
+                "disposition": "proceed",
+                "implementation_notes": "Implement the selected batch.",
+            }
+        }
+    }
+    await mcp.call_tool("submit", valid)
+    assert calls == [valid]
+    with pytest.raises(ToolError, match="Input validation error"):
+        await mcp.call_tool(
+            "submit",
+            {"outputs": {"decision": {"disposition": "invented"}}},
+        )
 
 
 async def test_verifier_empty_allowlist_does_not_expose_planner_macros() -> None:

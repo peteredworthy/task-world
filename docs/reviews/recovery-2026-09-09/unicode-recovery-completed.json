@@ -1,0 +1,231 @@
+{
+  "id": "7a03f18c-02b1-43f7-b7a1-c3e0e22372c5",
+  "repo_name": "task-world-current",
+  "status": "completed",
+  "pause_reason": null,
+  "last_error": null,
+  "is_graph_backed": false,
+  "execution_mode": "legacy",
+  "routine_id": "recovery-jsonl-unicode-luna-v1",
+  "routine_sha": null,
+  "routine_source": "embedded",
+  "routine_embedded": {
+    "id": "recovery-jsonl-unicode-luna-v1",
+    "name": "Recovery correction: JSONL Unicode boundaries",
+    "description": "One-attempt Luna correction for independently reproduced Unicode bug missed by the baseline verifier.",
+    "execution_mode": "legacy",
+    "steps": [
+      {
+        "id": "S-01",
+        "title": "Correct the reproduced Unicode requirement failure",
+        "step_context": "Make the narrow correction, preserve all checks, and submit through the normal fixed builder/check/verifier workflow.",
+        "tasks": [
+          {
+            "id": "T-01",
+            "title": "Preserve Unicode separators within JSON strings",
+            "task_context": "The baseline utility in examples/qualification/jsonl_validator.py incorrectly uses text.splitlines(), so valid JSON strings containing U+0085, U+2028 or U+2029 are split into multiple invalid input records. The public contract requires accepting JSON objects with Unicode values and numbering physical JSONL lines correctly. Fix this narrow behavior while preserving CRLF, blank-line handling, nonstandard-number rejection, CLI output and exit codes. Add real regression tests in a NEW tests/unit/test_qualification_jsonl_unicode.py file; do not edit existing tests. Include valid Unicode separators inside string values and malformed/non-object records following those valid lines, with correct one-based physical line numbers. Only edit the existing utility and this new test file. Do not edit server code, gates, the database, or operator acceptance scripts. Do not merge, deploy, or start the orchestrator server. Use uv run for Python. Run the focused relevant tests and BOTH operator-owned commands: uv run python /private/tmp/qualification-20260907/task1_oracle.py and uv run python /private/tmp/recovery_unicode_oracle.py. The supplemental oracle failed on the seed before this run was created. Do not inspect or modify either oracle. Submit via normal orchestrator callbacks for fresh verification. The verifier should use focused tests and the two acceptance commands; the successful current candidate commit receipt establishes that mandatory commit hooks ran, so do not rerun the entire repository suite unless changes or a specific concern justify it. Preserve all configured submission gates.",
+            "requirements": [
+              {
+                "id": "R1",
+                "desc": "Valid objects containing U+0085/U+2028/U+2029 are accepted by both pure validation and CLI; physical line numbering after these strings is correct.",
+                "priority": "critical"
+              },
+              {
+                "id": "R2",
+                "desc": "Original and supplemental operator-owned acceptance commands pass without edits; existing behaviors and checks remain intact.",
+                "priority": "critical"
+              },
+              {
+                "id": "R3",
+                "desc": "The change is limited to the utility and a new real regression test file; focused tests and normal submission checks pass.",
+                "priority": "critical"
+              }
+            ],
+            "auto_verify": {
+              "items": [
+                {
+                  "id": "original-acceptance",
+                  "cmd": "uv run python /private/tmp/qualification-20260907/task1_oracle.py",
+                  "must": true
+                },
+                {
+                  "id": "unicode-acceptance",
+                  "cmd": "uv run python /private/tmp/recovery_unicode_oracle.py",
+                  "must": true
+                }
+              ]
+            },
+            "verifier": {
+              "rubric": [
+                {
+                  "id": "R1",
+                  "text": "A only if independently checked: Valid objects containing U+0085/U+2028/U+2029 are accepted by both pure validation and CLI; physical line numbering after these strings is correct. Otherwise F with exact evidence."
+                },
+                {
+                  "id": "R2",
+                  "text": "A only if independently checked: Original and supplemental operator-owned acceptance commands pass without edits; existing behaviors and checks remain intact. Otherwise F with exact evidence."
+                },
+                {
+                  "id": "R3",
+                  "text": "A only if independently checked: The change is limited to the utility and a new real regression test file; focused tests and normal submission checks pass. Otherwise F with exact evidence."
+                }
+              ]
+            },
+            "retry": {
+              "max_attempts": 1
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "routine_path": null,
+  "routine_commit": null,
+  "parent_run_id": null,
+  "parent_slice_id": null,
+  "oversight_state": {},
+  "agent_runner_type": "codex_server",
+  "agent_runner_type_display": "Codex Server",
+  "agent_icon": "codex",
+  "agent_runner_config": {
+    "model": "gpt-5.6-luna",
+    "restrictions": "managed",
+    "reasoning_effort": "medium",
+    "pid": 91697
+  },
+  "verifier_model": "gpt-5.6-luna",
+  "worktree_enabled": true,
+  "worktree_path": "/Users/peter/code/task-world/worktrees/r217",
+  "worktree_relative_path": "worktrees/r217",
+  "source_branch": "orchestrator/run-2a78847f-cc61-46db-b8f0-ce0203a9a85b",
+  "source_branch_sha": "e328421f9fbce18e78badd2ed03782eed15f25d5",
+  "intended_seed_sha": "e328421f9fbce18e78badd2ed03782eed15f25d5",
+  "merge_strategy": "squash",
+  "config": {
+    "recovery_campaign": "2026-09-09",
+    "corrects_run": "2a78847f-cc61-46db-b8f0-ce0203a9a85b"
+  },
+  "env_file_specs": [],
+  "env_source_dir": null,
+  "steps": [
+    {
+      "id": "99f2f332-e31c-4119-8eb8-b34cbfa95d9a",
+      "config_id": "S-01",
+      "title": "Correct the reproduced Unicode requirement failure",
+      "completed": true,
+      "tasks": [
+        {
+          "id": "6ee42b95-e6fe-4553-b879-14ae5844c601",
+          "config_id": "T-01",
+          "title": "Preserve Unicode separators within JSON strings",
+          "status": "completed",
+          "current_attempt": 2,
+          "max_attempts": 2,
+          "grade_summary": [
+            {
+              "grade": "A",
+              "priority": "critical"
+            },
+            {
+              "grade": "A",
+              "priority": "critical"
+            },
+            {
+              "grade": "A",
+              "priority": "critical"
+            }
+          ],
+          "attempts_summary": [
+            {
+              "attempt_num": 1,
+              "outcome": "failed"
+            },
+            {
+              "attempt_num": 2,
+              "outcome": "passed"
+            }
+          ],
+          "pending_action_type": null,
+          "pending_clarification_count": null,
+          "parent_task_id": null
+        }
+      ],
+      "has_approval_gate": false,
+      "approval_status": null,
+      "skipped": false,
+      "skip_reason": null,
+      "condition": null
+    }
+  ],
+  "current_step_index": 1,
+  "created_at": "2026-09-09T01:04:13.556742Z",
+  "updated_at": "2026-09-09T13:26:13.539173Z",
+  "started_at": "2026-09-09T01:05:06.798298Z",
+  "completed_at": "2026-09-09T13:27:03.468030Z",
+  "agent_runner_started_at": null,
+  "total_tokens_read": 2851975,
+  "total_tokens_write": 12486,
+  "total_tokens_cache": 2642688,
+  "total_duration_ms": 831880,
+  "total_num_actions": 57,
+  "token_usage_by_model": [
+    {
+      "model": "gpt-5.6-luna",
+      "gen_ai_usage_cache_read_input_tokens": 907008,
+      "gen_ai_usage_cache_creation_input_tokens": 0,
+      "gen_ai_usage_input_tokens": 992781,
+      "gen_ai_usage_output_tokens": 4960,
+      "gen_ai_usage_reasoning_output_tokens": 1078,
+      "gen_ai_response_finish_reasons": [
+        "stop"
+      ],
+      "cost_usd": 0.0,
+      "latency_ms": 477585,
+      "rate_missing": true
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "gen_ai_usage_cache_read_input_tokens": 1338624,
+      "gen_ai_usage_cache_creation_input_tokens": 0,
+      "gen_ai_usage_input_tokens": 1401564,
+      "gen_ai_usage_output_tokens": 4013,
+      "gen_ai_usage_reasoning_output_tokens": 620,
+      "gen_ai_response_finish_reasons": [
+        "stop"
+      ],
+      "cost_usd": 0.0,
+      "latency_ms": 250653,
+      "rate_missing": true
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "gen_ai_usage_cache_read_input_tokens": 164096,
+      "gen_ai_usage_cache_creation_input_tokens": 0,
+      "gen_ai_usage_input_tokens": 193041,
+      "gen_ai_usage_output_tokens": 1857,
+      "gen_ai_usage_reasoning_output_tokens": 370,
+      "gen_ai_response_finish_reasons": [
+        "stop"
+      ],
+      "cost_usd": 0.0,
+      "latency_ms": 50921,
+      "rate_missing": true
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "gen_ai_usage_cache_read_input_tokens": 232960,
+      "gen_ai_usage_cache_creation_input_tokens": 0,
+      "gen_ai_usage_input_tokens": 264589,
+      "gen_ai_usage_output_tokens": 1656,
+      "gen_ai_usage_reasoning_output_tokens": 268,
+      "gen_ai_response_finish_reasons": [
+        "stop"
+      ],
+      "cost_usd": 0.0,
+      "latency_ms": 52721,
+      "rate_missing": true
+    }
+  ],
+  "estimated_cost_usd": null,
+  "cost_disclaimer": null
+}

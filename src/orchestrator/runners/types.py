@@ -3,7 +3,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 from orchestrator.config.models import MCPServerConfig
@@ -28,6 +28,32 @@ ChecklistUpdateCallback = Callable[[str, ChecklistStatus, str | None], Awaitable
 """(req_id, status, note) -> None. run_id/task_id bound by caller."""
 
 SubmitArguments = dict[str, Any]
+
+
+class SubmissionInvocation(BaseModel):
+    """Trusted delivery identity carried beside model-authored submit arguments."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    execution_id: str = Field(min_length=1)
+    answer_attempt_id: str = Field(min_length=1)
+    transport_channel: str = Field(min_length=1)
+    transport_session_id: str = Field(min_length=1)
+    transport_request_id: str = Field(min_length=1)
+    arguments: SubmitArguments | None = None
+
+    @field_validator(
+        "execution_id",
+        "answer_attempt_id",
+        "transport_channel",
+        "transport_session_id",
+        "transport_request_id",
+    )
+    @classmethod
+    def identity_fields_are_substantive(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("submission invocation identity must contain non-whitespace text")
+        return value
 
 
 SubmissionRejectionCategory = Literal[
@@ -90,9 +116,12 @@ class SubmissionAcknowledgement(BaseModel):
 SubmitCallbackResult = SubmissionAcknowledgement | None
 SubmitCallback = (
     Callable[[], Awaitable[SubmitCallbackResult]]
-    | Callable[[SubmitArguments | None], Awaitable[SubmitCallbackResult]]
+    | Callable[
+        [SubmitArguments | SubmissionInvocation | None],
+        Awaitable[SubmitCallbackResult],
+    ]
 )
-"""Legacy empty or typed-payload submission callback with a truthful result."""
+"""Legacy or trusted-invocation submission callback with a truthful result."""
 
 LogLineCallback = Callable[[list[str]], Awaitable[None]]
 
@@ -150,6 +179,7 @@ class SubmissionContract(BaseModel):
 
     model_config = {"frozen": True}
 
+    interaction_contract: Literal["legacy", "decision-v1"] = "legacy"
     outputs: tuple[SubmissionOutputContract, ...] = ()
 
     @property
@@ -172,12 +202,14 @@ class ExecutionResult(BaseModel):
     # outside normalized metrics because they describe a response, not a cost.
     gen_ai_response_finish_reasons: list[str] = Field(default_factory=list)
     gen_ai_usage_reasoning_output_tokens: int = Field(default=0, ge=0)
+    completion_cause: Literal["terminal_answer_completed"] | None = None
 
 
 class ExecutionContext(BaseModel):
     """Context provided to an agent for execution."""
 
     run_id: str
+    execution_id: str | None = None
     task_id: str
     working_dir: str
     prompt: str

@@ -1,5 +1,16 @@
 # Recovery cheap-validation ledger
 
+September 11 resumption: the saved 41-file source manifest and lifecycle hash
+match the recovery worktree at inspection. Successor preparation is tracked in
+`recovery-deterministic-closure.md` (S1–S5), with the baseline comparison in
+`recovery-successor-baseline-2026-09-11.json` and the experiment in
+`recovery-successor-experiment.md`. Independent deterministic successor capture
+and standalone replay pass, with one rejection reproduced and three complete
+receipts. Final accounting is in `recovery-successor-validation-result.json`.
+The complete gate passed: 6,082 tests, five skips, and all applicable static/UI
+hooks. Gate attempts and the independently reviewed atomic PID-file fixture
+repair are retained in the closure ledger. No new paid execution is authorized. Entries below retain their historical dates and scope.
+
 Updated September 9, 2026. Scope is Stage 1 of
 `recovery-restart-plan-2026-09-09.md`; no model executions are admitted by this
 ledger. Committed source under test is repair branch

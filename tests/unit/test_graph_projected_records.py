@@ -56,6 +56,7 @@ def test_accepted_record_models_are_the_canonical_record_contracts() -> None:
         "check_result",
         "classified_gap",
         "completion_decision",
+        "decision_answer",
         "decision_record",
         "decision_request",
         "failure_record",

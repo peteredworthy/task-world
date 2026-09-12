@@ -1,0 +1,5 @@
+{
+  "src/orchestrator/cli/server_supervisor.py": "d69af93e78cc2a51283a29d55d2ef4930691e417c8c6afbcd90459faa40bb40a",
+  "tests/integration/test_server_supervisor_process.py": "2b617089ba36149109ede11da1c2f0ea8a189bf830e1bd754ee277cbfa0fa49b",
+  "tests/unit/test_server_supervisor.py": "7a0ba7ac65a84e3e9e58ca1d0ae8a03758c423038a13e1b3e2a91d590f414eb7"
+}

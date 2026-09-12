@@ -1,0 +1,161 @@
+{
+  "run_id": "4f89c845-3f82-4b79-856d-41b52bf0ff53",
+  "event_count": 210,
+  "run_state": "active",
+  "node_states": {
+    "check-qualification-jsonl-batc-a823de3ebf362106-1": "planned",
+    "check-qualification-jsonl-batc-a823de3ebf362106-2": "planned",
+    "check-qualification-jsonl-batc-a823de3ebf362106-3": "planned",
+    "check-qualification-jsonl-batc-a823de3ebf362106-4": "planned",
+    "planner-gap-batch-qualification-jsonl-batc-a823de3ebf362106": "planned",
+    "planner-gap-plan-qualification-jsonl-hori-ebcc53c0b489f76f": "retired",
+    "planner-s-01": "completed",
+    "planner-successor-qualification-jsonl-batc-a823de3ebf362106": "planned",
+    "planner-successor-qualification-jsonl-hori-ebcc53c0b489f76f": "completed",
+    "requirement-dynamic-feature-acceptance": "completed",
+    "root": "completed",
+    "routine-snapshot": "completed",
+    "verifier-batch-qualification-jsonl-batc-a823de3ebf362106": "planned",
+    "verifier-plan-qualification-jsonl-hori-ebcc53c0b489f76f": "completed",
+    "worker-batch-qualification-jsonl-batc-a823de3ebf362106": "running",
+    "worker-discovery-qualification-jsonl-hori-ebcc53c0b489f76f": "completed"
+  },
+  "task_states": {
+    "batch-qualification-jsonl-batc-a823de3ebf362106": "in_progress",
+    "discovery-qualification-jsonl-hori-ebcc53c0b489f76f": "accepted",
+    "plan-verification-qualification-jsonl-hori-ebcc53c0b489f76f": "accepted",
+    "recovery-plan-qualification-jsonl-hori-ebcc53c0b489f76f": "accepted",
+    "recovery-qualification-jsonl-batc-a823de3ebf362106": "pending",
+    "successor-qualification-jsonl-batc-a823de3ebf362106": "pending",
+    "successor-qualification-jsonl-hori-ebcc53c0b489f76f": "pending"
+  },
+  "leases": {
+    "lease-491218a4b3714f969df1069d0a2342e9": {
+      "base_snapshot_id": "routine-snapshot",
+      "cache_authority_hash": "4dfbaf5a268d8e51c8ef183a024fcf4da01cc0c6a1774f5aa02f6c5533e90ba0",
+      "execution_id": "exec-e54b66ba2acb43398d0f3eebecf54547",
+      "expires_at": "2026-09-09T15:34:55.469771+00:00",
+      "generation": 2,
+      "kind": "planner",
+      "lease_id": "lease-491218a4b3714f969df1069d0a2342e9",
+      "node_id": "planner-successor-qualification-jsonl-hori-ebcc53c0b489f76f",
+      "session_id": "session-85497a0bf2eb4b7b8e612e5adf576c8d",
+      "state": "released",
+      "task_region_id": "successor-qualification-jsonl-hori-ebcc53c0b489f76f"
+    },
+    "lease-502db6cfcb6f4955aa452154b762e1ad": {
+      "base_snapshot_id": "routine-snapshot",
+      "cache_authority_hash": "4dfbaf5a268d8e51c8ef183a024fcf4da01cc0c6a1774f5aa02f6c5533e90ba0",
+      "execution_id": "exec-092fabd241754017a897c6a4b071e262",
+      "expires_at": "2026-09-09T15:46:23.332360+00:00",
+      "generation": 1,
+      "kind": "worker",
+      "lease_id": "lease-502db6cfcb6f4955aa452154b762e1ad",
+      "node_id": "worker-batch-qualification-jsonl-batc-a823de3ebf362106",
+      "resource_claims": [
+        {
+          "mode": "write",
+          "paths": [
+            "."
+          ],
+          "scope": "repo"
+        }
+      ],
+      "state": "active",
+      "task_region_id": "batch-qualification-jsonl-batc-a823de3ebf362106"
+    },
+    "lease-63693e2e026947a6bd749534bd7d6d46": {
+      "base_snapshot_id": "routine-snapshot",
+      "cache_authority_hash": "4dfbaf5a268d8e51c8ef183a024fcf4da01cc0c6a1774f5aa02f6c5533e90ba0",
+      "execution_id": "exec-b9b00f5c0d9347068c3813fb7178f4d9",
+      "expires_at": "2026-09-09T15:32:12.181558+00:00",
+      "generation": 1,
+      "kind": "worker",
+      "lease_id": "lease-63693e2e026947a6bd749534bd7d6d46",
+      "node_id": "worker-discovery-qualification-jsonl-hori-ebcc53c0b489f76f",
+      "resource_claims": [
+        {
+          "mode": "read",
+          "paths": [
+            "."
+          ],
+          "scope": "repo"
+        }
+      ],
+      "state": "released",
+      "task_region_id": "discovery-qualification-jsonl-hori-ebcc53c0b489f76f"
+    },
+    "lease-8d6cbf799ae54309abf8dde2c675f814": {
+      "base_snapshot_id": "routine-snapshot",
+      "cache_authority_hash": "4dfbaf5a268d8e51c8ef183a024fcf4da01cc0c6a1774f5aa02f6c5533e90ba0",
+      "execution_id": "exec-74b09043fecb418e8c20a051ac5b945b",
+      "expires_at": "2026-09-09T15:32:49.191624+00:00",
+      "generation": 1,
+      "kind": "verifier",
+      "lease_id": "lease-8d6cbf799ae54309abf8dde2c675f814",
+      "node_id": "verifier-plan-qualification-jsonl-hori-ebcc53c0b489f76f",
+      "state": "released",
+      "task_region_id": "plan-verification-qualification-jsonl-hori-ebcc53c0b489f76f"
+    },
+    "lease-eb052396ff52430082a8ddb1f7ce0020": {
+      "base_snapshot_id": "routine-snapshot",
+      "cache_authority_hash": "4dfbaf5a268d8e51c8ef183a024fcf4da01cc0c6a1774f5aa02f6c5533e90ba0",
+      "execution_id": "exec-1e4c4eef9d2e427781dd02cead4073ed",
+      "expires_at": "2026-09-09T15:29:28.819222+00:00",
+      "generation": 1,
+      "kind": "planner",
+      "lease_id": "lease-eb052396ff52430082a8ddb1f7ce0020",
+      "node_id": "planner-s-01",
+      "resource_claims": [
+        {
+          "mode": "graph_write",
+          "scope": "graph"
+        }
+      ],
+      "session_id": "session-85497a0bf2eb4b7b8e612e5adf576c8d",
+      "state": "released"
+    }
+  },
+  "ready_nodes": [],
+  "truncated": false,
+  "total_known": 16,
+  "next_cursor": null,
+  "collection_meta": {
+    "node_states": {
+      "owner": "graph",
+      "truncated": false,
+      "total_known": 16,
+      "next_cursor": null,
+      "original_bytes": null,
+      "sha256": null,
+      "fields": {}
+    },
+    "task_states": {
+      "owner": "graph",
+      "truncated": false,
+      "total_known": 7,
+      "next_cursor": null,
+      "original_bytes": null,
+      "sha256": null,
+      "fields": {}
+    },
+    "leases": {
+      "owner": "graph",
+      "truncated": false,
+      "total_known": 5,
+      "next_cursor": null,
+      "original_bytes": null,
+      "sha256": null,
+      "fields": {}
+    },
+    "ready_nodes": {
+      "owner": "graph",
+      "truncated": false,
+      "total_known": 0,
+      "next_cursor": null,
+      "original_bytes": null,
+      "sha256": null,
+      "fields": {}
+    }
+  }
+}

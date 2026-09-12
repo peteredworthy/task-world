@@ -1,0 +1,57 @@
+{
+  "routine_id": "dynamic-graph-feature",
+  "repo_name": "task-world-current",
+  "branch": "codex/recovery-stabilization",
+  "execution_mode": "graph",
+  "agent_runner_type": "codex_server",
+  "agent_runner_config": {
+    "model": "gpt-5.6-luna",
+    "restrictions": "managed",
+    "reasoning_effort": "high"
+  },
+  "config": {
+    "feature_spec_path": "docs/qualification/trial-1-jsonl.md",
+    "feature_spec_content": "# Qualification trial 1: JSONL validation utility\n\nImplement a standalone developer utility at\n`examples/qualification/jsonl_validator.py` plus real unit tests under\n`tests/unit/test_qualification_jsonl_validator.py` and concise usage documentation\nat `examples/qualification/README.md`. This is a real bounded feature delivered\nin the run worktree. Do not modify orchestrator server code, existing tests,\nexisting project gate configuration, or operator-owned acceptance checks.\n\nRequired public contract:\n\n1. Export a Pydantic `ValidationIssue` with `line_number: int` (one-based physical\n   input line) and `reason: Literal[\"invalid_json\", \"non_object\"]`.\n2. Export pure `validate_jsonl(text: str) -> tuple[ValidationIssue, ...]`.\n   Ignore whitespace-only lines; accept JSON objects including Unicode values;\n   collect every invalid line in input order. Invalid JSON gets `invalid_json`;\n   valid arrays, strings, numbers, booleans, and null get `non_object`.\n   Reject nonstandard NaN and Infinity values as invalid JSON. Empty input is valid.\n3. CLI: `uv run python examples/qualification/jsonl_validator.py INPUT_PATH`.\n   Read UTF-8, support spaces in paths, print exactly one JSON object to stdout:\n   `{\"valid\": true|false, \"issues\": [{\"line_number\": N, \"reason\": \"...\"}]}`.\n   Exit 0 for valid input, 1 for validation failures, 2 for file/decode/usage\n   errors. I/O errors must have concise stderr diagnostics without tracebacks.\n4. Test empty input, blank lines, Unicode, CRLF, multiple malformed and non-object\n   lines, nonstandard numbers, and real CLI file/error paths. No mocking.\n5. Keep logic pure and I/O separate; follow repository Python/formatting rules.\n   Do not delete or weaken any existing check. Keep the implementation small.\n\nUse the supported sequential adaptive workflow. First discover relevant project\nconventions and produce an independently reviewed implementation plan. Deliver\nthe pure validator and behavior tests as one bounded batch, then plan CLI,\nreal-file integration tests, and documentation using accepted first-batch\nevidence. The first batch's checks should cover its own scope; the complete\nacceptance command below is authoritative for final completion.\n\nFinal acceptance command (operator-owned, must not be edited):\n\n`uv run python /private/tmp/qualification-20260907/task1_oracle.py`\n\nThe unchanged repository submission gate must also pass. Fresh-context\nverification must assess actual requirements and bound candidate evidence. Use\nnormal runtime correction when a real check or verification fails; do not\ndeliberately introduce errors, fake grades, or claim a correction that did not\nhappen. Do not merge, deploy, or start servers. Submit an independently verified\ncandidate in the run worktree.",
+    "acceptance_command": "uv run python /private/tmp/qualification-20260907/task1_oracle.py",
+    "acceptance_command_timeout_seconds": 180,
+    "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
+    "reliable_plan_model_assignments": {
+      "arm_id": "recovery-one-live-trial-luna",
+      "planner": {
+        "runner_type": "codex_server",
+        "model": "gpt-5.6-sol",
+        "profile": "architect"
+      },
+      "discovery_worker": {
+        "runner_type": "codex_server",
+        "model": "gpt-5.6-luna",
+        "profile": "summarizer"
+      },
+      "implementation_worker": {
+        "runner_type": "codex_server",
+        "model": "gpt-5.6-luna",
+        "profile": "coder"
+      },
+      "correction_worker": {
+        "runner_type": "codex_server",
+        "model": "gpt-5.6-luna",
+        "profile": "coder"
+      },
+      "verifier": {
+        "runner_type": "codex_server",
+        "model": "gpt-5.6-sol",
+        "profile": "coder"
+      },
+      "successor_planner": {
+        "runner_type": "codex_server",
+        "model": "gpt-5.6-sol",
+        "profile": "architect"
+      }
+    },
+    "hidden_oracle_command": "",
+    "patch_budget": 8,
+    "gap_policy_profile": "standard",
+    "recovery_campaign": "2026-09-09"
+  },
+  "reliable_plan_qualification_reference": "rpq_EuK8epEuGzqMhl-jmoiASKF_mU_yg4uKZhKFad-HJ0A"
+}

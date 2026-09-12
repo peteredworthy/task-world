@@ -1,0 +1,182 @@
+{
+  "seed": "f6f2d07d690262eb715917f3d25b973b64486219",
+  "repair_commit": "751d3a72491c439bf78768fc21571cdf4954cbbc",
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "before_sha256": "0d653064257e7f1efc7382567d221888686e11d482408885ea78e7847f9905dd",
+      "after_sha256": "2734e1f9c56583b9ebe4e205d782e55236b58b3f61773accc7397f9e009f719e"
+    },
+    {
+      "path": "routines/recovery-bounded-task/routine.yaml",
+      "before_sha256": null,
+      "after_sha256": "b0300251205034b47eb4872dcd3bfebf65156ea46bf1937aae951958202680a8"
+    },
+    {
+      "path": "src/orchestrator/api/routers/tasks.py",
+      "before_sha256": "de56e20285f731f9658d5695c6e379d2fffc091c1468632ec87b7e4788cad707",
+      "after_sha256": "3f90e51e452708776e17320b0f6cdcc495093d39086d564c216dded619dad479"
+    },
+    {
+      "path": "src/orchestrator/config/__init__.py",
+      "before_sha256": "83ab75e56708effd3cc16e5aea6b98165294c22f9580dad6bdd425b6ffea4ce7",
+      "after_sha256": "c5ed2776b55088bfc43cde6d6d30ece41b0b95d8939d40c8985afb5c0c161d40"
+    },
+    {
+      "path": "src/orchestrator/graph/__init__.py",
+      "before_sha256": "43e960bbc0c2fb429fd7aec774a2e76f2d269dbb36cd6cb79d5999e2b482de35",
+      "after_sha256": "b6c45a843ac6e757b891fe13d8e5397deffdee2dc19160f9eaa6cc9179c66f09"
+    },
+    {
+      "path": "src/orchestrator/graph/_commands.py",
+      "before_sha256": "e66b0ecc743996cc620b31a4e10c006f2177d9b6c9e6218e3d0edabe48bea5b6",
+      "after_sha256": "f38af95a38d8bb13e205d0e0b94402a3a6dc475b01c3725cbd453fa0416a7dd1"
+    },
+    {
+      "path": "src/orchestrator/graph/command_bindings.py",
+      "before_sha256": "cbafff7b82929865216ff3e6324dd58ca389789e0e3f4e98e2116bd596fe63f1",
+      "after_sha256": "920d676c94ef5776a16abdac6028305d9979b6e2e697f8cf250ef40560ebb091"
+    },
+    {
+      "path": "src/orchestrator/graph/macros.py",
+      "before_sha256": "083fdba17ffe293f0fd2cebcb4f53fb6ed6c8aa5167395bf22997f148a61da45",
+      "after_sha256": "7ff68527f3f69306473892d552a64dfced0496da41c33b861a8297e7ab48286e"
+    },
+    {
+      "path": "src/orchestrator/graph/patch_validator.py",
+      "before_sha256": "d6b2e1dca01198e122d7a737231b47313c785030d6d29c947d919ac24746aefd",
+      "after_sha256": "6258cdc99cd266aea5cf888e253425288908d52f5117efa48a576365844acf11"
+    },
+    {
+      "path": "src/orchestrator/graph_runtime/dispatch.py",
+      "before_sha256": "6c7f8e6af643fb43a9b690bbaa904f3adc8969f9b6a70f9fd296a4a97dc63714",
+      "after_sha256": "0a7fe7f4ec97f05ab684d9f3742d4bc13e2e2bd9ae068564447c0b8df06c1fc5"
+    },
+    {
+      "path": "src/orchestrator/graph_runtime/prompts.py",
+      "before_sha256": "ec73262ae32af102b0f0149352288b6678d06719b0bd0d5240761387c06df3bc",
+      "after_sha256": "92e19df6080955934af7542bd7154db27ca128a27d3381fa2803b25149dfa844"
+    },
+    {
+      "path": "src/orchestrator/graph_runtime/reliable_plan_scenarios.py",
+      "before_sha256": "075eb05418378e5e1e60fb497ab3c9ad47430eeef3d688ae962dc4eff03002f4",
+      "after_sha256": "4c79e4170dbad19ff5e64411b26d71a9637f4238b78250ff736696bd5f7f1abd"
+    },
+    {
+      "path": "src/orchestrator/runners/__init__.py",
+      "before_sha256": "50499ffdde08bdd9d2df675dc6b6178737bfb2fc7ee5031edd64be3f35c3cb40",
+      "after_sha256": "80a8ebf21b73355555e81397af6cc88bb8e3996b172af900f519586d4132e62d"
+    },
+    {
+      "path": "src/orchestrator/runners/executor.py",
+      "before_sha256": "8fa3348a7abe5a26c036b9562fa69e5ed7d7caf948cb986bbb2d8fdd39f9a942",
+      "after_sha256": "384d78dd4856f38996cf82892b6096b9fa9f2d6521ee48aee301ba91caba6bf1"
+    },
+    {
+      "path": "src/orchestrator/workflow/__init__.py",
+      "before_sha256": "5bdfe06483ffea8a6b5ea03fb704c7817fbf10398e34d0ed96b0991afc7e9da3",
+      "after_sha256": "6e20130361e6051ca733f902d5538e0f773eb535f862a49b255ab418a52c85c9"
+    },
+    {
+      "path": "src/orchestrator/workflow/agent/prompts.py",
+      "before_sha256": "78fa33c9d566f590bc4efcfb07245fb93b60704c57d2b0ac53746fd6275f9d32",
+      "after_sha256": "5fdf9fc915b93923d98a4db8ce676b7a47b02789252b2388ae24b40152a4c226"
+    },
+    {
+      "path": "src/orchestrator/workflow/service.py",
+      "before_sha256": "b24dd5fd98fb3de22c612c83e19a05c889771464cb0c590ef0646b954acfcca0",
+      "after_sha256": "11e9af3f12927c2101d69e81bdd87b69c77a967ad2507f80a6be052852a4b546"
+    },
+    {
+      "path": "src/orchestrator/workflow/worktree_mutations.py",
+      "before_sha256": null,
+      "after_sha256": "5d20e2eff2bfea5d3fb4c7529cb1e29a27e13680e690c5f4d6e815d6fb50b310"
+    },
+    {
+      "path": "tests/integration/test_agent_executor.py",
+      "before_sha256": "8606cefbd11a3ca1f76d5f45489014d9eac0505fadc1bbb7bd5fca07d59079c0",
+      "after_sha256": "fca2890405fab0279ead8c44abae3d585cab2ed8f86ced9f00b78b4d6dcf214f"
+    },
+    {
+      "path": "tests/integration/test_api_tasks.py",
+      "before_sha256": "39ed82cd3d085e07cdf0f8ee13fbfc40de45c2e952b22d1e2daf978ddb9e8f03",
+      "after_sha256": "214424707e00597f0bf2398d83af81fec3b6346c23a1033f517f7928a7ed1018"
+    },
+    {
+      "path": "tests/integration/test_reliable_plan_product_path_qualification.py",
+      "before_sha256": "482fd1a0a507de313a254255c8794655cadc997115b01b1c00be33545593672f",
+      "after_sha256": "36a16fc592343011aa81b5eacb3b7e2a96fff830b989ef986271f3c7289b0051"
+    },
+    {
+      "path": "tests/integration/test_reliable_plan_sequential_profile.py",
+      "before_sha256": "51ea64fb57fec54482367a3d0873b1371ae71df6fbfde7da06d2fe2b8c5c5f98",
+      "after_sha256": "cc632cb6a128b9d75e1139c598cc253d4ebb61dd601b71a70fce74b5c6a7e18d"
+    },
+    {
+      "path": "tests/integration/test_worktree_submit_responsiveness.py",
+      "before_sha256": null,
+      "after_sha256": "8cda1dadb5d6b1ba0e72bfe86d0f0d45ce50f7d481c591fdf9315927aca84dea"
+    },
+    {
+      "path": "tests/unit/test_command_bindings.py",
+      "before_sha256": "430dfe949a9b8239c054dc5eb389ea93035ba71f07d842d38f8bdce30cdacb17",
+      "after_sha256": "4713609667928cca7f8b4b335abdba51d03eab941284c64c3a99a89359d1ccf6"
+    },
+    {
+      "path": "tests/unit/test_graph_commands.py",
+      "before_sha256": "d7913c0534740c852ab13a9ab1005d902d741e70e50c078ed8de9aee5c99bc7b",
+      "after_sha256": "9d9d66805a4e644e8c694792327ee30a826ede3bc7472a15085e332dc7a154fd"
+    },
+    {
+      "path": "tests/unit/test_graph_dispatch_on_output.py",
+      "before_sha256": "7b82f4a35e2a4a5d0bf84648b72af1a770aa866dff29b01cab1937e5185cb0ff",
+      "after_sha256": "6aaafeac4d7c788892630cbbbe7f9488fc51ca90c757388a6f2e598e46b71947"
+    },
+    {
+      "path": "tests/unit/test_graph_dynamic_contract.py",
+      "before_sha256": "2c4e4b9a7234d5601dc52b0694f6b921c02b79b0c615bd425177bcfa564c180b",
+      "after_sha256": "2183b3a6aaca3097c843fce0256e297dc22e007be888cc23ed9a608dee79240a"
+    },
+    {
+      "path": "tests/unit/test_graph_horizon_templates.py",
+      "before_sha256": "fdfc58177eae228a873407c5dcc2a3224784ac6d8a8fa78760b1cd94930e09cb",
+      "after_sha256": "dcbf3e09778a6b8604bac2765fd6d63c4a0e032bfe058ae180a4ff94132d2ce1"
+    },
+    {
+      "path": "tests/unit/test_graph_planner.py",
+      "before_sha256": "d1e77ae49818606696d7b37a47dea7ede6f4d339c41660233fe9a5e06ee55e6d",
+      "after_sha256": "5e701e4ae0e121783482838cb17bdbe6bcc2f31761367a525e30f1ec58549e63"
+    },
+    {
+      "path": "tests/unit/test_graph_planner_packet.py",
+      "before_sha256": "07094cffb248d128b6d0d40cfeca63fcce3dc9badef3a1cb6abee5abad3be23f",
+      "after_sha256": "d4c0b7c39ec81a30b74bf2c3bd0ad484496ef55980080300bdfd45cd6e81e3b1"
+    },
+    {
+      "path": "tests/unit/test_patch_validator.py",
+      "before_sha256": "f17e03e4692095eaad2b60667a6199c3b0df4a3a7ff5958b650660e0ae8fff10",
+      "after_sha256": "e8d19155b6ab5ee4a39908d02630608b95fdf780edf53783776f3ceb7ca963af"
+    },
+    {
+      "path": "tests/unit/test_prompt_generation.py",
+      "before_sha256": "031ad635e2574a04ddbea460f615e17b9d9a27b797962b81dc96ad1224057775",
+      "after_sha256": "235ce308337e7eb05ec33af3fdb6aa5d4702b7088eb640ebe5e56bf8df9f850f"
+    },
+    {
+      "path": "tests/unit/test_reliable_plan_execution_semantics.py",
+      "before_sha256": "b6add4615499a0ac6f97f7d027d997bb0a5373f7d896d9116efdb04ac020aa06",
+      "after_sha256": "0d6438445a2d73520efc70327a375ec01fa23439155637b4736a85c801f5246a"
+    },
+    {
+      "path": "tests/unit/test_reliable_plan_region_constructor.py",
+      "before_sha256": "7b2de6e87d5339f2c1244ac9acfdfe3183d38f5dc64a735b775bbd677577d971",
+      "after_sha256": "7571179452bdf7feddec76dbeaf2e038f4725a7185c96d2a439002e7b3a41890"
+    },
+    {
+      "path": "tests/unit/test_worktree_commit_events.py",
+      "before_sha256": "fbe2f720f958fff37f22e0f2a9714e7d0cbee91a6fce96677e782e4829f4829e",
+      "after_sha256": "ed03c3daedffe5104ee0003b2307df8ffc6e71efa189f44cc14c4ab38eb49a6b"
+    }
+  ],
+  "applied": true
+}

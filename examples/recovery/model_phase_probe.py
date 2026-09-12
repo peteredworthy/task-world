@@ -11,12 +11,13 @@ import asyncio
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
 import time
 from collections import Counter
-from collections.abc import Callable, Coroutine, Iterator
+from collections.abc import Awaitable, Callable, Coroutine, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -33,12 +34,15 @@ from orchestrator.graph_runtime import (
     GraphDispatchExecutor,
     GraphEventStore,
     OutboxDispatcher,
+    ReliablePlanRejectionRecorder,
     RunnerOwnedProcessRegistry,
     StaticGraphAgentFactory,
+    resolve_orchestrator_source_root,
     seed_run,
 )
 from orchestrator.runners import (
     AgentRunner,
+    CodexCommandExecutionReceipt,
     CodexServerAgent,
     ExecutionContext,
     ExecutionResult,
@@ -277,9 +281,23 @@ async def run_planner_probe(
                 "reliable_plan_qualification_evidence_hash": "sha256:" + "c" * 64,
                 "reliable_plan_model_assignments": _model_assignments(),
                 "patch_budget": 1,
+                "max_rejected_plan_proposals_per_planner": 2,
+                "max_planner_executions_per_node": 1,
             },
         )
-        controller = GraphController(sessions, clock, ids, auto_dispatch=False)
+        artifact_store = FilesystemArtifactStore(workspace / "planner-artifacts")
+        controller = GraphController(
+            sessions,
+            clock,
+            ids,
+            auto_dispatch=False,
+            artifact_store=artifact_store,
+            reliable_plan_rejection_recorder=ReliablePlanRejectionRecorder(
+                sessions,
+                artifact_store,
+                resolve_orchestrator_source_root(),
+            ),
+        )
         accepted = await controller.handle_command(
             probe_id, await controller.current_position(probe_id), "accept_run", {}
         )
@@ -308,7 +326,7 @@ async def run_planner_probe(
             controller,
             factory,
             worktree_path=repo,
-            artifact_store=FilesystemArtifactStore(workspace / "planner-artifacts"),
+            artifact_store=artifact_store,
             process_registry=registry,
             on_agent_usage=capture_usage,
         )
@@ -408,24 +426,30 @@ async def run_planner_probe(
         await engine.dispose()
 
 
+_EXPECTED_VERIFIER_GRADES = {
+    "R-CANDIDATE-ALPHA": frozenset({"A"}),
+    "R-CANDIDATE-BETA": frozenset({"D", "F"}),
+}
+
+
 def _verifier_files() -> dict[str, str]:
     common = "import json, sys\ngraph = json.loads(open(sys.argv[1], encoding='utf-8').read())\n"
     return {
-        "graph-missing.json": "{}\n",
-        "candidate-good.py": common
+        "input.json": "{}\n",
+        "candidate-alpha.py": common
         + "complete = isinstance(graph.get('node_states'), dict)\n"
         + "print(json.dumps({'complete': complete}))\n"
         + "raise SystemExit(0 if complete else 1)\n",
-        "candidate-bad.py": common
+        "candidate-beta.py": common
         + "print(json.dumps({'complete': True}))\n"
         + "raise SystemExit(0)\n",
         "oracle.py": (
             "import json, subprocess, sys\n"
-            "result = subprocess.run([sys.executable, sys.argv[1], 'graph-missing.json'], "
+            "result = subprocess.run([sys.executable, sys.argv[1], 'input.json'], "
             "capture_output=True, text=True, check=False)\n"
             "payload = json.loads(result.stdout)\n"
             "ok = result.returncode == 1 and payload == {'complete': False}\n"
-            "print(json.dumps({'candidate': sys.argv[1], 'detects_missing_node_states': ok}))\n"
+            "print(json.dumps({'candidate': sys.argv[1], 'contract_satisfied': ok}))\n"
             "raise SystemExit(0 if ok else 1)\n"
         ),
     }
@@ -435,9 +459,12 @@ async def run_verifier_probe(
     workspace: Path,
     *,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
-    agent_factory: Callable[[], CodexServerAgent] | None = None,
+    agent_factory: Callable[
+        [Callable[[CodexCommandExecutionReceipt], Awaitable[None]]], CodexServerAgent
+    ]
+    | None = None,
 ) -> ProbeEvidence:
-    """Execute one fresh verifier against good and deliberately defective fixtures."""
+    """Execute one fresh verifier against neutrally named candidate fixtures."""
 
     total_started = time.monotonic()
     setup_started = total_started
@@ -447,53 +474,95 @@ async def run_verifier_probe(
     fixture_files = _verifier_files()
     fixture_commit, fixture_tree = await _init_repo(repo, fixture_files)
     python = sys.executable
-    good_command = [python, "oracle.py", "candidate-good.py"]
-    bad_command = [python, "oracle.py", "candidate-bad.py"]
-    good_started = time.monotonic()
-    good_result = await _command(good_command, repo)
-    good_duration_ms = int((time.monotonic() - good_started) * 1000)
-    bad_started = time.monotonic()
-    bad_result = await _command(bad_command, repo)
-    bad_duration_ms = int((time.monotonic() - bad_started) * 1000)
-    if good_result.returncode != 0 or bad_result.returncode == 0:
-        raise ProbeFailure("independent verifier fixtures do not separate good and defective")
+    alpha_command = [python, "oracle.py", "candidate-alpha.py"]
+    beta_command = [python, "oracle.py", "candidate-beta.py"]
+    alpha_started = time.monotonic()
+    alpha_result = await _command(alpha_command, repo)
+    alpha_duration_ms = int((time.monotonic() - alpha_started) * 1000)
+    beta_started = time.monotonic()
+    beta_result = await _command(beta_command, repo)
+    beta_duration_ms = int((time.monotonic() - beta_started) * 1000)
+    if alpha_result.returncode != 0 or beta_result.returncode == 0:
+        raise ProbeFailure("independent verifier fixtures do not separate the candidates")
     setup_duration_ms = int((time.monotonic() - setup_started) * 1000)
 
     grades: list[tuple[str, str, str | None]] = []
     submissions: list[bool] = []
+    command_receipts: list[CodexCommandExecutionReceipt] = []
+    grade_receipt_bindings: list[tuple[str, frozenset[int]]] = []
+    submit_receipt_bindings: list[frozenset[int]] = []
+    receipt_overflow = False
+    expected_output_hashes = (
+        hashlib.sha256(alpha_result.stdout.encode()).hexdigest(),
+        hashlib.sha256(beta_result.stdout.encode()).hexdigest(),
+    )
+
+    def matching_command_indexes() -> frozenset[int]:
+        matched: set[int] = set()
+        expected = (
+            (alpha_command, alpha_result.returncode),
+            (beta_command, beta_result.returncode),
+        )
+        for receipt in command_receipts:
+            try:
+                argv = shlex.split(receipt.command)
+                cwd = Path(receipt.cwd).resolve(strict=True)
+            except (OSError, ValueError):
+                continue
+            for index, (expected_argv, expected_exit) in enumerate(expected):
+                if (
+                    argv == expected_argv
+                    and receipt.exit_code == expected_exit
+                    and receipt.status in {"completed", "failed"}
+                    and receipt.output_sha256 == expected_output_hashes[index]
+                    and cwd == repo.resolve(strict=True)
+                ):
+                    matched.add(index)
+        return frozenset(matched)
 
     async def checklist(_req_id: str, _status: ChecklistStatus, _note: str | None) -> None:
         return None
 
     async def grade(req_id: str, value: str, reason: str | None) -> None:
         grades.append((req_id, value, reason))
+        grade_receipt_bindings.append((req_id, matching_command_indexes()))
 
     async def submit(_args: dict[str, Any] | None = None) -> SubmissionAcknowledgement:
         submissions.append(True)
+        submit_receipt_bindings.append(matching_command_indexes())
         return SubmissionAcknowledgement(
             disposition="durably_staged", message="isolated verifier observation captured"
         )
 
+    async def capture_command(receipt: CodexCommandExecutionReceipt) -> None:
+        nonlocal receipt_overflow
+        if len(command_receipts) >= 16:
+            receipt_overflow = True
+            return
+        command_receipts.append(receipt)
+
     agent = (
-        agent_factory()
+        agent_factory(capture_command)
         if agent_factory is not None
         else CodexServerAgent(
             model=MODEL,
             reasoning_effort=EFFORT,
             restrictions="managed",
+            command_completion_observer=capture_command,
         )
     )
     prompt = f"""You are the fresh verifier for one isolated recovery probe.
-Do not edit files. Inspect candidate-good.py, candidate-bad.py, graph-missing.json,
-and oracle.py. Run these exact independent commands:
-1. {json.dumps(good_command)}
-2. {json.dumps(bad_command)}
+Do not edit files. Inspect candidate-alpha.py, candidate-beta.py, input.json, and
+oracle.py. The contract for each candidate is to report {{"complete": false}} and
+exit 1 when node_states is absent from the input object. Run these exact commands
+from the repository root:
+1. {shlex.join(alpha_command)}
+2. {shlex.join(beta_command)}
 
-Grade R-GOOD A only if candidate-good correctly reports missing node_states as
-incomplete/nonzero. Grade R-MISSING-NODE-STATES D or F only if candidate-bad has
-the known defect: it falsely reports complete/exit 0 for graph {{}} without
-node_states. The defective grade reason must explicitly mention missing
-node_states. Call grade once for each ID, then call submit once and stop.
+Grade each candidate independently: A means it fully satisfies the contract; D
+or F means it does not. Give a concrete reason based on the command result. Call
+grade once for R-CANDIDATE-ALPHA and once for R-CANDIDATE-BETA, then call submit
+once and stop.
 """
     context = ExecutionContext(
         run_id=probe_id,
@@ -501,8 +570,8 @@ node_states. Call grade once for each ID, then call submit once and stop.
         working_dir=str(repo),
         prompt=prompt,
         requirements=[
-            "R-GOOD: good control rejects missing node_states",
-            "R-MISSING-NODE-STATES: defective control must be detected",
+            "R-CANDIDATE-ALPHA: assess candidate alpha against the stated contract",
+            "R-CANDIDATE-BETA: assess candidate beta against the stated contract",
         ],
         node_id="verifier-fixture-comparison",
         node_kind="verifier",
@@ -537,21 +606,50 @@ node_states. Call grade once for each ID, then call submit once and stop.
     )
     grade_counts = Counter(req_id for req_id, _value, _reason in grades)
     grades_by_id = {req_id: (value, reason) for req_id, value, reason in grades}
-    good_grade = grades_by_id.get("R-GOOD")
-    bad_grade = grades_by_id.get("R-MISSING-NODE-STATES")
-    bad_reason = (bad_grade[1] or "").lower() if bad_grade else ""
+    expected_commands = (
+        (alpha_command, alpha_result.returncode),
+        (beta_command, beta_result.returncode),
+    )
+    observed_commands: list[tuple[list[str], int]] = []
+    matched_receipts: list[tuple[CodexCommandExecutionReceipt, list[str]]] = []
+    for receipt in command_receipts:
+        try:
+            argv = shlex.split(receipt.command)
+            receipt_cwd = Path(receipt.cwd).resolve(strict=True)
+        except (OSError, ValueError):
+            continue
+        command_result = (argv, receipt.exit_code)
+        if (
+            command_result in expected_commands
+            and receipt_cwd == repo.resolve(strict=True)
+            and receipt.status in {"completed", "failed"}
+            and receipt.output_sha256
+            == expected_output_hashes[expected_commands.index(command_result)]
+        ):
+            observed_commands.append(command_result)
+            matched_receipts.append((receipt, argv))
+    grades_match_external_oracle = all(
+        (grade_entry := grades_by_id.get(req_id)) is not None
+        and grade_entry[0] in allowed
+        and bool((grade_entry[1] or "").strip())
+        for req_id, allowed in _EXPECTED_VERIFIER_GRADES.items()
+    )
+    grade_bindings = dict(grade_receipt_bindings)
     passed = (
         not timed_out
         and result is not None
         and result.success
         and len(submissions) == 1
         and len(grades) == 2
-        and grade_counts == {"R-GOOD": 1, "R-MISSING-NODE-STATES": 1}
-        and good_grade is not None
-        and good_grade[0] == "A"
-        and bad_grade is not None
-        and bad_grade[0] in {"D", "F"}
-        and "node_states" in bad_reason
+        and grade_counts == {"R-CANDIDATE-ALPHA": 1, "R-CANDIDATE-BETA": 1}
+        and grades_match_external_oracle
+        and not receipt_overflow
+        and observed_commands == list(expected_commands)
+        and len({receipt.item_id for receipt, _argv in matched_receipts}) == 2
+        and len({(receipt.thread_id, receipt.turn_id) for receipt, _argv in matched_receipts}) == 1
+        and 0 in grade_bindings.get("R-CANDIDATE-ALPHA", frozenset())
+        and 1 in grade_bindings.get("R-CANDIDATE-BETA", frozenset())
+        and submit_receipt_bindings == [frozenset({0, 1})]
         and fixture_unchanged
     )
     return ProbeEvidence(
@@ -582,22 +680,44 @@ node_states. Call grade once for each ID, then call submit once and stop.
             "execution_result_success": result.success if result is not None else None,
             "cancellation_requested": cancellation_requested,
             "execution_task_drained": execution_task.done(),
-            "independent_commands": [
+            "fixture_oracle_commands": [
                 {
-                    "argv": good_command,
-                    "command_sha256": _argv_sha256(good_command),
-                    "returncode": good_result.returncode,
-                    "duration_ms": good_duration_ms,
-                    "stdout_sha256": hashlib.sha256(good_result.stdout.encode()).hexdigest(),
+                    "argv": alpha_command,
+                    "command_sha256": _argv_sha256(alpha_command),
+                    "returncode": alpha_result.returncode,
+                    "duration_ms": alpha_duration_ms,
+                    "stdout_sha256": hashlib.sha256(alpha_result.stdout.encode()).hexdigest(),
                 },
                 {
-                    "argv": bad_command,
-                    "command_sha256": _argv_sha256(bad_command),
-                    "returncode": bad_result.returncode,
-                    "duration_ms": bad_duration_ms,
-                    "stdout_sha256": hashlib.sha256(bad_result.stdout.encode()).hexdigest(),
+                    "argv": beta_command,
+                    "command_sha256": _argv_sha256(beta_command),
+                    "returncode": beta_result.returncode,
+                    "duration_ms": beta_duration_ms,
+                    "stdout_sha256": hashlib.sha256(beta_result.stdout.encode()).hexdigest(),
                 },
             ],
+            "model_command_receipts": [
+                {
+                    "thread_id": receipt.thread_id,
+                    "turn_id": receipt.turn_id,
+                    "item_id": receipt.item_id,
+                    "argv": argv,
+                    "cwd": receipt.cwd,
+                    "exit_code": receipt.exit_code,
+                    "status": receipt.status,
+                    "output_sha256": receipt.output_sha256,
+                    "output_bytes": receipt.output_bytes,
+                }
+                for receipt, argv in matched_receipts
+            ],
+            "model_commands_match_fixture_oracle": observed_commands == list(expected_commands),
+            "other_model_command_count": len(command_receipts) - len(matched_receipts),
+            "command_receipt_overflow": receipt_overflow,
+            "grade_receipt_bindings": [
+                {"req_id": req_id, "matched_command_indexes": sorted(indexes)}
+                for req_id, indexes in grade_receipt_bindings
+            ],
+            "submit_receipt_bindings": [sorted(indexes) for indexes in submit_receipt_bindings],
         },
     )
 

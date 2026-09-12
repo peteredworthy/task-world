@@ -1,0 +1,17 @@
+{
+  "wrong_run": {
+    "exit_code": 0,
+    "stdout": "{\"run_id\":\"00000000-0000-0000-0000-000000000001\",\"status\":\"completed\",\"pause_reason\":null,\"summary_error\":null,\"failures\":[],\"unavailable\":[]}\n",
+    "stderr": ""
+  },
+  "malformed_graph": {
+    "exit_code": 2,
+    "stdout": "",
+    "stderr": "diagnostic unavailable: graph must be an object\n"
+  },
+  "missing_events": {
+    "exit_code": 0,
+    "stdout": "{\"run_id\":\"d20ff4dd-9cd1-4f29-9df1-d344a0582907\",\"status\":\"paused\",\"pause_reason\":null,\"summary_error\":null,\"failures\":[{\"node_id\":\"node\",\"reason\":null,\"event_position\":null}],\"unavailable\":[]}\n",
+    "stderr": ""
+  }
+}

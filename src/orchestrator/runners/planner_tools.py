@@ -100,6 +100,7 @@ def resolve_graph_planner_tools(
     node_kind: str,
     node_role: str | None,
     available_tools: Sequence[str] | None,
+    reliable_plan: bool = False,
 ) -> tuple[str, ...]:
     """Resolve explicit tools within node authorization in canonical order.
 
@@ -108,6 +109,14 @@ def resolve_graph_planner_tools(
     a tool that the node contract does not already permit.
     """
     authorized = DEFAULT_NODE_CONTRACTS.allowed_tools_for(node_kind, node_role)
+    # The reliable-plan constructor is the only model-facing mutation surface
+    # for root/successor planners.  The controller expands it into the full
+    # authorized horizon, so exposing legacy topology/raw-op tools merely asks
+    # the model to reproduce controller-owned work.  Gap planners deliberately
+    # keep their own corrective contract even when they carry reliable-plan
+    # provenance.
+    if reliable_plan and node_kind == "planner" and node_role != "gap_planner":
+        authorized = authorized & frozenset(RELIABLE_PLAN_REQUIRED_TOOL_NAMES)
     requested = authorized if available_tools is None else frozenset(available_tools)
     return tuple(
         name for name in GRAPH_PLANNER_TOOL_ORDER if name in authorized and name in requested
@@ -119,12 +128,23 @@ def resolve_dispatch_tools(
     node_kind: str,
     node_role: str | None,
     available_tools: Sequence[str] | None,
+    reliable_plan: bool = False,
+    decision_submission: bool = False,
 ) -> tuple[str, ...]:
     """Resolve graph tools while preserving runner-specific optional tool names."""
+    if decision_submission:
+        if available_tools is None:
+            return ()
+        return tuple(
+            dict.fromkeys(
+                name for name in available_tools if name not in REGISTERED_GRAPH_PLANNER_TOOL_NAMES
+            )
+        )
     graph_tools = resolve_graph_planner_tools(
         node_kind=node_kind,
         node_role=node_role,
         available_tools=available_tools,
+        reliable_plan=reliable_plan,
     )
     if available_tools is None:
         return graph_tools

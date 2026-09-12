@@ -24,11 +24,14 @@ from typing import Any
 from orchestrator.config.models import (
     AutoVerifyItemConfig,
     RoutineConfig,
+    SemanticArtifactSchemaConfig,
     StepConfig,
     TaskConfig,
 )
 from orchestrator.config.template_vars import resolve_plain_variables
 from orchestrator.graph.commands import Clock, IdGenerator
+from orchestrator.graph.decisions import decision_plan_declaration
+from orchestrator.graph.reliable_plan_evaluation import ReliablePlanRuntimeLimits
 from orchestrator.graph.cache_authority import (
     CacheAuthorityDeclaration,
     CacheAuthorityPolicy,
@@ -267,6 +270,8 @@ class _Compiler:
             "cache_authority_hash": self._cache_authority_hash,
             "cache_authority_version": POLICY_VERSION,
         }
+        if self._routine.agent_interaction_contract is not None:
+            snapshot_value["agent_interaction_contract"] = self._routine.agent_interaction_contract
         snapshot_record = RoutineSnapshotRecord.model_validate(
             {
                 "record_id": _ROUTINE_SNAPSHOT_RECORD_ID,
@@ -304,7 +309,7 @@ class _Compiler:
             }
         )
         self._accept_record(snapshot_record.model_dump(mode="json"))
-        for declaration in self._routine.semantic_artifact_schemas:
+        for declaration in _snapshot_semantic_declarations(self._routine):
             record = SemanticSchemaDeclarationRecord.model_validate(
                 {
                     "record_id": (
@@ -461,6 +466,30 @@ class _Compiler:
                 },
             ],
         }
+        if self._routine.agent_interaction_contract == "decision-v1":
+            payload["semantic_stage"] = "initial_planning"
+            payload["authority"] = {
+                "allowed_actions": ["submit_records", "request_clarification"],
+                "resource_claims": [{"mode": "graph_write", "scope": "graph"}],
+            }
+            if self._dynamic_feature_inputs is not None:
+                payload["inputs"].append(
+                    {
+                        "port": "requirement_1",
+                        "direction": "input",
+                        "schema": "RequirementRecord",
+                        "required": True,
+                    }
+                )
+            payload["outputs"] = [
+                {
+                    "port": "decision",
+                    "direction": "output",
+                    "schema": "DecisionAnswer",
+                    "record_layers": ["graph_record"],
+                    "required": True,
+                }
+            ]
         skeleton_id = self._run_config.get("reliable_plan_skeleton_id")
         if isinstance(skeleton_id, str):
             payload.update(
@@ -479,6 +508,11 @@ class _Compiler:
                 }
             )
             self._stamp_assignment(payload, "planner")
+            max_executions = (self._dynamic_feature_inputs or {}).get(
+                "max_planner_executions_per_node"
+            )
+            if max_executions is not None:
+                payload["max_attempts"] = max_executions
         if self._dynamic_feature_inputs is not None:
             payload["dynamic_feature"] = self._dynamic_feature_inputs
         if step.child_routines:
@@ -496,6 +530,19 @@ class _Compiler:
             payload["region_label"] = step.child_routines[0].label or step.child_routines[0].routine
         self._node(payload)
         self._bind_routine_snapshot(planner_id)
+        if (
+            self._routine.agent_interaction_contract == "decision-v1"
+            and self._dynamic_feature_inputs is not None
+        ):
+            requirement_node_id = "requirement-dynamic-feature-acceptance"
+            edge_id = self._edge(
+                requirement_node_id,
+                "requirement",
+                planner_id,
+                "requirement_1",
+                purpose="requirement",
+            )
+            self._bind(edge_id, planner_id, "requirement_1", [requirement_node_id])
         return planner_id
 
     def _compile_task(
@@ -1198,6 +1245,8 @@ def _dynamic_feature_inputs(
         "hidden_oracle_command",
         "patch_budget",
         "gap_policy_profile",
+        "max_rejected_plan_proposals_per_planner",
+        "max_planner_executions_per_node",
     ):
         value = run_config.get(key)
         if key == "feature_spec_content" and isinstance(value, str):
@@ -1217,6 +1266,10 @@ def _dynamic_feature_inputs(
     selected.setdefault("hidden_oracle_command", "")
     selected.setdefault("patch_budget", 8)
     selected.setdefault("gap_policy_profile", "standard")
+    limits = ReliablePlanRuntimeLimits.model_validate(
+        {key: selected[key] for key in ReliablePlanRuntimeLimits.model_fields if key in selected}
+    )
+    selected.update(limits.model_dump(mode="json", exclude_none=True))
     return selected
 
 
@@ -1332,12 +1385,45 @@ def _planner_task_context(
 
 
 def _routine_content_hash(routine: RoutineConfig) -> str:
+    content = routine.model_dump(mode="json", by_alias=True)
+    # Omission has always meant the legacy interaction.  Keep its established
+    # hash stable instead of allowing the newly declared default to rewrite all
+    # historical routine identities.
+    if content.get("agent_interaction_contract") is None:
+        content.pop("agent_interaction_contract", None)
     canonical = json.dumps(
-        routine.model_dump(mode="json", by_alias=True),
+        content,
         sort_keys=True,
         separators=(",", ":"),
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _snapshot_semantic_declarations(
+    routine: RoutineConfig,
+) -> list[SemanticArtifactSchemaConfig]:
+    """Add the generated decision plan exactly once and reject identity conflicts."""
+    declarations = list(routine.semantic_artifact_schemas)
+    if routine.agent_interaction_contract != "decision-v1":
+        return declarations
+    builtin = decision_plan_declaration()
+    identity = (builtin.schema_id, builtin.version)
+    claimed = [
+        declaration
+        for declaration in declarations
+        if (declaration.schema_id, declaration.version) == identity
+    ]
+    if not claimed:
+        return [*declarations, builtin]
+    if any(
+        declaration.model_dump(mode="json") != builtin.model_dump(mode="json")
+        for declaration in claimed
+    ):
+        raise ValueError(
+            "routine semantic schema conflicts with generated built-in "
+            f"{builtin.schema_id}@{builtin.version}"
+        )
+    return declarations
 
 
 def _cache_authority_policy(routine: RoutineConfig) -> CacheAuthorityPolicy:

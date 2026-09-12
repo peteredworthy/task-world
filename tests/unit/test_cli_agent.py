@@ -1,8 +1,14 @@
 """Tests for CLIAgent construction, info, and prompt building."""
 
+import asyncio
 import re
+import signal
+import sys
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Literal
+
+import pytest
 
 from orchestrator.config.models import NudgerConfig
 from orchestrator.config import AgentRunnerType
@@ -11,6 +17,7 @@ from orchestrator.runners import (
     SubmissionContract,
     SubmissionOutputContract,
     create_cli_agent,
+    is_owned_terminal_answer_stop,
 )
 from orchestrator.runners.types import ExecutionContext
 
@@ -42,6 +49,107 @@ def test_cli_agent_info() -> None:
     assert agent.info.agent_runner_type == AgentRunnerType.CLI_SUBPROCESS
     assert agent.info.name == "claude"
     assert agent.info.runtime_observation.mode == "host_process"
+
+
+def test_terminal_answer_stop_requires_owned_sigterm_observation() -> None:
+    assert is_owned_terminal_answer_stop(True, -signal.SIGTERM)
+    assert is_owned_terminal_answer_stop(True, 128 + signal.SIGTERM)
+    assert not is_owned_terminal_answer_stop(True, 1)
+    assert not is_owned_terminal_answer_stop(True, 0)
+    assert not is_owned_terminal_answer_stop(False, -signal.SIGTERM)
+
+
+@pytest.mark.parametrize("timeout", [0.0, -1.0, 180.01])
+def test_terminal_answer_stop_deadline_is_bounded(timeout: float) -> None:
+    with pytest.raises(ValueError, match=r"must be in \(0, 180\]"):
+        CLIAgent(command=sys.executable, terminal_answer_stop_timeout=timeout)
+
+
+async def _run_terminal_stop_agent(
+    script: str,
+    *,
+    timeout: float = 180.0,
+) -> tuple[CLIAgent, asyncio.Task[Any]]:
+    agent = CLIAgent(
+        command=sys.executable,
+        args=["-c", script],
+        poll_interval=0.01,
+        terminal_answer_stop_timeout=timeout,
+    )
+    context = _make_context().model_copy(
+        update={
+            "submission_contract": SubmissionContract(
+                interaction_contract="decision-v1",
+                outputs=(
+                    SubmissionOutputContract(
+                        port="decision",
+                        schema_name="Decision",
+                        semantic_schema_id="decision-test",
+                        semantic_schema_version=1,
+                        semantic_role="batch_decision",
+                        content_json_schema={"type": "object"},
+                    ),
+                ),
+            )
+        }
+    )
+
+    async def noop(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    started = asyncio.Event()
+
+    async def on_agent_metadata(_metadata: dict[str, Any]) -> None:
+        started.set()
+
+    task = asyncio.create_task(
+        agent.execute(context, noop, noop, on_agent_metadata=on_agent_metadata)
+    )
+    await asyncio.wait_for(started.wait(), timeout=2.0)
+    return agent, task
+
+
+async def test_cli_owned_terminal_answer_sigterm_is_success() -> None:
+    agent, task = await _run_terminal_stop_agent("import time; time.sleep(30)")
+
+    await agent.request_terminal_answer_completion()
+    result = await asyncio.wait_for(task, timeout=2.0)
+
+    assert result.success
+    assert result.completion_cause == "terminal_answer_completed"
+
+
+async def test_cli_unowned_exit_one_is_failure() -> None:
+    _agent, task = await _run_terminal_stop_agent("raise SystemExit(1)")
+
+    result = await asyncio.wait_for(task, timeout=2.0)
+
+    assert not result.success
+    assert result.completion_cause is None
+    assert result.error == "Process exited with code 1"
+
+
+async def test_cli_terminal_answer_timeout_kills_and_fails_closed(tmp_path: Path) -> None:
+    ready = tmp_path / "ready"
+    script = (
+        "import pathlib,signal,time;"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN);"
+        f"pathlib.Path({str(ready)!r}).write_text('ready');"
+        "time.sleep(30)"
+    )
+    agent, task = await _run_terminal_stop_agent(script, timeout=0.05)
+    for _ in range(100):
+        if ready.exists():
+            break
+        await asyncio.sleep(0.01)
+    assert ready.exists()
+
+    await agent.request_terminal_answer_completion()
+    result = await asyncio.wait_for(task, timeout=2.0)
+
+    assert not result.success
+    assert result.completion_cause is None
+    assert result.error == "Owned terminal-answer stop exceeded 0.05s and was killed"
 
 
 def test_cli_agent_info_codex() -> None:

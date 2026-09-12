@@ -80,6 +80,40 @@ def test_null_agent_runner_type_accepted() -> None:
     assert req.agent_runner_type is None
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "max_rejected_plan_proposals_per_planner",
+        "max_planner_executions_per_node",
+    ],
+)
+@pytest.mark.parametrize("invalid", [True, 0, -1, "2", 101])
+def test_reliable_plan_runtime_limits_reject_invalid_run_config(
+    field: str, invalid: object
+) -> None:
+    with pytest.raises(ValidationError):
+        CreateRunRequest(
+            routine_id="dynamic-graph-feature",
+            repo_name="proj",
+            branch="main",
+            config={field: invalid},
+        )
+
+
+def test_reliable_plan_runtime_limits_accept_strict_positive_run_config() -> None:
+    request = CreateRunRequest(
+        routine_id="dynamic-graph-feature",
+        repo_name="proj",
+        branch="main",
+        config={
+            "max_rejected_plan_proposals_per_planner": 2,
+            "max_planner_executions_per_node": 1,
+        },
+    )
+    assert request.config["max_rejected_plan_proposals_per_planner"] == 2
+    assert request.config["max_planner_executions_per_node"] == 1
+
+
 # ---------------------------------------------------------------------------
 # merge_strategy validator
 # ---------------------------------------------------------------------------

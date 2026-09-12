@@ -25,6 +25,7 @@ from orchestrator.config.global_config import (
 )
 from orchestrator.config.json_schema import json_schema_declaration_error
 from orchestrator.config.models import (
+    AgentInteractionContract,
     AutoVerifyConfig,
     AutoVerifyItemConfig,
     ContextSource,
@@ -60,6 +61,7 @@ from orchestrator.config.routines import (
 )
 
 __all__ = [
+    "AgentInteractionContract",
     "AgentRunnerType",
     "AutoVerifyConfig",
     "AutoVerifyItemConfig",

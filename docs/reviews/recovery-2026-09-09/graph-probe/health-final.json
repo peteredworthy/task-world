@@ -1,0 +1,86 @@
+{
+  "run_id": "4f89c845-3f82-4b79-856d-41b52bf0ff53",
+  "event_count": 223,
+  "run_state": "active",
+  "status": "partial",
+  "health_status": "partial",
+  "facts_status": "partial",
+  "unavailable_checks": [
+    "scheduler",
+    "leases",
+    "expired_leases",
+    "final_invariant_blockers",
+    "pending_gates",
+    "review_blockers"
+  ],
+  "section_status": {
+    "run_state": "complete",
+    "failed_nodes": "complete",
+    "patches": "complete",
+    "verifier": "complete",
+    "scheduler": "unavailable",
+    "leases": "unavailable",
+    "expired_leases": "unavailable",
+    "final_invariant_blockers": "unavailable",
+    "pending_gates": "unavailable",
+    "review_blockers": "unavailable"
+  },
+  "counts": {
+    "ready": null,
+    "blocked": null,
+    "waiting_resources": null,
+    "waiting_gates": null,
+    "active_leases": null,
+    "suspended_leases": null,
+    "expired_leases": null,
+    "failed_nodes": 0,
+    "final_blockers": null,
+    "patches_accepted": 2,
+    "patches_rejected": 0,
+    "verifier_passed": 1,
+    "verifier_failed": 0,
+    "pending_gates": null
+  },
+  "failed_nodes": [],
+  "expired_leases": [],
+  "blockers": [],
+  "recent_patch_decisions": [
+    {
+      "patch_id": "plan-jsonl-pure-validator-batch-v3",
+      "decision": "accepted",
+      "reason": null
+    },
+    {
+      "patch_id": "patch-qualification-jsonl-batch-1-pure-validator-v3",
+      "decision": "accepted",
+      "reason": null
+    }
+  ],
+  "verifier": {
+    "passed": 1,
+    "failed": 0,
+    "recent": [
+      {
+        "node_id": "verifier-plan-qualification-jsonl-hori-ebcc53c0b489f76f",
+        "candidate_id": "semantic-artifact-exec-b9b00f5c0d9347068c3813fb7178f4d9-semantic_artifact",
+        "verdict": "passed"
+      }
+    ]
+  },
+  "pending_gates": [],
+  "review_blockers": [],
+  "detail_meta": {
+    "failed_nodes": {
+      "total": 0,
+      "truncated": false
+    },
+    "recent_patch_decisions": {
+      "total": 2,
+      "truncated": false
+    },
+    "verifier_recent": {
+      "total": 1,
+      "truncated": false
+    }
+  }
+}

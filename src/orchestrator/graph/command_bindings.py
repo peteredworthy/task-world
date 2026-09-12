@@ -19,6 +19,19 @@ CheckCommandBindingCode = Literal[
 
 def check_command_definition_tool_schema() -> dict[str, Any]:
     """Describe the executable command shapes accepted by check dispatch."""
+    argv_schema = {
+        "type": "array",
+        "prefixItems": [
+            {
+                "type": "string",
+                "pattern": r"\S",
+                "description": "Executable name; must contain non-whitespace text.",
+            }
+        ],
+        "items": {"type": "string"},
+        "minItems": 1,
+    }
+    shell_command_schema = {"type": "string", "pattern": r"\S"}
     return {
         "type": "object",
         "description": (
@@ -27,19 +40,27 @@ def check_command_definition_tool_schema() -> dict[str, Any]:
         ),
         "properties": {
             "argv": {
-                "type": "array",
-                "items": {"type": "string", "minLength": 1},
-                "minItems": 1,
+                "description": (
+                    "Argument-vector command. Used only when it is a non-empty string array "
+                    "whose executable contains non-whitespace text."
+                ),
             },
-            "cmd": {"type": "string", "minLength": 1},
-            "command": {"type": "string", "minLength": 1},
+            "cmd": {
+                "description": "Shell command fallback; must contain non-whitespace text.",
+            },
+            "command": {
+                "description": "Legacy shell command fallback; must contain non-whitespace text.",
+            },
             "id": {"type": "string", "minLength": 1},
             "timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
         },
         "anyOf": [
-            {"required": ["argv"]},
-            {"required": ["cmd"]},
-            {"required": ["command"]},
+            {"properties": {"argv": argv_schema}, "required": ["argv"]},
+            {"properties": {"cmd": shell_command_schema}, "required": ["cmd"]},
+            {
+                "properties": {"command": shell_command_schema},
+                "required": ["command"],
+            },
         ],
         # Existing command records may carry controller-owned metadata beyond
         # the executable fields. Dispatch ignores unknown keys, so the public

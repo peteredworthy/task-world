@@ -18,6 +18,7 @@ from orchestrator.cli.server_supervisor import (
     EvidenceWriter,
     LifecycleEvent,
     ProcessIdentity,
+    ProcessIdentityInspection,
     SupervisorConfig,
     SupervisorState,
     active_supervisor_state,
@@ -417,6 +418,141 @@ def test_reclaim_stale_collector_signals_only_verified_real_pid(tmp_path: Path) 
     assert result.signal_number == signal.SIGTERM
 
 
+@pytest.mark.parametrize("persistent", [False, True])
+def test_reclaim_collector_requires_exit_evidence_after_inspection_loss(
+    tmp_path: Path, persistent: bool
+) -> None:
+    collector = subprocess.Popen((sys.executable, "-c", "import time; time.sleep(60)"))
+    observations = 0
+
+    def inspect_with_loss(pid: int) -> ProcessIdentityInspection:
+        nonlocal observations
+        assert pid == collector.pid
+        observations += 1
+        # Both inspections authorizing SIGTERM use the real process identity.
+        # After delivery, model lost read access without changing the process.
+        if observations >= 3 and (persistent or observations == 3):
+            return ProcessIdentityInspection(
+                outcome="unavailable", detail="process identity read access denied"
+            )
+        return inspect_process_identity(pid)
+
+    try:
+        identity = _capture_identity(collector.pid)
+        state = _state(tmp_path, pid=999_999_999).model_copy(
+            update={
+                "collector_pid": identity.pid,
+                "collector_process_group_id": identity.process_group_id,
+                "collector_create_time": identity.create_time,
+                "collector_command": identity.command,
+            }
+        )
+        result = reclaim_stale_collector(
+            state, grace_seconds=0.2, inspect_identity=inspect_with_loss
+        )
+        collector.wait(timeout=2)
+        assert result.signal_number == signal.SIGTERM
+        if persistent:
+            assert result.outcome == "refused"
+            assert "refusing SIGKILL" in result.detail
+        else:
+            assert result.outcome == "terminated", result.detail
+        assert observations >= 4
+    finally:
+        if collector.poll() is None:
+            collector.kill()
+        collector.wait(timeout=2)
+
+
+@pytest.mark.parametrize("denied_observation", [1, 2])
+def test_reclaim_collector_does_not_signal_without_fresh_identity(
+    tmp_path: Path, denied_observation: int
+) -> None:
+    collector = subprocess.Popen((sys.executable, "-c", "import time; time.sleep(60)"))
+    observations = 0
+
+    def inspect_with_loss(pid: int) -> ProcessIdentityInspection:
+        nonlocal observations
+        assert pid == collector.pid
+        observations += 1
+        if observations >= denied_observation:
+            return ProcessIdentityInspection(outcome="unavailable", detail="access denied")
+        return inspect_process_identity(pid)
+
+    try:
+        identity = _capture_identity(collector.pid)
+        state = _state(tmp_path, pid=999_999_999).model_copy(
+            update={
+                "collector_pid": identity.pid,
+                "collector_process_group_id": identity.process_group_id,
+                "collector_create_time": identity.create_time,
+                "collector_command": identity.command,
+            }
+        )
+        result = reclaim_stale_collector(
+            state, grace_seconds=0.2, inspect_identity=inspect_with_loss
+        )
+        assert result.outcome == "refused"
+        assert result.signal_number is None
+        assert collector.poll() is None
+    finally:
+        collector.kill()
+        collector.wait(timeout=2)
+
+
+@pytest.mark.parametrize("persistent", [False, True])
+def test_reclaim_collector_requires_exit_evidence_after_sigkill(
+    tmp_path: Path, persistent: bool
+) -> None:
+    command = (
+        sys.executable,
+        "-c",
+        "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "print('ready', flush=True); time.sleep(60)",
+    )
+    collector = subprocess.Popen(command, stdout=subprocess.PIPE)
+    unavailable_observations = 0
+
+    def inspect_with_exit_loss(pid: int) -> ProcessIdentityInspection:
+        nonlocal unavailable_observations
+        assert pid == collector.pid
+        inspection = inspect_process_identity(pid)
+        if inspection.outcome == "not_running" and (persistent or unavailable_observations == 0):
+            unavailable_observations += 1
+            return ProcessIdentityInspection(outcome="unavailable", detail="access denied")
+        return inspection
+
+    try:
+        assert collector.stdout is not None
+        assert collector.stdout.readline() == b"ready\n"
+        identity = _capture_identity(collector.pid)
+        state = _state(tmp_path, pid=999_999_999).model_copy(
+            update={
+                "collector_pid": identity.pid,
+                "collector_process_group_id": identity.process_group_id,
+                "collector_create_time": identity.create_time,
+                "collector_command": identity.command,
+            }
+        )
+        result = reclaim_stale_collector(
+            state, grace_seconds=0.1, inspect_identity=inspect_with_exit_loss
+        )
+        assert collector.wait(timeout=2) == -signal.SIGKILL
+        assert unavailable_observations >= 1
+        assert result.signal_number == signal.SIGKILL
+        if persistent:
+            assert result.outcome == "failed"
+            assert "exit could not be verified" in result.detail
+        else:
+            assert result.outcome == "killed", result.detail
+    finally:
+        if collector.poll() is None:
+            collector.kill()
+        collector.wait(timeout=2)
+        if collector.stdout is not None:
+            collector.stdout.close()
+
+
 def test_reclaim_absent_legacy_collector_does_not_require_identity(tmp_path: Path) -> None:
     collector = subprocess.Popen((sys.executable, "-c", "pass"))
     collector_pid = collector.pid
@@ -476,7 +612,10 @@ descendant = os.fork()
 if descendant == 0:
     time.sleep(60)
     raise SystemExit(0)
-Path(sys.argv[1]).write_text(str(descendant), encoding="utf-8")
+target = Path(sys.argv[1])
+temporary = target.with_name(target.name + ".tmp")
+temporary.write_text(str(descendant), encoding="utf-8")
+os.replace(temporary, target)
 time.sleep(60)
 """
     command = (sys.executable, "-c", code, str(descendant_path))
@@ -514,6 +653,8 @@ time.sleep(60)
     finally:
         if descendant_identity is not None:
             _kill_exact_process(descendant_identity)
+        if leader.poll() is None:
+            leader.kill()
         leader.wait(timeout=5)
 
 

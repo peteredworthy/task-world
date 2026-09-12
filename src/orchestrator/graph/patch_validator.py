@@ -40,6 +40,7 @@ from orchestrator.graph.projection_queries import (
     record_payloads_view,
     reliable_plan_successor_horizon_materialized,
     resource_claims_for_node,
+    routine_snapshot_dynamic_feature_view,
     semantic_schema_declarations_view,
     output_record_payloads_view,
     output_records_by_node_port_view,
@@ -105,6 +106,8 @@ PLANNER_SUCCESSOR_PORTS = {
     "session_carryover",
     "semantic_artifact",
     "verification_report",
+    "plan_verification_report",
+    "routine_snapshot",
 }
 
 _PATCH_NODE_SPECS: dict[str, tuple[tuple[str, str], ...]] = {
@@ -1002,7 +1005,9 @@ def _validate_planner_successor_bindings(ops: list[dict[str, Any]]) -> str | Non
         to_port = op.get("to_port")
         if not isinstance(to_node_id, str) or to_node_id not in successor_ids:
             continue
-        if not isinstance(to_port, str) or to_port not in PLANNER_SUCCESSOR_PORTS:
+        if not isinstance(to_port, str) or (
+            to_port not in PLANNER_SUCCESSOR_PORTS and not to_port.startswith("requirement_")
+        ):
             return f"invalid planner successor input port: {to_port}"
         if not _has_selector_for_port(op, to_port):
             return f"planner successor input requires selector: {to_port}"
@@ -1329,6 +1334,45 @@ def _validate_reliable_plan_topology(
     if parent.get("semantic_stage") == "successor_planning" and not (
         reliable_plan_successor_horizon_materialized(projection, patch.proposed_by_node_id)
     ):
+        human_gates = {
+            node_id: node for node_id, node in created.items() if node.get("kind") == "human_gate"
+        }
+        amendment_successors = {
+            node_id: node
+            for node_id, node in created.items()
+            if node.get("kind") == "planner"
+            and node.get("role") == "planner"
+            and node.get("semantic_stage") == "successor_planning"
+            and isinstance(node.get("accepted_plan_amendment_record_id"), str)
+        }
+        if human_gates:
+            if len(human_gates) != 1 or len(created) != 1:
+                return (
+                    f"patch {patch.patch_id} reliable-plan blocker must create exactly one "
+                    "human decision request",
+                    {**diagnostics, "violation": "invalid_successor_blocker"},
+                )
+            gate = next(iter(human_gates.values()))
+            request = gate.get("decision_request")
+            if (
+                not isinstance(request, dict)
+                or cast(dict[str, Any], request).get("decision_type") != "clarification"
+                or cast(dict[str, Any], request).get("target_node_id") != patch.proposed_by_node_id
+            ):
+                return (
+                    f"patch {patch.patch_id} reliable-plan blocker must target its exact "
+                    "successor lineage",
+                    {**diagnostics, "violation": "invalid_successor_blocker"},
+                )
+            return None
+        if amendment_successors:
+            return _validate_reliable_plan_amendment_topology(
+                patch=patch,
+                created=created,
+                edges=edges,
+                projection=projection,
+                diagnostics=diagnostics,
+            )
         remaining = parent.get("reliable_plan_remaining_horizons")
         horizon_workers = {
             node_id
@@ -1466,9 +1510,71 @@ def _validate_reliable_plan_topology(
                 )
             return None
 
+    deferred_successor_id = parent.get("decision_successor_node_id")
+    if parent.get("semantic_stage") == "discovery" and isinstance(deferred_successor_id, str):
+        if set(created) != {deferred_successor_id}:
+            return (
+                f"patch {patch.patch_id} decision plan acceptance may materialize only its "
+                "deferred first successor",
+                {**diagnostics, "violation": "invalid_deferred_plan_successor"},
+            )
+        successor = created[deferred_successor_id]
+        plan_verifier_ids = {
+            edge.to_node_id
+            for edge in edges_view(projection).values()
+            if edge.from_node_id == patch.proposed_by_node_id
+            and edge.from_port == "semantic_artifact"
+            and edge.to_port == "semantic_artifact"
+            and (target := node_payload_view(projection, edge.to_node_id)) is not None
+            and target.get("semantic_stage") == "plan_verification"
+        }
+        if len(plan_verifier_ids) != 1:
+            return (
+                f"patch {patch.patch_id} deferred successor requires one existing plan verifier",
+                {**diagnostics, "violation": "invalid_deferred_plan_verifier"},
+            )
+        plan_verifier_id = next(iter(plan_verifier_ids))
+        required_edges = {
+            (edge.get("from_node_id"), edge.get("from_port"), edge.get("to_port"))
+            for edge in edges
+            if edge.get("to_node_id") == deferred_successor_id and edge.get("required") is not False
+        }
+        required_triples = {
+            (patch.proposed_by_node_id, "semantic_artifact", "semantic_artifact"),
+            (plan_verifier_id, "verification_report", "verification_report"),
+            (plan_verifier_id, "verification_report", "plan_verification_report"),
+        }
+        requirement_edges = [
+            edge
+            for edge in edges
+            if edge.get("to_node_id") == deferred_successor_id
+            and str(edge.get("to_port", "")).startswith("requirement_")
+            and isinstance(edge.get("accepted_record_selector"), dict)
+            and isinstance(
+                cast(dict[str, Any], edge["accepted_record_selector"]).get("record_id"),
+                str,
+            )
+        ]
+        if (
+            successor.get("kind") != "planner"
+            or successor.get("role") != "planner"
+            or successor.get("semantic_stage") != "successor_planning"
+            or successor.get("planning_horizon") != 1
+            or not isinstance(successor.get("scope"), str)
+            or not isinstance(successor.get("reliable_plan_remaining_horizons"), int)
+            or not requirement_edges
+            or not required_triples.issubset(required_edges)
+        ):
+            return (
+                f"patch {patch.patch_id} deferred successor lacks exact plan and batch authority",
+                {**diagnostics, "violation": "invalid_deferred_plan_successor"},
+            )
+        return None
+
     if (
         parent.get("reliable_plan_one_horizon_authorized") is True
         and parent.get("semantic_stage") != "successor_planning"
+        and parent.get("role") != "gap_planner"
     ):
         discovery_ids = {
             node_id
@@ -1528,7 +1634,14 @@ def _validate_reliable_plan_topology(
                 "independent plan verifier",
                 {**diagnostics, "violation": "missing_or_ambiguous_plan_verifier"},
             )
-        if len(successor_ids) != 1:
+        decision_deferred = (
+            not successor_ids
+            and len(discovery_ids) == 1
+            and isinstance(
+                created[next(iter(discovery_ids))].get("decision_successor_node_id"), str
+            )
+        )
+        if len(successor_ids) != 1 and not decision_deferred:
             return (
                 f"patch {patch.patch_id} reliable-plan initial skeleton requires exactly one "
                 "successor planner",
@@ -1556,21 +1669,26 @@ def _validate_reliable_plan_topology(
 
         discovery_id = next(iter(discovery_ids))
         verifier_id = next(iter(verifier_ids))
-        successor_id = next(iter(successor_ids))
-        contract_error = _reliable_plan_initial_contract_error(
-            discovery_id=discovery_id,
-            discovery=created[discovery_id],
-            verifier_id=verifier_id,
-            verifier=created[verifier_id],
-            successor_id=successor_id,
-            successor=created[successor_id],
+        successor_id = (
+            cast(str, created[discovery_id]["decision_successor_node_id"])
+            if decision_deferred
+            else next(iter(successor_ids))
         )
-        if contract_error is not None:
-            violation, detail = contract_error
-            return (
-                f"patch {patch.patch_id} reliable-plan initial skeleton has invalid {detail}",
-                {**diagnostics, "violation": violation, "contract_error": detail},
+        if not decision_deferred:
+            contract_error = _reliable_plan_initial_contract_error(
+                discovery_id=discovery_id,
+                discovery=created[discovery_id],
+                verifier_id=verifier_id,
+                verifier=created[verifier_id],
+                successor_id=successor_id,
+                successor=created[successor_id],
             )
+            if contract_error is not None:
+                violation, detail = contract_error
+                return (
+                    f"patch {patch.patch_id} reliable-plan initial skeleton has invalid {detail}",
+                    {**diagnostics, "violation": violation, "contract_error": detail},
+                )
         discovery_requirement_edges = [
             edge
             for edge in edges
@@ -1611,7 +1729,9 @@ def _validate_reliable_plan_topology(
             and edge.get("to_node_id") == successor_id
             and edge.get("to_port") == "verification_report"
         ]
-        if len(successor_edges) != 1 or _selector_field(successor_edges[0], "outcome") != "passed":
+        if not decision_deferred and (
+            len(successor_edges) != 1 or _selector_field(successor_edges[0], "outcome") != "passed"
+        ):
             return (
                 f"patch {patch.patch_id} successor planner must be bound to the independent "
                 "plan verifier's passed verification_report",
@@ -1835,6 +1955,141 @@ def _validate_reliable_plan_topology(
         projection=projection,
         diagnostics=diagnostics,
     )
+
+
+def _validate_reliable_plan_amendment_topology(
+    *,
+    patch: PatchEnvelope,
+    created: dict[str, dict[str, Any]],
+    edges: list[dict[str, Any]],
+    projection: GraphProjection,
+    diagnostics: dict[str, Any],
+) -> tuple[str, dict[str, Any]] | None:
+    """Validate a same-horizon verifier gate without admitting replacement work."""
+    parent = node_payload_view(projection, patch.proposed_by_node_id) or {}
+    parent_horizon = parent.get("planning_horizon")
+    successors = {
+        node_id: node
+        for node_id, node in created.items()
+        if node.get("kind") == "planner"
+        and node.get("role") == "planner"
+        and node.get("semantic_stage") == "successor_planning"
+    }
+    verifiers = {
+        node_id: node
+        for node_id, node in created.items()
+        if node.get("kind") == "verifier" and node.get("semantic_stage") == "plan_verification"
+    }
+    recoveries = {
+        node_id: node
+        for node_id, node in created.items()
+        if node.get("kind") == "planner" and node.get("role") == "gap_planner"
+    }
+    if len(successors) != 1 or len(verifiers) != 1 or len(recoveries) != 1:
+        return (
+            f"patch {patch.patch_id} plan amendment requires one verifier, replacement "
+            "successor, and failed-verification recovery",
+            {**diagnostics, "violation": "invalid_plan_amendment_topology"},
+        )
+    expected_ids = {*successors, *verifiers, *recoveries}
+    if set(created) != expected_ids:
+        return (
+            f"patch {patch.patch_id} plan amendment cannot publish work or finalization effects",
+            {**diagnostics, "violation": "preverification_effectful_work"},
+        )
+    successor_id, successor = next(iter(successors.items()))
+    verifier_id, verifier = next(iter(verifiers.items()))
+    recovery_id = next(iter(recoveries))
+    amendment_record_id = successor.get("accepted_plan_amendment_record_id")
+    remaining = successor.get("reliable_plan_remaining_horizons")
+    dynamic = routine_snapshot_dynamic_feature_view(projection) or {}
+    patch_budget = dynamic.get("patch_budget")
+    if (
+        not isinstance(parent_horizon, int)
+        or isinstance(parent_horizon, bool)
+        or successor.get("planning_horizon") != parent_horizon
+        or verifier.get("accepted_plan_amendment_record_id") != amendment_record_id
+        or not isinstance(amendment_record_id, str)
+        or not isinstance(remaining, int)
+        or isinstance(remaining, bool)
+        or remaining < 1
+        or not isinstance(patch_budget, int)
+        or isinstance(patch_budget, bool)
+        or parent_horizon - 1 + remaining > patch_budget
+    ):
+        return (
+            f"patch {patch.patch_id} plan amendment exceeds same-horizon frozen authority",
+            {**diagnostics, "violation": "invalid_plan_amendment_authority"},
+        )
+    plan_edges = [
+        edge
+        for edge in edges
+        if edge.get("from_node_id") == patch.proposed_by_node_id
+        and edge.get("from_port") == "semantic_artifact"
+        and edge.get("accepted_record_selector", {}).get("record_id") == amendment_record_id
+    ]
+    if {(edge.get("to_node_id"), edge.get("to_port")) for edge in plan_edges} != {
+        (verifier_id, "semantic_artifact"),
+        (successor_id, "semantic_artifact"),
+    }:
+        return (
+            f"patch {patch.patch_id} plan amendment must bind the exact superseding plan",
+            {**diagnostics, "violation": "unbound_plan_amendment"},
+        )
+    plan_passed_edges = [
+        edge
+        for edge in edges
+        if edge.get("from_node_id") == verifier_id
+        and edge.get("from_port") == "verification_report"
+        and edge.get("to_node_id") == successor_id
+        and edge.get("to_port") == "plan_verification_report"
+        and _selector_field(edge, "outcome") == "passed"
+    ]
+    parent_horizon_binding = (
+        input_bindings_view(projection)
+        .get(patch.proposed_by_node_id, {})
+        .get("verification_report")
+    )
+    parent_horizon_record_ids = (
+        parent_horizon_binding.record_ids if parent_horizon_binding is not None else []
+    )
+    typed_records = output_record_payloads_view(projection)
+    prior_horizon_producers = {
+        record.producer_node_id
+        for record_id in parent_horizon_record_ids
+        if isinstance((record := typed_records.get(record_id)), VerificationReportRecord)
+        and record.outcome == "passed"
+    }
+    expected_horizon_producers = {verifier_id} if parent_horizon == 1 else prior_horizon_producers
+    horizon_passed_edges = [
+        edge
+        for edge in edges
+        if edge.get("from_node_id") in expected_horizon_producers
+        and edge.get("from_port") == "verification_report"
+        and edge.get("to_node_id") == successor_id
+        and edge.get("to_port") == "verification_report"
+        and _selector_field(edge, "outcome") == "passed"
+    ]
+    failed_edges = [
+        edge
+        for edge in edges
+        if edge.get("from_node_id") == verifier_id
+        and edge.get("from_port") == "verification_report"
+        and edge.get("to_node_id") == recovery_id
+        and edge.get("to_port") == "verification_evidence"
+        and _selector_contains_verification_outcome(edge, "failed")
+    ]
+    if (
+        len(plan_passed_edges) != 1
+        or len(horizon_passed_edges) != 1
+        or len(expected_horizon_producers) != 1
+        or len(failed_edges) != 1
+    ):
+        return (
+            f"patch {patch.patch_id} plan amendment replacement must remain verifier gated",
+            {**diagnostics, "violation": "amendment_successor_not_verifier_gated"},
+        )
+    return None
 
 
 def _validate_materialized_horizon_successor(
@@ -2583,7 +2838,11 @@ def _node_kind_role(
 def _is_required_passed_verification_edge(edge: dict[str, Any]) -> bool:
     if edge.get("from_port") != "verification_report":
         return False
-    if edge.get("to_port") not in {"verification_evidence", "verification_report"}:
+    if edge.get("to_port") not in {
+        "verification_evidence",
+        "verification_report",
+        "plan_verification_report",
+    }:
         return False
     if edge.get("required") is False:
         return False
@@ -2619,6 +2878,27 @@ def _selector_outcome(edge: dict[str, Any]) -> str | None:
         return None
     outcome = typed_selector.get("outcome")
     return outcome if isinstance(outcome, str) else None
+
+
+def _selector_contains_verification_outcome(edge: dict[str, Any], outcome: str) -> bool:
+    selector = edge.get("accepted_record_selector")
+    if not isinstance(selector, dict):
+        return False
+    try:
+        typed_selector = normalize_record_selector(selector)
+    except ValueError:
+        return False
+    if typed_selector.get("record_type") == "verification_report":
+        return typed_selector.get("outcome") == outcome
+    raw_selectors = typed_selector.get("selectors")
+    if typed_selector.get("record_type") != "any_of" or not isinstance(raw_selectors, list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and cast(dict[str, Any], item).get("record_type") == "verification_report"
+        and cast(dict[str, Any], item).get("outcome") == outcome
+        for item in cast(list[Any], raw_selectors)
+    )
 
 
 def _required_incoming_ports_by_node(
@@ -2679,12 +2959,18 @@ def _selector_accepts_port(selector: dict[str, Any], port: str) -> bool:
         return False
     if port == "accepted_file_state":
         return record_type == "file_state"
-    if port in {"verification_evidence", "verification_report"}:
+    if port in {
+        "verification_evidence",
+        "verification_report",
+        "plan_verification_report",
+    }:
         return record_type in {"verification_report", "check_result"}
     if port == "outstanding_failures":
         return record_type == "failure_record"
     if port == "region_summary":
         return record_type == "analysis_summary"
+    if port.startswith("requirement_"):
+        return record_type == "requirement_record"
     return record_type == port
 
 

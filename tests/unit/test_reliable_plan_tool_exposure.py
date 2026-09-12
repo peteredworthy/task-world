@@ -7,11 +7,15 @@ from typing import Any
 from jsonschema import Draft202012Validator
 import pytest
 
-from orchestrator.graph import reliable_plan_check_decision_tool_schema
+from orchestrator.graph import (
+    check_command_invocation,
+    reliable_plan_check_decision_tool_schema,
+)
 from orchestrator.graph_runtime.graph_mcp_tools import build_graph_mcp_server
 from orchestrator.runners import (
     RELIABLE_PLAN_REQUIRED_TOOL_NAMES,
     ReliablePlanToolPreflightError,
+    build_codex_server_prompt,
     build_dynamic_tool_specs,
     resolve_dispatch_tools,
     validate_reliable_plan_tool_specs,
@@ -42,6 +46,19 @@ def test_controller_owned_constructor_missing_fails_closed() -> None:
     assert raised.value.missing_tools == RELIABLE_PLAN_REQUIRED_TOOL_NAMES
 
 
+@pytest.mark.parametrize("node_role", ["planner", None])
+def test_reliable_codex_prompt_has_only_semantic_completion_contract(node_role: str | None) -> None:
+    context = _context(list(RELIABLE_PLAN_REQUIRED_TOOL_NAMES))
+    context.node_role = node_role
+    prompt = build_codex_server_prompt(context)
+    assert "### Reliable-plan Semantic Tool" in prompt
+    assert "construct_reliable_plan_region" in prompt
+    assert "submit_graph_patch" not in prompt
+    assert "allowed_patch_operations" not in prompt
+    assert "horizon_region_templates" not in prompt
+    assert "update_checklist" not in prompt
+
+
 def test_explicit_allowlist_is_authorized_and_deterministically_ordered() -> None:
     requested = [
         "submit_graph_patch",
@@ -59,18 +76,23 @@ def test_explicit_allowlist_is_authorized_and_deterministically_ordered() -> Non
         node_kind="planner",
         node_role="planner",
         available_tools=requested,
+        reliable_plan=True,
     )
 
     assert resolved == (
         "read_file",
         *RELIABLE_PLAN_REQUIRED_TOOL_NAMES,
-        "create_discovery_region",
-        "create_plan_verification",
-        "create_successor_planner",
-        "create_effectful_batch",
-        "submit_graph_patch",
     )
     assert "create_corrective_region" not in resolved
+
+
+def test_compatibility_planner_catalog_retains_legacy_graph_tools() -> None:
+    resolved = resolve_dispatch_tools(
+        node_kind="planner",
+        node_role="planner",
+        available_tools=["create_work_region", "submit_graph_patch"],
+    )
+    assert resolved == ("create_work_region", "submit_graph_patch")
 
 
 def test_one_missing_required_macro_fails_closed() -> None:
@@ -123,17 +145,57 @@ def test_reliable_plan_check_schema_matches_exactly_one_non_null_command() -> No
         "name": "hidden check",
         "command_binding": "dynamic_feature_hidden_oracle",
     }
-    valid_definition = {"name": "project tests", "command_definition": {"cmd": "true"}}
+    valid_definition = {
+        "name": "project tests",
+        "command_definition": {"cmd": "true", "future": {"controller": "metadata"}},
+    }
+    valid_legacy_argv = {
+        "name": "legacy argv",
+        "command_definition": {"argv": ["tool", ""]},
+    }
     assert list(validator.iter_errors(valid_binding)) == []
     assert list(validator.iter_errors(valid_definition)) == []
+    assert list(validator.iter_errors(valid_legacy_argv)) == []
     assert list(
         validator.iter_errors({"name": "missing executable", "command_definition": {"cwd": "/tmp"}})
     )
     assert list(
         validator.iter_errors({"name": "empty executable", "command_definition": {"cmd": ""}})
     )
+    assert list(
+        validator.iter_errors(
+            {"name": "blank shell command", "command_definition": {"command": "   "}}
+        )
+    )
+    assert list(
+        validator.iter_errors(
+            {
+                "name": "blank executable",
+                "command_definition": {"argv": [" ", "accepted-only-after-command"]},
+            }
+        )
+    )
     assert list(validator.iter_errors({"name": "null binding", "command_binding": None}))
     assert list(validator.iter_errors({"name": "null definition", "command_definition": None}))
+
+
+@pytest.mark.parametrize(
+    "command_definition",
+    [
+        {"argv": [" ", "arg"], "cmd": "true"},
+        {"argv": [], "command": "true"},
+    ],
+    ids=["invalid-argv-falls-back-to-cmd", "empty-argv-falls-back-to-command"],
+)
+def test_reliable_plan_check_schema_matches_command_parser_fallbacks(
+    command_definition: dict[str, Any],
+) -> None:
+    invocation = check_command_invocation(command_definition)
+
+    assert invocation == ("true", "true", True)
+    Draft202012Validator(reliable_plan_check_decision_tool_schema()).validate(
+        {"name": "parser fallback", "command_definition": command_definition}
+    )
 
 
 def test_malformed_required_schema_fails_closed_with_exact_tool() -> None:
@@ -194,10 +256,7 @@ async def test_shared_graph_mcp_registers_and_routes_reliable_macros() -> None:
     )
     tools = await mcp.list_tools()
     names = tuple(tool.name for tool in tools)
-    assert names == (
-        "submit_graph_patch",
-        *RELIABLE_PLAN_REQUIRED_TOOL_NAMES,
-    )
+    assert names == RELIABLE_PLAN_REQUIRED_TOOL_NAMES
     mcp_construct = next(tool for tool in tools if tool.name == "construct_reliable_plan_region")
     mcp_checks = mcp_construct.inputSchema["properties"]["checks"]
     codex_construct = next(

@@ -6,6 +6,7 @@ import asyncio
 import importlib.util
 import json
 import re
+import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -75,6 +76,33 @@ def _completed() -> dict[str, Any]:
                     "reasoningOutputTokens": 5,
                 },
             }
+        },
+    }
+
+
+def _command_completed(
+    item_id: str,
+    command: str,
+    cwd: str,
+    exit_code: int,
+    output: str = "bounded fixture result",
+    status: str = "completed",
+) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-verifier",
+            "turnId": "turn-verifier",
+            "item": {
+                "id": item_id,
+                "type": "commandExecution",
+                "command": command,
+                "cwd": cwd,
+                "status": status,
+                "exitCode": exit_code,
+                "aggregatedOutput": output,
+            },
         },
     }
 
@@ -157,10 +185,25 @@ class PlannerTransport:
 
 
 class VerifierTransport:
-    def __init__(self, *, good_grade: str = "A", duplicate_good: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        alpha_grade: str = "A",
+        duplicate_alpha: bool = False,
+        execute_commands: bool = True,
+        commands_after_submit: bool = False,
+        receipt_turn_id: str = "turn-verifier",
+        inspection_command: bool = False,
+    ) -> None:
         self.sent: list[dict[str, Any]] = []
         self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        messages = [
+        self._alpha_grade = alpha_grade
+        self._duplicate_alpha = duplicate_alpha
+        self._execute_commands = execute_commands
+        self._commands_after_submit = commands_after_submit
+        self._receipt_turn_id = receipt_turn_id
+        self._inspection_command = inspection_command
+        messages = (
             _response(1, {"userAgent": "probe-test"}),
             _response(
                 2,
@@ -184,45 +227,86 @@ class VerifierTransport:
                     }
                 },
             ),
-            _tool_call(
-                10,
-                "grade",
-                {
-                    "req_id": "R-GOOD",
-                    "grade": good_grade,
-                    "grade_reason": "Correctly rejects the missing node_states evidence.",
-                },
-            ),
-            _tool_call(
-                11,
-                "grade",
-                {
-                    "req_id": "R-MISSING-NODE-STATES",
-                    "grade": "F",
-                    "grade_reason": (
-                        "candidate-bad falsely reports complete when node_states is missing"
-                    ),
-                },
-            ),
-        ]
-        if duplicate_good:
-            messages.append(
-                _tool_call(
-                    13,
-                    "grade",
-                    {
-                        "req_id": "R-GOOD",
-                        "grade": "A",
-                        "grade_reason": "duplicate grade must invalidate the probe",
-                    },
-                )
-            )
-        messages.extend((_tool_call(12, "submit", {}), _completed()))
+        )
         for message in messages:
             self._queue.put_nowait(message)
 
     async def send(self, message: dict[str, Any]) -> None:
         self.sent.append(message)
+        if message.get("method") != "turn/start":
+            return
+        prompt = message["params"]["input"][0]["text"]
+        commands = [
+            command
+            for command in re.findall(r"^[12]\. (.+)$", prompt, flags=re.MULTILINE)
+            if "oracle.py candidate-" in command
+        ]
+        assert len(commands) == 2
+        assert all(shlex.split(command) for command in commands)
+        cwd = message["params"]["cwd"]
+        receipts = (
+            _command_completed(
+                "cmd-alpha",
+                commands[0],
+                cwd,
+                0,
+                json.dumps({"candidate": "candidate-alpha.py", "contract_satisfied": True}) + "\n",
+            ),
+            _command_completed(
+                "cmd-beta",
+                commands[1],
+                cwd,
+                1,
+                json.dumps({"candidate": "candidate-beta.py", "contract_satisfied": False}) + "\n",
+                status="failed",
+            ),
+        )
+        if self._inspection_command:
+            self._queue.put_nowait(_command_completed("cmd-inspect", "ls", cwd, 0))
+        for receipt in receipts:
+            receipt["params"]["turnId"] = self._receipt_turn_id
+        if self._execute_commands and not self._commands_after_submit:
+            for receipt in receipts:
+                self._queue.put_nowait(receipt)
+        self._queue.put_nowait(
+            _tool_call(
+                10,
+                "grade",
+                {
+                    "req_id": "R-CANDIDATE-ALPHA",
+                    "grade": self._alpha_grade,
+                    "grade_reason": "Observed contract_satisfied true with exit code zero.",
+                },
+            )
+        )
+        self._queue.put_nowait(
+            _tool_call(
+                11,
+                "grade",
+                {
+                    "req_id": "R-CANDIDATE-BETA",
+                    "grade": "F",
+                    "grade_reason": "Observed contract_satisfied false with exit code one.",
+                },
+            )
+        )
+        if self._duplicate_alpha:
+            self._queue.put_nowait(
+                _tool_call(
+                    13,
+                    "grade",
+                    {
+                        "req_id": "R-CANDIDATE-ALPHA",
+                        "grade": "A",
+                        "grade_reason": "duplicate grade must invalidate the probe",
+                    },
+                )
+            )
+        self._queue.put_nowait(_tool_call(12, "submit", {}))
+        if self._execute_commands and self._commands_after_submit:
+            for receipt in receipts:
+                self._queue.put_nowait(receipt)
+        self._queue.put_nowait(_completed())
 
     async def recv(self) -> dict[str, Any]:
         return await self._queue.get()
@@ -311,29 +395,36 @@ async def test_planner_probe_does_not_pass_without_submit_and_finalization(
 
 
 @pytest.mark.asyncio
-async def test_verifier_probe_separates_good_and_defective_fixture(tmp_path: Path) -> None:
-    transport = VerifierTransport()
+async def test_verifier_probe_separates_neutral_candidates_with_command_receipts(
+    tmp_path: Path,
+) -> None:
+    transport = VerifierTransport(inspection_command=True)
 
     evidence = await probe.run_verifier_probe(
         tmp_path,
-        agent_factory=lambda: CodexServerAgent(
+        agent_factory=lambda observer: CodexServerAgent(
             model="gpt-5.6-luna",
             reasoning_effort="medium",
             api_key=None,
             _transport=transport,
             _environ={},
+            command_completion_observer=observer,
         ),
     )
 
     assert evidence.status == "passed"
     assert evidence.fixture_unchanged is True
     assert evidence.observations["submit_count"] == 1
-    commands = evidence.observations["independent_commands"]
+    commands = evidence.observations["fixture_oracle_commands"]
     assert [command["returncode"] for command in commands] == [0, 1]
     grades = {item["req_id"]: item for item in evidence.observations["grades"]}
-    assert grades["R-GOOD"]["grade"] == "A"
-    assert grades["R-MISSING-NODE-STATES"]["grade"] == "F"
-    assert "node_states" in grades["R-MISSING-NODE-STATES"]["reason"]
+    assert grades["R-CANDIDATE-ALPHA"]["grade"] == "A"
+    assert grades["R-CANDIDATE-BETA"]["grade"] == "F"
+    receipts = evidence.observations["model_command_receipts"]
+    assert [receipt["exit_code"] for receipt in receipts] == [0, 1]
+    assert all(Path(receipt["cwd"]) == tmp_path / "verifier-repo" for receipt in receipts)
+    assert evidence.observations["model_commands_match_fixture_oracle"] is True
+    assert evidence.observations["other_model_command_count"] == 1
     thread_start = next(
         message for message in transport.sent if message.get("method") == "thread/start"
     )
@@ -341,6 +432,13 @@ async def test_verifier_probe_separates_good_and_defective_fixture(tmp_path: Pat
         "grade",
         "submit",
     }
+    turn_start = next(
+        message for message in transport.sent if message.get("method") == "turn/start"
+    )
+    prompt = turn_start["params"]["input"][0]["text"].lower()
+    assert "candidate-good" not in prompt
+    assert "candidate-bad" not in prompt
+    assert "known defect" not in prompt
 
 
 @pytest.mark.asyncio
@@ -350,7 +448,7 @@ async def test_verifier_timeout_is_bounded_and_drained(tmp_path: Path) -> None:
     evidence = await probe.run_verifier_probe(
         tmp_path,
         timeout_seconds=0.05,
-        agent_factory=lambda: CodexServerAgent(
+        agent_factory=lambda _observer: CodexServerAgent(
             model="gpt-5.6-luna",
             reasoning_effort="medium",
             api_key=None,
@@ -370,8 +468,8 @@ async def test_verifier_timeout_is_bounded_and_drained(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("transport", "expected_grade_count"),
     [
-        pytest.param(VerifierTransport(good_grade="B"), 2, id="good-control-must-be-a"),
-        pytest.param(VerifierTransport(duplicate_good=True), 3, id="duplicate-grade"),
+        pytest.param(VerifierTransport(alpha_grade="B"), 2, id="alpha-must-be-a"),
+        pytest.param(VerifierTransport(duplicate_alpha=True), 3, id="duplicate-grade"),
     ],
 )
 async def test_verifier_rejects_weak_or_duplicate_grades(
@@ -381,17 +479,68 @@ async def test_verifier_rejects_weak_or_duplicate_grades(
 ) -> None:
     evidence = await probe.run_verifier_probe(
         tmp_path,
-        agent_factory=lambda: CodexServerAgent(
+        agent_factory=lambda observer: CodexServerAgent(
             model="gpt-5.6-luna",
             reasoning_effort="medium",
             api_key=None,
             _transport=transport,
             _environ={},
+            command_completion_observer=observer,
         ),
     )
 
     assert evidence.status == "failed"
     assert len(evidence.observations["grades"]) == expected_grade_count
+
+
+@pytest.mark.asyncio
+async def test_verifier_rejects_grade_only_behavior_without_command_receipts(
+    tmp_path: Path,
+) -> None:
+    transport = VerifierTransport(execute_commands=False)
+
+    evidence = await probe.run_verifier_probe(
+        tmp_path,
+        agent_factory=lambda observer: CodexServerAgent(
+            model="gpt-5.6-luna",
+            reasoning_effort="medium",
+            api_key=None,
+            _transport=transport,
+            _environ={},
+            command_completion_observer=observer,
+        ),
+    )
+
+    assert evidence.status == "failed"
+    assert evidence.observations["model_command_receipts"] == []
+    assert evidence.observations["model_commands_match_fixture_oracle"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "transport",
+    [
+        pytest.param(VerifierTransport(commands_after_submit=True), id="post-submit"),
+        pytest.param(VerifierTransport(receipt_turn_id="other-turn"), id="wrong-turn"),
+    ],
+)
+async def test_verifier_rejects_unbound_or_late_command_receipts(
+    tmp_path: Path,
+    transport: VerifierTransport,
+) -> None:
+    evidence = await probe.run_verifier_probe(
+        tmp_path,
+        agent_factory=lambda observer: CodexServerAgent(
+            model="gpt-5.6-luna",
+            reasoning_effort="medium",
+            api_key=None,
+            _transport=transport,
+            _environ={},
+            command_completion_observer=observer,
+        ),
+    )
+
+    assert evidence.status == "failed"
 
 
 def test_cli_serializes_unexpected_execution_error(

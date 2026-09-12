@@ -22,6 +22,8 @@ from orchestrator.config.json_schema import json_schema_declaration_error
 
 logger = logging.getLogger(__name__)
 
+AgentInteractionContract = Literal["decision-v1"]
+
 
 @dataclass
 class NudgerConfig:
@@ -664,6 +666,7 @@ class RoutineConfig(BaseModel):
     builder_agent: str | None = None
     verifier_agent: str | None = None
     execution_mode: Literal["legacy", "graph"] | None = None
+    agent_interaction_contract: AgentInteractionContract | None = None
     env_files: list[EnvFileConfig] = Field(default_factory=lambda: [])
     clarifications: ClarificationsConfig | None = None
     strict_validation: bool = False

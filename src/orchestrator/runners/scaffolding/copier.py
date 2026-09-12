@@ -90,29 +90,61 @@ def copy_scaffolding(
 
 
 def ensure_gitignore(worktree_path: Path, entry: str) -> bool:
-    """Ensure an entry exists in .gitignore.
+    """Ensure generated scaffolding is ignored without changing project files.
 
     Args:
         worktree_path: Path to the worktree
         entry: Entry to add to .gitignore
 
     Returns:
-        True if .gitignore was modified, False if entry already existed
+        True if an exclude file was modified, False if entry already existed
     """
-    gitignore = worktree_path / ".gitignore"
+    # Real run checkouts are Git worktrees.  Resolve the repository-local exclude
+    # path through Git so linked-worktree layouts are handled correctly.  This
+    # keeps orchestrator-owned scaffolding out of candidate diffs without adding
+    # an unrequested source file to repositories that do not track .gitignore.
+    exclude_result = subprocess.run(
+        ["git", "rev-parse", "--git-path", "info/exclude"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if exclude_result.returncode == 0:
+        exclude = Path(exclude_result.stdout.strip())
+        if not exclude.is_absolute():
+            exclude = worktree_path / exclude
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        repository_entry = "/.orchestrator/" if entry.rstrip("/") == ".orchestrator" else entry
+        return _ensure_ignore_entry(exclude, repository_entry)
 
-    if gitignore.exists():
-        content = gitignore.read_text()
+    if (worktree_path / ".git").exists():
+        reason = exclude_result.stderr.strip() or "Git could not resolve info/exclude"
+        raise ScaffoldingCopyError(entry, str(worktree_path), reason)
+
+    # Preserve compatibility for callers preparing a directory before it is
+    # attached as a Git worktree.  Runtime-created linked worktrees always take
+    # the repository-local exclude path above.
+    return _ensure_ignore_entry(worktree_path / ".gitignore", entry)
+
+
+def _ensure_ignore_entry(ignore_file: Path, entry: str) -> bool:
+    """Append one ignore entry to ``ignore_file`` if it is absent."""
+
+    if ignore_file.exists():
+        content = ignore_file.read_text()
         # Check if entry already exists (accounting for newlines)
         entries = set(line.strip() for line in content.split("\n"))
-        if entry.rstrip("/") in entries or entry in entries:
+        variants = {entry, entry.rstrip("/")}
+        if entry.startswith("/"):
+            variants.update({entry.lstrip("/"), entry.lstrip("/").rstrip("/")})
+        if variants.intersection(entries):
             return False
         # Append entry
-        with gitignore.open("a") as f:
+        with ignore_file.open("a") as f:
             if not content.endswith("\n"):
                 f.write("\n")
             f.write(f"{entry}\n")
         return True
-    else:
-        gitignore.write_text(f"{entry}\n")
-        return True
+    ignore_file.write_text(f"{entry}\n")
+    return True

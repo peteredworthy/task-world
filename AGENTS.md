@@ -299,6 +299,23 @@ It is a dev-loop accelerator, not a merge gate — `make test` stays the gate, a
 
 Key test fixtures: `tmp_dir` (temp directory), `fixed_time` (deterministic datetime), `in_memory_db` (SQLite `:memory:`), `routine_repo` (git repo with test routines).
 
+The no-model recovery lifecycle entry point is
+`uv run python examples/recovery/deterministic_lifecycle.py`. It uses disposable
+Git/SQLite state and scripted runners through production graph dispatch,
+submission, checks and finalization. It does not start the live server or a model.
+Rejected reliable-plan requests are captured by
+`graph_runtime/rejection_evidence.py` in private artifacts; replay must use a
+fresh isolated database and matching orchestrator source. The separate
+`model_phase_probe.py` commands execute paid model phases and are not part of
+deterministic validation.
+
+`examples/recovery/successor_planner_probe.py` separately prepares the production
+successor boundary with scripted setup. Its default/deterministic command uses
+no model transport. Its paid command requires explicit authorization and an
+opt-in flag; see `docs/reviews/recovery-successor-experiment.md` for the bounded
+experiment contract. Retain protected rejection evidence and replay it locally
+before considering further paid execution.
+
 For immutable graph-projection changes, use the focused pure behavior,
 flexible-JSON, every-split replay, immutability, query, duplicate-ID, codec,
 integrity, boundary, and direct-performance test files. The permanent

@@ -1,0 +1,23 @@
+{
+  "commit": "98ca9f6cb74cebd527540dc9a9207c661eaa89cc",
+  "focused_test_result": "121 passed; then updated MCP module 3 passed",
+  "independent_review": "approved by separate Sol reviewer",
+  "commit_command": "git commit -m Preserve actionable macro rejection diagnostics",
+  "commit_exit_code": 0,
+  "hooks_passed": [
+    "ruff",
+    "ruff format",
+    "Detect hardcoded secrets",
+    "pyright",
+    "graph-projection-boundaries",
+    "pytest",
+    "module-imports",
+    "signal-routing",
+    "ui-lint",
+    "ui-typecheck"
+  ],
+  "enum_drift": "no changed matching files; skipped by configured hook",
+  "scope": "four runtime files and two regression test files",
+  "live_activation": "six guarded files; healthy restarted process 54069 at 14:26 UTC",
+  "limit": "Original live macro arguments were not retained; this repair fixes proven diagnostic loss and false feedback, not an established original argument cause."
+}

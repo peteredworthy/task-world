@@ -1817,7 +1817,10 @@ async def test_api_cancel_waits_for_runner_recovery_before_terminal_state(
     try:
         run_id = await harness.create_and_start()
         await harness.drain_start(run_id)
-        await asyncio.wait_for(harness.factory.latched.wait(), timeout=10)
+        # Reaching this worker traverses the real planner/discovery/verifier path.
+        # The test-level timeout bounds that setup; the latch is the semantic
+        # readiness boundary for issuing cancellation.
+        await harness.factory.latched.wait()
         assert harness.process_registry.run_owner_count(run_id) == 1
 
         requested = await harness.client.post(f"/api/runs/{run_id}/cancel")
@@ -1885,7 +1888,10 @@ async def test_server_restart_recovers_before_redispatch_without_duplicate_recor
     try:
         run_id = await harness.create_and_start()
         await harness.drain_start(run_id)
-        await asyncio.wait_for(harness.factory.latched.wait(), timeout=10)
+        # Reaching this worker traverses the real planner/discovery/verifier path.
+        # The test-level timeout bounds that setup; the latch is the semantic
+        # readiness boundary for simulating server shutdown.
+        await harness.factory.latched.wait()
         assert harness.process_registry.run_owner_count(run_id) == 1
 
         await harness.consumer.stop()

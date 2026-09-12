@@ -1,0 +1,23 @@
+{
+  ".gitleaks.toml": "9ba6f618126ea028c4e53cd2923f5a23c7a25656628252d7bafbced52ab05c6b",
+  "docs/intent/31-decision-runtime/README.md": "24fdec15906064f5b919e7f1b106efc38cd0f0f00bd191ad5726a84706ab45af",
+  "docs/intent/31-decision-runtime/implementation.md": "3fc9d8a71e2d2da8894cabbca786b3907e79866db2e8fe55819a57d20819e34c",
+  "docs/intent/31-decision-runtime/reproduce-rejected-plan-gap.py": "3c327f546da15ab73bc24a71ed845478b666797b99a615cf3eb4ae8f0dad4b13",
+  "docs/intent/31-decision-runtime/slice-3-review.md": "29022cc930130a9d12f1c74eaf520636b0df548b6255aa607e63cc007e5078be",
+  "src/orchestrator/cli/server_supervisor.py": "26e4e2e26d8262f538632e5bdb07e060be275eb73a4d84f3559fbe4938e0bad3",
+  "src/orchestrator/graph/commands/boundary.py": "fd8fc216032573867772aa53bb5e08d30d8629d660d582cb9b9f95dd538a2028",
+  "src/orchestrator/graph/decisions.py": "65439b14201413217f7369763868402a644c2eabdba4824771a865a0d263df62",
+  "src/orchestrator/graph/macros.py": "3c847b5784f52011ee4e2a783015f6eeb4dfc09f8b4e7449a37b303e933632f1",
+  "src/orchestrator/graph_runtime/dispatch.py": "755a4e40847b76c5a6f6b61612d3e8e9d6a62eb9c69d7aa22cd941f926dab904",
+  "src/orchestrator/graph_runtime/graph_mcp_tools.py": "4a4cf8df695b9ee317a4052b62740d982c8cd0bf8b4ed786ede334958dd01eda",
+  "src/orchestrator/graph_runtime/prompts.py": "ccefe8981159fa7feb01baa781eb712ef39b542ad6379e30cdb6a46ca3943837",
+  "src/orchestrator/runners/agents/codex/common.py": "f04cfdde5623a24c2338e9043f974918b47d46ca143e74395b5e61fe7373f98e",
+  "src/orchestrator/runners/submission.py": "d76b6cf3957c70a2168754cc3021c213cd472ba7dd83b779ed49a69e78abae08",
+  "tests/integration/test_graph_decision_runtime.py": "59a63e71ca10a3df3bad6ce74739bb9f08ee1073ee0c06f9c7454ee630931500",
+  "tests/integration/test_server_supervisor_process.py": "c146d846197948a8830da6e9ad231491fba131e2a3c43309680523717ffdfb8c",
+  "tests/unit/test_decision_schema_consumers.py": "cfaf5d74e539a8f5376ffe663cfc2fcb2be98c85fa976ffa5df637a78bb11577",
+  "tests/unit/test_gap_correction_decision.py": "d53518bb8922c333524b4be9c73404bd1006a2438f5717a879561fcd151846e1",
+  "tests/unit/test_initial_planning_decision.py": "a48bb6fbc1c275838a671c363df1980ec64f664c21a8714c9622cdb54426644f",
+  "tests/unit/test_server_supervisor.py": "2739965f5e62d3138e930e27c8621a6f02ce40ef6efc28f0b74346fddd7da38d",
+  "tests/unit/test_successor_amendment_decision.py": "a4b743a366735a65ec01b7b27018cf01815656f363340861786bc3646a713e8b"
+}

@@ -741,7 +741,7 @@ class ExecutionAttemptValue(ProjectionModel):
         ]
         | None
     ) = None
-    runner_return_kind: Literal["successful_return"] | None = None
+    runner_return_kind: Literal["successful_return", "terminal_answer_completed"] | None = None
     recovery_id: StrictStr | None = None
     recovery_reason: StrictStr | None = None
     recovery_error_detail: StrictStr | None = None

@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "status": "architecture_and_prompts_prepared",
+  "prepared_at_utc": "2026-09-11T15:09:25.878079+00:00",
+  "worktree": "/Users/peter/code/task-world/worktrees/recovery-stabilization",
+  "source_commit": "a849d24344c6832a4e2e6ac68dd37d5a6f84042e",
+  "scope": "Proposed architecture, exact decision contracts and six sequential Sol implementation prompts; no production implementation in this pass.",
+  "source_baseline": {
+    "path": "docs/reviews/recovery-successor-validation-result.json",
+    "sha256": "25569b424c2c6ef5c1de613324be6d84f3694f978ce500132a3a75f8474f38b6",
+    "matched_file_count": 49,
+    "mismatches": []
+  },
+  "historical_baseline": {
+    "path": "docs/reviews/recovery-successor-baseline-2026-09-11.json",
+    "sha256": "11a92e4c296acebc315fb0e62eb32b594d655e0d16585e495d15384db7a0a732",
+    "matched_artifact_count": 85,
+    "mismatches": []
+  },
+  "independent_design_reviews": [
+    {
+      "role": "contract and schema review",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "verdict": "PASS",
+      "final_finding": "Fix CheckChoice allowed bindings and nested command-definition strictness.",
+      "resolution": "Exact existing ReliablePlanCheckDecision fields; hidden-oracle-only offered binding; final acceptance supplied by runtime; existing extensible nested command contract retained.",
+      "root_verified_resolution": true,
+      "reviewer_confirmed_final_resolution": true
+    },
+    {
+      "role": "lifecycle and recovery review",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "verdict": "PASS after specified wording correction",
+      "final_finding": "New requests incorrectly suggested changing decision request identity for answer corrections.",
+      "resolution": "Changed to new delivery/answer attempts; bound decision request remains fixed for one execution.",
+      "root_verified_resolution": true
+    }
+  ],
+  "review_limit": "Design and prompt coherence only; implementation must earn its own independent review and deterministic evidence.",
+  "checks": {
+    "source_and_history_hashes": "passed",
+    "markdown_local_links": "passed",
+    "git_diff_check": "passed",
+    "test_suite_run": false,
+    "test_reason": "Documentation-only preparation; no production source changed since verified baseline."
+  },
+  "documents_sha256": {
+    "docs/intent/31-decision-runtime/README.md": "f2157cae87c82f1baea0582b6e2a5d493d9097247168fefa9ce15313e3897cba",
+    "docs/intent/31-decision-runtime/architecture.md": "35ea73307b87df292a2df8adf7f7ae4040940672251ae3ef6a6782ab48e9e576",
+    "docs/intent/31-decision-runtime/contracts.md": "c2bb2ee1c113fc694be4d33e5f38d0e37547a5dc139328a5d92860a315512a20",
+    "docs/intent/31-decision-runtime/implementation.md": "c32188732423d9917fa344df74a4bde95e7d4beb34ea2e1033a60db3916c3fdc",
+    "docs/intent/31-decision-runtime/review-prompt.md": "455b03fba1ebf832c22724d46a7a74ff1bb24857c0cc9f6b0c8406be2d8fc509",
+    "docs/intent/README.md": "3876958af29f9072e0b4cd57d050116329fc4bf4645800106847601375b37621",
+    "docs/reviews/recovery-deterministic-closure.md": "72dfe4a8f3343769bf20eb23f23f07ec5a63dd860db4e4578404ab4008c76ee6"
+  },
+  "production_source_changed": false,
+  "implementation_dispatched": false,
+  "committed": false,
+  "live_activation": false,
+  "live_database_or_history_mutations": false,
+  "live_server_starts": false,
+  "historical_run_resumes": false,
+  "paid_orchestration_probe_executions": 0,
+  "paid_experiment_state": "Prior successor experiment remains unauthorized and held; it exercises legacy interaction and cannot qualify decision-v1.",
+  "next_authorized_work_description": "This package prepares future implementation. Begin sequential implementation only when assigned; shared prompt constraints prohibit paid probes and activation."
+}

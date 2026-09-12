@@ -1,0 +1,266 @@
+{
+  "all_41_source_hashes_match": true,
+  "baseline_lifecycle_sha256": "98b735fcb39b957f107d42bfa1dcebe9dba0501396223d45b1ce8189f002495a",
+  "baseline_validation_sha256": "3370e80b485e8c4133550224e84fe657aa3c51e71ea4eabe24b37f1a3902457a",
+  "expected_head": "a849d24344c6832a4e2e6ac68dd37d5a6f84042e",
+  "expected_lifecycle_sha256": "98b735fcb39b957f107d42bfa1dcebe9dba0501396223d45b1ce8189f002495a",
+  "head": "a849d24344c6832a4e2e6ac68dd37d5a6f84042e",
+  "initial_status_porcelain": " M AGENTS.md\n M docs/ARCHITECTURE.md\n M docs/reviews/recovery-2026-09-09/SHA256SUMS\n M docs/reviews/recovery-strategy-2026-09-09.md\n M examples/recovery/README.md\n M examples/recovery/model_phase_probe.py\n M routines/dynamic-graph-feature/routine.yaml\n M src/orchestrator/api/schemas/runs.py\n M src/orchestrator/graph/__init__.py\n M src/orchestrator/graph/_commands.py\n M src/orchestrator/graph/command_models.py\n M src/orchestrator/graph/commands/__init__.py\n M src/orchestrator/graph/commands/boundary.py\n M src/orchestrator/graph/compiler.py\n M src/orchestrator/graph/macros.py\n M src/orchestrator/graph/models.py\n M src/orchestrator/graph/payload_registry.py\n M src/orchestrator/graph/reliable_plan_evaluation.py\n M src/orchestrator/graph_runtime/__init__.py\n M src/orchestrator/graph_runtime/controller.py\n M src/orchestrator/graph_runtime/dispatch.py\n M src/orchestrator/graph_runtime/graph_mcp_tools.py\n M src/orchestrator/graph_runtime/prompts.py\n M src/orchestrator/graph_runtime/store.py\n M src/orchestrator/runners/__init__.py\n M src/orchestrator/runners/agents/codex/__init__.py\n M src/orchestrator/runners/agents/codex/agent.py\n M src/orchestrator/runners/agents/codex/common.py\n M src/orchestrator/runners/planner_tools.py\n M src/orchestrator/runners/scaffolding/copier.py\n M tests/integration/test_graph_patch_acknowledgement_recovery.py\n M tests/integration/test_graph_routine_compile.py\n M tests/integration/test_graph_sequential_product_path.py\n M tests/integration/test_recovery_model_phase_probe.py\n M tests/integration/test_scaffolding.py\n M tests/unit/test_api_runs_validation.py\n M tests/unit/test_graph_dispatch_on_output.py\n M tests/unit/test_graph_planner_packet.py\n M tests/unit/test_graph_runner_boundary_commands.py\n M tests/unit/test_reliable_plan_region_constructor.py\n M tests/unit/test_reliable_plan_tool_exposure.py\n?? docs/reviews/recovery-2026-09-09/activation-final-verification.json\n?? docs/reviews/recovery-2026-09-09/activation-manifest.json\n?? docs/reviews/recovery-2026-09-09/diagnostic-attempt-1.json\n?? docs/reviews/recovery-2026-09-09/diagnostic-correction-request.json\n?? docs/reviews/recovery-2026-09-09/diagnostic-final-task.json\n?? docs/reviews/recovery-2026-09-09/diagnostic-independent-repros-before.json\n?? docs/reviews/recovery-2026-09-09/diagnostic-missing-states-repro.json\n?? docs/reviews/recovery-2026-09-09/diagnostic-request.json\n?? docs/reviews/recovery-2026-09-09/diagnostics-activation-manifest.json\n?? docs/reviews/recovery-2026-09-09/fresh-qualification.json\n?? docs/reviews/recovery-2026-09-09/graph-created.json\n?? docs/reviews/recovery-2026-09-09/graph-probe-created.json\n?? docs/reviews/recovery-2026-09-09/graph-probe-request.json\n?? docs/reviews/recovery-2026-09-09/graph-probe-started.json\n?? docs/reviews/recovery-2026-09-09/graph-probe/\n?? docs/reviews/recovery-2026-09-09/graph-request.json\n?? docs/reviews/recovery-2026-09-09/graph-started.json\n?? docs/reviews/recovery-2026-09-09/graph-trial-1/\n?? docs/reviews/recovery-2026-09-09/live-observations.jsonl\n?? docs/reviews/recovery-2026-09-09/original-graph-unicode-proof.json\n?? docs/reviews/recovery-2026-09-09/probe-qualification.json\n?? docs/reviews/recovery-2026-09-09/second-repair-validation.json\n?? docs/reviews/recovery-2026-09-09/unicode-recovery-completed.json\n?? docs/reviews/recovery-2026-09-09/unicode-recovery-request.json\n?? docs/reviews/recovery-2026-09-09/unicode-recovery-result.json\n?? docs/reviews/recovery-deterministic-closure.md\n?? docs/reviews/recovery-deterministic-lifecycle-result.json\n?? docs/reviews/recovery-deterministic-validation-result.json\n?? docs/reviews/recovery-restart-plan-2026-09-09.md\n?? examples/recovery/deterministic_lifecycle.py\n?? src/orchestrator/graph_runtime/rejection_evidence.py\n?? tests/integration/test_recovery_deterministic_lifecycle.py\n?? tests/integration/test_recovery_rejection_evidence.py\n",
+  "inspected_at_utc": "2026-09-11T12:42:45.447088+00:00",
+  "live_mutations": false,
+  "paid_probe_executions": 0,
+  "preserved_historical_evidence_sha256": {
+    "docs/reviews/recovery-2026-09-09/SHA256SUMS": "1c6a248ddfde52d3c6edbaea6c2e49120eb9834d0915b4dd4cbc14fc22782471",
+    "docs/reviews/recovery-2026-09-09/activation-final-verification.json": "08f6f2af926eba2636beb21e21838d30b3b890906940ff6f7a17d21d07c00eab",
+    "docs/reviews/recovery-2026-09-09/activation-manifest.json": "3aef8bf67864df6744d367da3b333a8b0b28448381a5e5b3799740ece2f3e5a7",
+    "docs/reviews/recovery-2026-09-09/baseline-request.json": "35c9628fbe115187f5c729ce66aef3142c961e139ccfddecfbe8af72266ee6ed",
+    "docs/reviews/recovery-2026-09-09/baseline-status.json": "f1671e502e259ad8d23553d116bba7a802bbe4f58e8f5a805297654a3f4d11ad",
+    "docs/reviews/recovery-2026-09-09/diagnostic-attempt-1.json": "294f6d0e78b5fb721e3f97bdb951d6325f2fce9ccfeaa10636adbf04938fbd75",
+    "docs/reviews/recovery-2026-09-09/diagnostic-correction-request.json": "ceff736846280b986a3c28ba78c4a45b6b632dacaa05d3857a31ae3fb44f4a23",
+    "docs/reviews/recovery-2026-09-09/diagnostic-final-task.json": "dd2fd5b7d161d38e327722363ca58ce6024e994b9ffce7c09bba9b4ecb2d29fc",
+    "docs/reviews/recovery-2026-09-09/diagnostic-independent-repros-before.json": "89da08ba1cc163c7b5e2a0a457d2685c4f88c7cbc6606f2b5e479cb8935569bb",
+    "docs/reviews/recovery-2026-09-09/diagnostic-missing-states-repro.json": "5d10666bbee2ee641d7f34ae949c8316092c76e34d185802407c6a0709cd9dbc",
+    "docs/reviews/recovery-2026-09-09/diagnostic-request.json": "992f46780e9e3bf585fb09114b939eaa107be5ee3ac438cf7514f7b8d56a697d",
+    "docs/reviews/recovery-2026-09-09/diagnostic-request.pending.json": "5609185714bb256e0ef7b8aedbe0c998735838f3cb18f925be912f81770f2d01",
+    "docs/reviews/recovery-2026-09-09/diagnostic-spec.md": "c9b071f322f533438d43e545260902554adbd5079c5bef0e7eeaf71ca580ae72",
+    "docs/reviews/recovery-2026-09-09/diagnostics-activation-manifest.json": "9aeaf0bc65a8ec486e4903c7c3ae81b78aaacb7f3947459cefdb6696963f1c3d",
+    "docs/reviews/recovery-2026-09-09/failed-node.json": "638c78d0b7039b7bca5dfdaf7125b947279b942f1c46cfc522d46647d7334a12",
+    "docs/reviews/recovery-2026-09-09/fresh-qualification.json": "474aef43c86b01dfab339d160caec684fd9e0ccf79f72671f98c0fd63f6993b6",
+    "docs/reviews/recovery-2026-09-09/graph-created.json": "3abc2de0020def8a8eb644562bca2bf2898ee5be6881a16e24a1d0eb4b96bc6a",
+    "docs/reviews/recovery-2026-09-09/graph-probe-created.json": "f5a4d18a24cc9c7dc28503419334718877abadb9c21ddfa66ebd7ac247310af6",
+    "docs/reviews/recovery-2026-09-09/graph-probe-request.json": "eb04836cd57b97d2fc30a87e3a102a3b3b6bcc71c045ada489c00aad923323cd",
+    "docs/reviews/recovery-2026-09-09/graph-probe-started.json": "f5a4d18a24cc9c7dc28503419334718877abadb9c21ddfa66ebd7ac247310af6",
+    "docs/reviews/recovery-2026-09-09/graph-probe/batch-mid.json": "1c87763b551ac53dd93ee38c0497831bde90282666f6d833234d66fd7d86f99c",
+    "docs/reviews/recovery-2026-09-09/graph-probe/blockers-final.json": "b9ea73e249304ef3456b37324ec35f40cc630e295b1dfccdae30c4040b07292d",
+    "docs/reviews/recovery-2026-09-09/graph-probe/campaign-result.json": "d527b3da4cb2067a214e55e009facaf3ca0d90399b7f6bd1805d1605e79f202d",
+    "docs/reviews/recovery-2026-09-09/graph-probe/early-events.json": "a5515721abc7cbee4894bc6d60dbfccfc6a3d4aa04a97bf572319dd3442e3ef9",
+    "docs/reviews/recovery-2026-09-09/graph-probe/events-after-expansion.json": "0f6f40010656f59ea0eaaa4a2b16da28e4ec8b825ee7ad01f131db81d4456480",
+    "docs/reviews/recovery-2026-09-09/graph-probe/events-final-summary.json": "ff821cf27dc35b3c3a6e473e83b7fceb86bdc6261f1d71692c79ba8a942a66e6",
+    "docs/reviews/recovery-2026-09-09/graph-probe/events-gate.json": "b2652c806f554ee9ce99531f0ca88b1dfd2e4649e2585259b69c9b636fb9799f",
+    "docs/reviews/recovery-2026-09-09/graph-probe/events-mid.json": "fba50141d9f0afdf946d25b8151e62e12fe8ab8f7e44c37b6868c64956915f1f",
+    "docs/reviews/recovery-2026-09-09/graph-probe/events-page-0.headers": "63b215bd38242e71a17930662e2bc10528327a3deb95e7b64fb581eac975825d",
+    "docs/reviews/recovery-2026-09-09/graph-probe/events-page-0.json": "edb3d86f97aa6bbdbb0a7ea0eb8ce3531d4a166c9f4a19e42298687c0a185dcf",
+    "docs/reviews/recovery-2026-09-09/graph-probe/events-page-1.headers": "bec63c7a4267ca64818740ff3dd10ab9678cad18c5f60350c1e4cfa768949ec2",
+    "docs/reviews/recovery-2026-09-09/graph-probe/events-page-1.json": "363a2dc1569dd1d9ad67bd18a4c2a7b72e0b0dde9e8dd5a423641948daa85997",
+    "docs/reviews/recovery-2026-09-09/graph-probe/events-page-2.headers": "c4270a0fe39c2895cdd9bf8316b67b2455c66acd1fb699c0531d7605d4925580",
+    "docs/reviews/recovery-2026-09-09/graph-probe/events-page-2.json": "7226440e27e828fbf3ba6cb124bd2ddf287bdae0c8faee27f44c1e943ef51245",
+    "docs/reviews/recovery-2026-09-09/graph-probe/graph-final.json": "38c659b66a064ca86f1bfd3d63344adf817af4d80b9ab5ebb6a80171d4ca5c13",
+    "docs/reviews/recovery-2026-09-09/graph-probe/graph.json": "d4a4fd5cf5d2ec9153d2f722843e1a10c47f6c084cda6d3e21598680fe976faf",
+    "docs/reviews/recovery-2026-09-09/graph-probe/health-final.json": "3095edfd77364be85bb98f8ce076881aea35fd374dd94e7bd931a6a074ad656d",
+    "docs/reviews/recovery-2026-09-09/graph-probe/health.json": "d37208a9be5dfe712a7ee54fdce2f1b0a006ec021754f2c3b70e2d55d6fb585e",
+    "docs/reviews/recovery-2026-09-09/graph-probe/observations.jsonl": "4c8a447b62bbe772555985335fcd55e78d5f8b56009f5e62717da367941e73a8",
+    "docs/reviews/recovery-2026-09-09/graph-probe/operator-disposition.json": "469d33385dfbf7364f2d168e6b47037d030af67a66b10655c9e0fa03cbf4a6ee",
+    "docs/reviews/recovery-2026-09-09/graph-probe/patches-final.json": "595dc061b9e6b579bb52be3820649aee9f246fd7878310fb5de039d5eee36754",
+    "docs/reviews/recovery-2026-09-09/graph-probe/pause-response.json": "80bd463556413eefa9254dcc9ca4a59343079bce45f13125dfadadca9a5e7ea4",
+    "docs/reviews/recovery-2026-09-09/graph-probe/run-final.json": "8a93d0bd8e03a6f9581cb00d5f4ac64c2f2a67c4db2c98e5279a42860f4e93f7",
+    "docs/reviews/recovery-2026-09-09/graph-probe/run.json": "0c8ba4ed61a3876b2fe919802af7d2b3a5a63a0a2c1023987f9f4ac1bb36b2dc",
+    "docs/reviews/recovery-2026-09-09/graph-probe/runtime-final.json": "8f231c10adae3c0554dc2380959b9c60309d38aa47fcff8a29afa947b4d77469",
+    "docs/reviews/recovery-2026-09-09/graph-probe/runtime-inspection.json": "5f091d374f45981ce5c4c36a70b4e2066b453d48376fde265298d6af8eb6102b",
+    "docs/reviews/recovery-2026-09-09/graph-probe/runtime-mid.json": "b2720a87a7ac9e6d15e5f1b89a10090a98512b6916a9080348543e8f7c37fbda",
+    "docs/reviews/recovery-2026-09-09/graph-probe/successor-rejections-full.json": "13577c1a533e2dd30e0d7a3cb0094f7e84dcaa2f37fc05a2d403f7541dd6efac",
+    "docs/reviews/recovery-2026-09-09/graph-request.json": "95b750c42b2fcba5a82f2b38f756f00cdb222f251ca8abe74910b521bafe8b2b",
+    "docs/reviews/recovery-2026-09-09/graph-request.pending.json": "22a2b708ab0a6f6c1dc311df7de62e1cc2d9bd25e5574b737d342c03e7517350",
+    "docs/reviews/recovery-2026-09-09/graph-started.json": "3abc2de0020def8a8eb644562bca2bf2898ee5be6881a16e24a1d0eb4b96bc6a",
+    "docs/reviews/recovery-2026-09-09/graph-trial-1/events-paused.headers": "3712aba3b65383ef216b68c7e60b5a031a3d2ccd47580a11e4fc699856f8ae78",
+    "docs/reviews/recovery-2026-09-09/graph-trial-1/events-paused.json": "96256ed61b148bba0ee1f7c1f17772694742d0192b53b97946493299e6ff0a37",
+    "docs/reviews/recovery-2026-09-09/graph-trial-1/graph.json": "5f312959275335cd953a204dc57c9c4edf0694676ed705c5f7d37005385fe8a4",
+    "docs/reviews/recovery-2026-09-09/graph-trial-1/health.json": "d37208a9be5dfe712a7ee54fdce2f1b0a006ec021754f2c3b70e2d55d6fb585e",
+    "docs/reviews/recovery-2026-09-09/graph-trial-1/initial-output.json": "b0b98e5489518b3c57871e8a5b2352b80b0f17b4109428e54fb763bf17cad142",
+    "docs/reviews/recovery-2026-09-09/graph-trial-1/observations.jsonl": "43c04c4358b1443f8d0cfadaddb55ba4fd9a7bdc4b728701e257c145a689e138",
+    "docs/reviews/recovery-2026-09-09/graph-trial-1/patches-initial.json": "395660df5769459ca23b20c565f7d43982816431cd76c16194ccb77c71d6def1",
+    "docs/reviews/recovery-2026-09-09/graph-trial-1/patches-paused.json": "dad8f6cf3c59fc75ffaa194209eb4702b97edbcf6ce8996976e4c1fc59fcd779",
+    "docs/reviews/recovery-2026-09-09/graph-trial-1/planner-initial.json": "0fbdabf98ea5cab9263e8830443f758ccc3acae447ac5cce144d077101440536",
+    "docs/reviews/recovery-2026-09-09/graph-trial-1/planner-output-final.json": "4eba10d7def880c7a2ebbfb942f933d78b103ae286138af27e06a077fa7c2acb",
+    "docs/reviews/recovery-2026-09-09/graph-trial-1/planner-output-full.json": "365ec240d072dda883a9493c5b7610bbf1f0708f13d8fa9688d80c18f6e792a6",
+    "docs/reviews/recovery-2026-09-09/graph-trial-1/run.json": "aed2970ba4a33808a72652eab49f9709feca7071f2b5a243ba07af1aa9184c48",
+    "docs/reviews/recovery-2026-09-09/graph-trial-1/runtime-paused.json": "4903ea09df9e4c46e7a424a6f963c256e9e1107c26def06eb3e11aef6262dad2",
+    "docs/reviews/recovery-2026-09-09/live-observations.jsonl": "f059a1a8c001a86c258c27ea605caa5c25429da7df654df66ea640cf61847b28",
+    "docs/reviews/recovery-2026-09-09/observations.json": "35184aa5ee328a7b81692cf908590d801ca42943906dbcb2fb76f08433c946a5",
+    "docs/reviews/recovery-2026-09-09/original-graph-unicode-proof.json": "dbe879283699d6e9b785c17072ba6cb7360827aca34c5758b26586c27793be7e",
+    "docs/reviews/recovery-2026-09-09/probe-qualification.json": "7fbb13a57cc2ff60293a1b73f162735ce90b8dab1303defb3af41efa8b5cf861",
+    "docs/reviews/recovery-2026-09-09/repair-brief.md": "2f7f0b17a17414395f8dc42f997a65951cd724f7ddd7e3f6f39ccdd2d6a418f0",
+    "docs/reviews/recovery-2026-09-09/second-repair-validation.json": "5e7e789adb03c907652927f4fc59a5984107226a63de8cfee3f03d451f5e3bfe",
+    "docs/reviews/recovery-2026-09-09/stage2-planner-invocation-1.json": "a70036c40ee2c4e2a1970d5087389d0c9f14151ae1179530eeb0b77e168396e2",
+    "docs/reviews/recovery-2026-09-09/stage2-planner-invocation-2.json": "8a30eb58200bf648c264c7a5ca8ef5d43ddef3b0642dd8b43e495bc6dbdd03b2",
+    "docs/reviews/recovery-2026-09-09/stage2-verifier-invocation-3.json": "7ab534e7a71fec139ce92f6b6da2552b5c00b0243d4ac5df95b014078e0cb5ad",
+    "docs/reviews/recovery-2026-09-09/stage3-activation-manifest.json": "0c6010466c5b16c5be25db8bc2dd3289736153910f51b1cd5ee9f156100295d3",
+    "docs/reviews/recovery-2026-09-09/stage3-smoke-create-request.json": "e32b684e8c674cf211d181086ef38c3effcbda969c1e40babdff4a4695826f83",
+    "docs/reviews/recovery-2026-09-09/stage3-smoke-create-response.json": "a705f4f2045fba5e064863d98cb5e1c061c6a78eddb219e33b354438ecff934b",
+    "docs/reviews/recovery-2026-09-09/stage3-smoke-qualification.json": "45c4e4c665d37d94bb9f664bd6eaff62f8358c65a2d835218471a6a320baf93d",
+    "docs/reviews/recovery-2026-09-09/stage3-smoke-result.json": "85b507b52034b5dc070b6107cc4af7f405476ec030b757bb5e175a7e4b282b67",
+    "docs/reviews/recovery-2026-09-09/stage3-smoke-start-response.json": "c26db27be99dc2c666491126ac5ad05c9bb9364bad6a74067771678e44d043ca",
+    "docs/reviews/recovery-2026-09-09/unicode-correction-request.json": "eabb2eafa074be26845e3e32fdd94ee3ff7b16059daa3f7d4f1e8693ec27865b",
+    "docs/reviews/recovery-2026-09-09/unicode-correction-result.json": "a04dfac8c177e322fe677972c63d993cdc4910152d85d77933e9de55bb9f5505",
+    "docs/reviews/recovery-2026-09-09/unicode-oracle.py.txt": "fe04dc3112d1a6a0e588f3cf73295d7256c105c50acd3c3ff9488d29f3ad576d",
+    "docs/reviews/recovery-2026-09-09/unicode-recovery-completed.json": "2996268e360918b8a04751e07e6a287e36bfa3c9e2a36473447522668dbf8d0b",
+    "docs/reviews/recovery-2026-09-09/unicode-recovery-request.json": "da142c6667daf5514c08a1533b881d8f77d3f505a6fe339a9eaecbfb1d9610ef",
+    "docs/reviews/recovery-2026-09-09/unicode-recovery-result.json": "5aa6bd81c2ef6a6f95472b338e640212d93cb1791af5565a20aea2e7c733ce2e"
+  },
+  "source_comparison": {
+    "examples/recovery/README.md": {
+      "expected_sha256": "52e331a9975a1d1103b019cecf2449f9304bfe5b21062a31cb4f884f602be5f7",
+      "observed_sha256": "52e331a9975a1d1103b019cecf2449f9304bfe5b21062a31cb4f884f602be5f7"
+    },
+    "examples/recovery/deterministic_lifecycle.py": {
+      "expected_sha256": "e4949856e9871cdd5ab3353a826a89512a5be2703f2e92a7e9be38e468dc7969",
+      "observed_sha256": "e4949856e9871cdd5ab3353a826a89512a5be2703f2e92a7e9be38e468dc7969"
+    },
+    "examples/recovery/model_phase_probe.py": {
+      "expected_sha256": "82e153730fa832816ba38f358a80d7a5ac08a752398ed62a61879a565eaaff7c",
+      "observed_sha256": "82e153730fa832816ba38f358a80d7a5ac08a752398ed62a61879a565eaaff7c"
+    },
+    "routines/dynamic-graph-feature/routine.yaml": {
+      "expected_sha256": "23dd2b89d3c8f4c022022ee4d620a6bad940556ba12b559c2bd6f212bc4c6c85",
+      "observed_sha256": "23dd2b89d3c8f4c022022ee4d620a6bad940556ba12b559c2bd6f212bc4c6c85"
+    },
+    "src/orchestrator/api/schemas/runs.py": {
+      "expected_sha256": "dd8d9009b9d0e8924a37901c75d019b919507be035401e859508b2a0d1787f44",
+      "observed_sha256": "dd8d9009b9d0e8924a37901c75d019b919507be035401e859508b2a0d1787f44"
+    },
+    "src/orchestrator/graph/__init__.py": {
+      "expected_sha256": "204ffde0ce6325ebb7046206e4a747a5f98ebe91847422fe174708f89120af10",
+      "observed_sha256": "204ffde0ce6325ebb7046206e4a747a5f98ebe91847422fe174708f89120af10"
+    },
+    "src/orchestrator/graph/_commands.py": {
+      "expected_sha256": "76952d78abfa43ef145fc43fb4d7a17f9ee9283c0a5de388eb590b5bd3bcb16a",
+      "observed_sha256": "76952d78abfa43ef145fc43fb4d7a17f9ee9283c0a5de388eb590b5bd3bcb16a"
+    },
+    "src/orchestrator/graph/command_models.py": {
+      "expected_sha256": "19566b5e3951a22fd27dcf38c048a8c67e547c2c2e6368fb28a2b220c4b84664",
+      "observed_sha256": "19566b5e3951a22fd27dcf38c048a8c67e547c2c2e6368fb28a2b220c4b84664"
+    },
+    "src/orchestrator/graph/commands/__init__.py": {
+      "expected_sha256": "e8da36e7529ddcfc8bb3602a7c2ba455b27fd897e048c2589ea01d29cdc56402",
+      "observed_sha256": "e8da36e7529ddcfc8bb3602a7c2ba455b27fd897e048c2589ea01d29cdc56402"
+    },
+    "src/orchestrator/graph/commands/boundary.py": {
+      "expected_sha256": "2bacd8ea04d7cd285994052f867b11bf391fc7ad23160e9d1670c0b501c3335e",
+      "observed_sha256": "2bacd8ea04d7cd285994052f867b11bf391fc7ad23160e9d1670c0b501c3335e"
+    },
+    "src/orchestrator/graph/compiler.py": {
+      "expected_sha256": "d43a965e2ce6c7e97016df48b86a2c6737db279cbb09e91c47909469413bdabc",
+      "observed_sha256": "d43a965e2ce6c7e97016df48b86a2c6737db279cbb09e91c47909469413bdabc"
+    },
+    "src/orchestrator/graph/macros.py": {
+      "expected_sha256": "550fabba523fb7fdf8289cb09a657923649e458c6203ec18b8c911ac778322a3",
+      "observed_sha256": "550fabba523fb7fdf8289cb09a657923649e458c6203ec18b8c911ac778322a3"
+    },
+    "src/orchestrator/graph/models.py": {
+      "expected_sha256": "8927f43e0955bec55509f1476e39054fb77afd1a79e8c9a46f719fcc0896d465",
+      "observed_sha256": "8927f43e0955bec55509f1476e39054fb77afd1a79e8c9a46f719fcc0896d465"
+    },
+    "src/orchestrator/graph/payload_registry.py": {
+      "expected_sha256": "e5bf61fe959fc901f0537b943ca5ea9e64d0960acf344e47376c02ca3525b293",
+      "observed_sha256": "e5bf61fe959fc901f0537b943ca5ea9e64d0960acf344e47376c02ca3525b293"
+    },
+    "src/orchestrator/graph/reliable_plan_evaluation.py": {
+      "expected_sha256": "b33732664839ef9c6dd1f7279001ed1377b16a75588f2c06713f524673943a51",
+      "observed_sha256": "b33732664839ef9c6dd1f7279001ed1377b16a75588f2c06713f524673943a51"
+    },
+    "src/orchestrator/graph_runtime/__init__.py": {
+      "expected_sha256": "5131df433ed88e74d89db4d1871fc21ec8bbde28231682778e7c1a9e5cc0e5c7",
+      "observed_sha256": "5131df433ed88e74d89db4d1871fc21ec8bbde28231682778e7c1a9e5cc0e5c7"
+    },
+    "src/orchestrator/graph_runtime/controller.py": {
+      "expected_sha256": "df44e8f4197b28d1abc932a7e48f84f583cac160632e624939eaf470eeedc57f",
+      "observed_sha256": "df44e8f4197b28d1abc932a7e48f84f583cac160632e624939eaf470eeedc57f"
+    },
+    "src/orchestrator/graph_runtime/dispatch.py": {
+      "expected_sha256": "26c87c8dbfe13d520eed47fc3746ead8fe40ef161e1cd0a9e562e50c1bda6982",
+      "observed_sha256": "26c87c8dbfe13d520eed47fc3746ead8fe40ef161e1cd0a9e562e50c1bda6982"
+    },
+    "src/orchestrator/graph_runtime/graph_mcp_tools.py": {
+      "expected_sha256": "579be9260942794528f60c3d2a460908d1a93630ae2b4fd1e32422e5afe6e141",
+      "observed_sha256": "579be9260942794528f60c3d2a460908d1a93630ae2b4fd1e32422e5afe6e141"
+    },
+    "src/orchestrator/graph_runtime/prompts.py": {
+      "expected_sha256": "cce9b9b80cc9c2641cb8f9abf29625a6e24d3cdbce9c8516214e12380411c53c",
+      "observed_sha256": "cce9b9b80cc9c2641cb8f9abf29625a6e24d3cdbce9c8516214e12380411c53c"
+    },
+    "src/orchestrator/graph_runtime/rejection_evidence.py": {
+      "expected_sha256": "24d7ba082260834bdcd676cf8bbcd3a740274ce474d28055202a66e3a9356468",
+      "observed_sha256": "24d7ba082260834bdcd676cf8bbcd3a740274ce474d28055202a66e3a9356468"
+    },
+    "src/orchestrator/graph_runtime/store.py": {
+      "expected_sha256": "a565eeed47e934c636699e28667cef9414b836f88354d1aa2cca76e53da296d6",
+      "observed_sha256": "a565eeed47e934c636699e28667cef9414b836f88354d1aa2cca76e53da296d6"
+    },
+    "src/orchestrator/runners/__init__.py": {
+      "expected_sha256": "08953cf035817fce6efae17ac24a01c1ed594f2e75149ab44ac6359ebf54ba13",
+      "observed_sha256": "08953cf035817fce6efae17ac24a01c1ed594f2e75149ab44ac6359ebf54ba13"
+    },
+    "src/orchestrator/runners/agents/codex/__init__.py": {
+      "expected_sha256": "25b1e9d18faba4f5d2136ca5284ce6b9f083d91f33da6c2b159a1de7f3f44954",
+      "observed_sha256": "25b1e9d18faba4f5d2136ca5284ce6b9f083d91f33da6c2b159a1de7f3f44954"
+    },
+    "src/orchestrator/runners/agents/codex/agent.py": {
+      "expected_sha256": "1e99b9955de4e94231a5a289110dd5bcb187719010b612fa4b1885b6b9f41a5f",
+      "observed_sha256": "1e99b9955de4e94231a5a289110dd5bcb187719010b612fa4b1885b6b9f41a5f"
+    },
+    "src/orchestrator/runners/agents/codex/common.py": {
+      "expected_sha256": "6fcf9a1292cc771361cdbbca9b884d35a84ec8c5a368805b0599b783faa8d2a5",
+      "observed_sha256": "6fcf9a1292cc771361cdbbca9b884d35a84ec8c5a368805b0599b783faa8d2a5"
+    },
+    "src/orchestrator/runners/planner_tools.py": {
+      "expected_sha256": "685f9f51ae76d51b5295a88882d78e80fea77dd7d68f9527427afcea5e02a8c8",
+      "observed_sha256": "685f9f51ae76d51b5295a88882d78e80fea77dd7d68f9527427afcea5e02a8c8"
+    },
+    "src/orchestrator/runners/scaffolding/copier.py": {
+      "expected_sha256": "b30c2e11c03c827eb2e3e507ddfbac54c2cf7e53cdb81277c86d158db89207b6",
+      "observed_sha256": "b30c2e11c03c827eb2e3e507ddfbac54c2cf7e53cdb81277c86d158db89207b6"
+    },
+    "tests/integration/test_graph_patch_acknowledgement_recovery.py": {
+      "expected_sha256": "06ac74010376655a8d0df73da42dc26cb8e4942bf57d1abac096faa191f9abb1",
+      "observed_sha256": "06ac74010376655a8d0df73da42dc26cb8e4942bf57d1abac096faa191f9abb1"
+    },
+    "tests/integration/test_graph_routine_compile.py": {
+      "expected_sha256": "2c7597e4f15d8607d44c8978d4a22f348e09c956a289c3330e29658e9a1d30a3",
+      "observed_sha256": "2c7597e4f15d8607d44c8978d4a22f348e09c956a289c3330e29658e9a1d30a3"
+    },
+    "tests/integration/test_graph_sequential_product_path.py": {
+      "expected_sha256": "443c91d69a2d75fdcdf3dd805425f0c35b2c424dde10aa611e7eea8e01828a8f",
+      "observed_sha256": "443c91d69a2d75fdcdf3dd805425f0c35b2c424dde10aa611e7eea8e01828a8f"
+    },
+    "tests/integration/test_recovery_deterministic_lifecycle.py": {
+      "expected_sha256": "598059db0f388184fe52d0cc748bdd628c4e4b5e9a35b9b0907b649bb9cbc781",
+      "observed_sha256": "598059db0f388184fe52d0cc748bdd628c4e4b5e9a35b9b0907b649bb9cbc781"
+    },
+    "tests/integration/test_recovery_model_phase_probe.py": {
+      "expected_sha256": "ded331639042430b494f98b1f622afa5a6068d14f3ef20eaceafe1706093f163",
+      "observed_sha256": "ded331639042430b494f98b1f622afa5a6068d14f3ef20eaceafe1706093f163"
+    },
+    "tests/integration/test_recovery_rejection_evidence.py": {
+      "expected_sha256": "21ba95f4460403693ee289b012d8ed84ad12de62436b1f6b6a1388d1cc4ef38f",
+      "observed_sha256": "21ba95f4460403693ee289b012d8ed84ad12de62436b1f6b6a1388d1cc4ef38f"
+    },
+    "tests/integration/test_scaffolding.py": {
+      "expected_sha256": "1ec2243d3a94ad36c7b7a7d5c9398c64a317889b605ffbe4921e410a07a63c6c",
+      "observed_sha256": "1ec2243d3a94ad36c7b7a7d5c9398c64a317889b605ffbe4921e410a07a63c6c"
+    },
+    "tests/unit/test_api_runs_validation.py": {
+      "expected_sha256": "600b8b878da616b3cf5685ea75ca28fc36c5d6b57dc5fb7aafe7b972730d7af4",
+      "observed_sha256": "600b8b878da616b3cf5685ea75ca28fc36c5d6b57dc5fb7aafe7b972730d7af4"
+    },
+    "tests/unit/test_graph_dispatch_on_output.py": {
+      "expected_sha256": "dcaf0f24d74fc7a891b823ad71d032417c76006607c8d6626ed5adab5aa0e9d9",
+      "observed_sha256": "dcaf0f24d74fc7a891b823ad71d032417c76006607c8d6626ed5adab5aa0e9d9"
+    },
+    "tests/unit/test_graph_planner_packet.py": {
+      "expected_sha256": "78c74ac3ee0ca411d8afe8df7ab47bb7ab49b47879acd623cfd99fdd4f6cecf7",
+      "observed_sha256": "78c74ac3ee0ca411d8afe8df7ab47bb7ab49b47879acd623cfd99fdd4f6cecf7"
+    },
+    "tests/unit/test_graph_runner_boundary_commands.py": {
+      "expected_sha256": "f15f59766c18cba60182063a4817f0de8fdd96f36a51fd4ca6d7451169de5418",
+      "observed_sha256": "f15f59766c18cba60182063a4817f0de8fdd96f36a51fd4ca6d7451169de5418"
+    },
+    "tests/unit/test_reliable_plan_region_constructor.py": {
+      "expected_sha256": "48edde044e3e82994a7367b451963b83422912af3287030d8d4a3896113d49ec",
+      "observed_sha256": "48edde044e3e82994a7367b451963b83422912af3287030d8d4a3896113d49ec"
+    },
+    "tests/unit/test_reliable_plan_tool_exposure.py": {
+      "expected_sha256": "b7b37ee0e0058368f0ff949fb1e75d3cabfec9c5706f544cfd78aec2bc3c1109",
+      "observed_sha256": "b7b37ee0e0058368f0ff949fb1e75d3cabfec9c5706f544cfd78aec2bc3c1109"
+    }
+  },
+  "worktree": "/Users/peter/code/task-world/worktrees/recovery-stabilization"
+}
