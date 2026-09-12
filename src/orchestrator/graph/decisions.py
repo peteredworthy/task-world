@@ -747,15 +747,20 @@ class ResolvedBatchDecisionContext(_DecisionModel):
 class ResolvedCorrectionDecisionContext(_DecisionModel):
     """Exact failed-candidate evidence and accepted baseline for a gap answer."""
 
+    phase: Literal["batch", "initial_plan", "plan_amendment"] = "batch"
+    preserved_plan_record_id: str | None = None
+    preserved_plan_verification_record_id: str | None = None
+    horizon_verification_record_id: str | None = None
+    authority_record_ids: tuple[str, ...] = ()
     node_id: str
     routine_snapshot_record_id: str
     plan_record_id: str
-    plan_verification_record_id: str
+    plan_verification_record_id: str | None
     failed_verification_record_id: str
     failed_check_record_ids: tuple[str, ...]
     task_region_id: str
-    accepted_plan: ImplementationPlan
-    selected_batch: Batch
+    plan: ImplementationPlan
+    selected_batch: Batch | None
     scope: str
     planning_horizon: StrictInt = Field(ge=1)
     remaining_horizons: StrictInt = Field(ge=1)
@@ -787,6 +792,7 @@ class ResolvedCorrectionDecisionContext(_DecisionModel):
 
     @field_validator(
         "failed_check_record_ids",
+        "authority_record_ids",
         "plan_requirement_alias_order",
         "ordered_plan_requirement_record_ids",
         "requirement_record_ids",
@@ -804,13 +810,21 @@ class ResolvedCorrectionDecisionContext(_DecisionModel):
                 "a conservative plan revision, or human escalation?"
             ),
             "answer_family": "correction_decision",
+            "correction_phase": self.phase,
+            "plan": self.plan.model_dump(mode="json"),
             "scope": self.scope,
             "task_region_id": self.task_region_id,
-            "selected_batch": self.selected_batch.model_dump(mode="json"),
+            "selected_batch": self.selected_batch.model_dump(mode="json")
+            if self.selected_batch
+            else None,
             "requirement_aliases": dict(self.requirement_aliases.object_items()),
             "evidence_aliases": dict(self.evidence_aliases.object_items()),
             "accepted_baseline": {
-                "plan_record_id": self.plan_record_id,
+                "plan_record_id": (
+                    self.plan_record_id if self.phase == "batch" else self.preserved_plan_record_id
+                ),
+                "rejected_plan_record_id": self.plan_record_id if self.phase != "batch" else None,
+                "preserved_plan_verification_record_id": self.preserved_plan_verification_record_id,
                 "plan_verification_record_id": self.plan_verification_record_id,
                 "failed_verification_record_id": self.failed_verification_record_id,
                 "failed_check_record_ids": list(self.failed_check_record_ids),
@@ -818,16 +832,18 @@ class ResolvedCorrectionDecisionContext(_DecisionModel):
             "planning_horizon": self.planning_horizon,
             "remaining_horizons": self.remaining_horizons,
             "maximum_batches": self.maximum_batches,
-            "available_dispositions": [
-                "no_gap",
-                "corrective_work",
-                "plan_revision",
-                "escalate",
-            ],
+            "available_dispositions": (
+                ["no_gap", "corrective_work", "plan_revision", "escalate"]
+                if self.phase == "batch"
+                else ["plan_revision", "escalate"]
+            ),
             "check_policy": {
                 "selected_batch_checks": [
                     check.model_dump(mode="json", exclude_none=True)
-                    for check in self.selected_batch.checks
+                    for batch in (
+                        [self.selected_batch] if self.selected_batch else self.plan.batches
+                    )
+                    for check in batch.checks
                 ],
                 "hidden_oracle_available": self.hidden_oracle_available,
                 "final_dynamic_acceptance_is_runtime_owned": True,
@@ -1538,6 +1554,15 @@ def resolve_correction_decision_context(
             "correction evidence requires one verification report"
         )
     anchor_node = node_payload_view(projection, anchor_report.producer_node_id) or {}
+    if anchor_node.get("semantic_stage") == "plan_verification":
+        return _resolve_plan_repair_context(
+            projection,
+            node_id=node_id,
+            snapshot_id=snapshot_id,
+            anchor_report=anchor_report,
+            bound_rows=bound_rows,
+            ordered_evidence_ids=ordered_evidence_ids,
+        )
     scope = node.get("scope")
     if not isinstance(scope, str) or not scope:
         scope = anchor_node.get("declared_batch_id")
@@ -1626,7 +1651,7 @@ def resolve_correction_decision_context(
         failed_verification_record_id=anchor_report.record_id,
         failed_check_record_ids=tuple(record.record_id for record in failed_checks),
         task_region_id=str(node.get("task_region_id") or node_id),
-        accepted_plan=plan,
+        plan=plan,
         selected_batch=selected,
         scope=scope,
         planning_horizon=horizon,
@@ -1641,6 +1666,199 @@ def resolve_correction_decision_context(
             plan_requirement_records[alias] for alias in selected.requirements
         ),
         evidence_aliases=FrozenMap(evidence_aliases),
+        bound_inputs=tuple(actual_bound),
+        hidden_oracle_available=bool(dynamic.get("hidden_oracle_command")),
+    )
+
+
+def _resolve_plan_repair_context(
+    projection: GraphProjection,
+    *,
+    node_id: str,
+    snapshot_id: str,
+    anchor_report: VerificationReportRecord,
+    bound_rows: list[tuple[str, str]],
+    ordered_evidence_ids: list[str],
+) -> ResolvedCorrectionDecisionContext:
+    """Resolve rejected proposals through their exact verification and supersession lineage."""
+    records = output_record_payloads_view(projection)
+    verifier_node = node_payload_view(projection, anchor_report.producer_node_id) or {}
+    all_bindings = input_bindings_view(projection)
+    verifier_bindings = all_bindings.get(anchor_report.producer_node_id, {})
+    plan_binding = verifier_bindings.get("semantic_artifact")
+    if (
+        anchor_report.outcome != "failed"
+        or plan_binding is None
+        or len(plan_binding.record_ids) != 1
+    ):
+        raise DecisionContractResolutionError(
+            "plan repair requires a failed exact plan verification"
+        )
+    rejected_id = plan_binding.record_ids[0]
+    if rejected_id not in anchor_report.evaluated_record_ids:
+        raise DecisionContractResolutionError("failed plan report does not evaluate its bound plan")
+
+    def load_plan(record_id: str) -> tuple[SemanticArtifactRecord, ImplementationPlan]:
+        record = records.get(record_id)
+        if (
+            not isinstance(record, SemanticArtifactRecord)
+            or record.value.authority_status != "accepted"
+            or record.value.schema_id != DECISION_PLAN_SCHEMA_ID
+            or record.value.schema_version != DECISION_PLAN_SCHEMA_VERSION
+            or record.value.semantic_role != "implementation_plan"
+        ):
+            raise DecisionContractResolutionError("plan repair lineage contains an invalid plan")
+        raw = (
+            thaw_json(record.value.content)
+            if isinstance(record.value.content, FrozenMap)
+            else record.value.content
+        )
+        try:
+            return record, ImplementationPlan.model_validate(raw)
+        except ValueError as exc:
+            raise DecisionContractResolutionError("plan repair content is invalid") from exc
+
+    rejected_record, rejected_plan = load_plan(rejected_id)
+    aliases, requirement_records = _plan_requirement_authority(rejected_record, records)
+    horizon = verifier_node.get("planning_horizon", 1)
+    if (
+        not isinstance(horizon, int)
+        or isinstance(horizon, bool)
+        or not 1 <= horizon <= len(rejected_plan.batches)
+    ):
+        raise DecisionContractResolutionError("rejected plan has an invalid repair horizon")
+    authority_ids = [rejected_id]
+    lineage_ids: set[str] = set()
+    preserved_id: str | None = None
+    preserved_verification_id: str | None = None
+    current_record, current_plan = rejected_record, rejected_plan
+    while True:
+        if current_record.record_id in lineage_ids:
+            raise DecisionContractResolutionError("plan repair supersession lineage is cyclic")
+        lineage_ids.add(current_record.record_id)
+        authority_ids.extend(current_record.value.source_record_ids)
+        passed = [
+            record
+            for record in records.values()
+            if isinstance(record, VerificationReportRecord)
+            and record.outcome == "passed"
+            and current_record.record_id in record.evaluated_record_ids
+            and (binding := all_bindings.get(record.producer_node_id, {}).get("semantic_artifact"))
+            is not None
+            and binding.record_ids == [current_record.record_id]
+            and (node_payload_view(projection, record.producer_node_id) or {}).get("semantic_stage")
+            == "plan_verification"
+        ]
+        if len(passed) > 1 or (current_record.record_id == rejected_id and passed):
+            raise DecisionContractResolutionError(
+                "rejected plan has ambiguous verification authority"
+            )
+        if passed:
+            preserved_id = current_record.record_id
+            preserved_verification_id = passed[0].record_id
+            authority_ids.extend([preserved_id, preserved_verification_id])
+            break
+        prior_id = current_record.value.supersedes_record_id
+        if prior_id is None:
+            break
+        if prior_id not in current_record.value.source_record_ids:
+            raise DecisionContractResolutionError("plan repair supersession lacks source authority")
+        prior_record, prior_plan = load_plan(prior_id)
+        if _plan_requirement_authority(prior_record, records) != (aliases, requirement_records):
+            raise DecisionContractResolutionError(
+                "plan repair cannot change frozen requirement authority"
+            )
+        if len(current_plan.batches) < len(prior_plan.batches):
+            raise DecisionContractResolutionError("plan repair cannot drop prior batches")
+        for index, prior_batch in enumerate(prior_plan.batches):
+            current_batch = current_plan.batches[index]
+            if index < horizon - 1 and current_batch != prior_batch:
+                raise DecisionContractResolutionError(
+                    "plan repair cannot change the accepted prefix"
+                )
+            if (
+                current_batch.key != prior_batch.key
+                or current_batch.requirements != prior_batch.requirements
+                or not set(current_batch.scope).issubset(prior_batch.scope)
+                or any(item not in current_batch.acceptance for item in prior_batch.acceptance)
+                or any(item not in current_batch.checks for item in prior_batch.checks)
+                or any(
+                    item not in current_batch.review_points for item in prior_batch.review_points
+                )
+                or any(item not in current_batch.depends_on for item in prior_batch.depends_on)
+            ):
+                raise DecisionContractResolutionError(
+                    "plan repair lineage weakens preserved obligations"
+                )
+        authority_ids.append(prior_id)
+        current_record, current_plan = prior_record, prior_plan
+    if horizon > 1 and preserved_id is None:
+        raise DecisionContractResolutionError("later plan repair requires a verified baseline")
+    horizon_verification_id: str | None = None
+    if horizon > 1:
+        prior_batch_key = rejected_plan.batches[horizon - 2].key
+        horizon_reports: list[VerificationReportRecord] = []
+        for record_id in dict.fromkeys(authority_ids):
+            record = records.get(record_id)
+            if not isinstance(record, VerificationReportRecord) or record.outcome != "passed":
+                continue
+            source = node_payload_view(projection, record.producer_node_id) or {}
+            if (
+                source.get("semantic_stage") in {"effectful_batch", "corrective_work"}
+                and source.get("planning_horizon") == horizon - 1
+                and source.get("declared_batch_id") == prior_batch_key
+            ):
+                horizon_reports.append(record)
+        if len(horizon_reports) != 1:
+            raise DecisionContractResolutionError(
+                "plan repair requires exact prior horizon verification"
+            )
+        horizon_verification_id = horizon_reports[0].record_id
+    dynamic = routine_snapshot_dynamic_feature_view(projection) or {}
+    budget = dynamic.get("patch_budget")
+    if (
+        not isinstance(budget, int)
+        or isinstance(budget, bool)
+        or budget < len(rejected_plan.batches)
+    ):
+        raise DecisionContractResolutionError("rejected plan exceeds frozen patch budget")
+    node = node_payload_view(projection, node_id) or {}
+    actual_bound = [
+        _bound_input(projection, node_id=node_id, port="routine_snapshot", record_id=snapshot_id),
+        *[
+            _bound_input(projection, node_id=node_id, port=port, record_id=record_id)
+            for port, record_id in bound_rows
+        ],
+    ]
+    evidence_ids = list(dict.fromkeys([*ordered_evidence_ids, *authority_ids]))
+    return ResolvedCorrectionDecisionContext(
+        phase="plan_amendment" if preserved_id else "initial_plan",
+        preserved_plan_record_id=preserved_id,
+        preserved_plan_verification_record_id=preserved_verification_id,
+        horizon_verification_record_id=horizon_verification_id,
+        authority_record_ids=tuple(dict.fromkeys(authority_ids)),
+        node_id=node_id,
+        routine_snapshot_record_id=snapshot_id,
+        plan_record_id=rejected_id,
+        plan_verification_record_id=None,
+        failed_verification_record_id=anchor_report.record_id,
+        failed_check_record_ids=(),
+        task_region_id=str(node.get("task_region_id") or node_id),
+        plan=rejected_plan,
+        selected_batch=None,
+        scope="plan",
+        planning_horizon=horizon,
+        remaining_horizons=len(rejected_plan.batches) - horizon + 1,
+        maximum_batches=budget,
+        plan_requirement_aliases=FrozenMap(aliases),
+        plan_requirement_record_ids=FrozenMap(requirement_records),
+        plan_requirement_alias_order=tuple(aliases),
+        ordered_plan_requirement_record_ids=tuple(requirement_records.values()),
+        requirement_aliases=FrozenMap(aliases),
+        requirement_record_ids=tuple(requirement_records.values()),
+        evidence_aliases=FrozenMap(
+            {f"e{index}": record_id for index, record_id in enumerate(evidence_ids, 1)}
+        ),
         bound_inputs=tuple(actual_bound),
         hidden_oracle_available=bool(dynamic.get("hidden_oracle_command")),
     )
@@ -1752,6 +1970,12 @@ def compile_batch_decision(
                     "source_record_ids": [
                         resolved.plan_record_id,
                         resolved.plan_verification_record_id,
+                        *(
+                            [resolved.horizon_verification_record_id]
+                            if resolved.horizon_verification_record_id
+                            != resolved.plan_verification_record_id
+                            else []
+                        ),
                         *resolved.ordered_plan_requirement_record_ids,
                     ],
                     "requirement_ids": [plan_aliases[alias] for alias in ordered_aliases],
@@ -1919,7 +2143,8 @@ def compile_correction_decision(
         node_id,
         *(item.record_id for item in resolved.bound_inputs),
         resolved.plan_record_id,
-        resolved.plan_verification_record_id,
+        *([resolved.plan_verification_record_id] if resolved.plan_verification_record_id else []),
+        *resolved.authority_record_ids,
         resolved.failed_verification_record_id,
         *resolved.failed_check_record_ids,
         *resolved.ordered_plan_requirement_record_ids,
@@ -1952,6 +2177,10 @@ def compile_correction_decision(
         CorrectionDecision,
         TypeAdapter(CorrectionDecision).validate_python(dict(answer)),
     )
+    if resolved.phase != "batch" and isinstance(
+        parsed, (NoGapCorrectionDecision, CorrectiveWorkDecision)
+    ):
+        raise ValueError("rejected plan correction permits only plan_revision or escalate")
     canonical_answer = parsed.model_dump(mode="json")
     answer_hash = canonical_decision_answer_hash(canonical_answer)
     digest = hashlib.sha256(
@@ -1982,6 +2211,8 @@ def compile_correction_decision(
         unknown = sorted(set(parsed.evidence) - set(evidence))
         if unknown:
             raise ValueError(f"corrective work contains unknown evidence alias: {unknown}")
+        if resolved.selected_batch is None:
+            raise ValueError("corrective work requires an accepted batch")
         if not set(parsed.focus).issubset(set(resolved.selected_batch.scope)):
             raise ValueError("corrective work focus exceeds the failed batch scope")
         classification = "corrective_work_required"
@@ -2025,6 +2256,8 @@ def compile_correction_decision(
         from orchestrator.graph.macros import compile_reliable_plan_correction_ops
 
         batch = resolved.selected_batch
+        if batch is None:
+            raise ValueError("corrective work requires an accepted batch")
         aliases = cast(dict[str, str], dict(resolved.requirement_aliases.object_items()))
         ops = compile_reliable_plan_correction_ops(
             projection=projection,
@@ -2092,13 +2325,22 @@ def compile_correction_decision(
                         "source": "controller_correction_compiler",
                         "reason": parsed.reason,
                     },
-                    "source_record_ids": [
-                        resolved.plan_record_id,
-                        resolved.plan_verification_record_id,
-                        *resolved.ordered_plan_requirement_record_ids,
-                        *resolved.failed_check_record_ids,
-                        resolved.failed_verification_record_id,
-                    ],
+                    "source_record_ids": list(
+                        dict.fromkeys(
+                            [
+                                resolved.plan_record_id,
+                                *(
+                                    [resolved.plan_verification_record_id]
+                                    if resolved.plan_verification_record_id
+                                    else []
+                                ),
+                                *resolved.authority_record_ids,
+                                *resolved.ordered_plan_requirement_record_ids,
+                                *resolved.failed_check_record_ids,
+                                resolved.failed_verification_record_id,
+                            ]
+                        )
+                    ),
                     "requirement_ids": [
                         plan_aliases[alias] for alias in resolved.plan_requirement_alias_order
                     ],
@@ -2133,7 +2375,11 @@ def compile_correction_decision(
             horizon_verification_source_node_id=(
                 cast(
                     VerificationReportRecord,
-                    output_record_payloads_view(projection)[resolved.plan_verification_record_id],
+                    output_record_payloads_view(projection)[
+                        resolved.horizon_verification_record_id
+                        or resolved.plan_verification_record_id
+                        or resolved.failed_verification_record_id
+                    ],
                 ).producer_node_id
             ),
         )
@@ -2192,7 +2438,11 @@ def _apply_plan_amendment(
     amendment: PlanAmendment,
 ) -> ImplementationPlan:
     """Construct the full conservative prospective plan from one narrow proposal."""
-    original = resolved.accepted_plan
+    original = (
+        resolved.plan
+        if isinstance(resolved, ResolvedCorrectionDecisionContext)
+        else resolved.accepted_plan
+    )
     batches = list(original.batches)
     key_indexes = {batch.key: index for index, batch in enumerate(batches)}
     authorized_scope = {path for batch in batches for path in batch.scope}

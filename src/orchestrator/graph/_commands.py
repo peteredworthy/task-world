@@ -3622,7 +3622,7 @@ def _stamp_reliable_plan_successor_authority(
             continue
         requested_remaining = node.get("reliable_plan_remaining_horizons")
         same_horizon_amendment = (
-            parent_is_successor
+            parent.get("semantic_stage") in {"successor_planning", "gap_planning"}
             and effective_kind == "planner"
             and isinstance(node.get("accepted_plan_amendment_record_id"), str)
             and node.get("planning_horizon") == parent.get("planning_horizon")

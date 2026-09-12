@@ -83,7 +83,7 @@ successful terminal closure.
 | Initial planner | Identify unresolved discovery questions and constraints when the routine leaves that judgment open. | Bind the user specification, requirements and check policy; create discovery and plan-verification structure. If the brief is fully supplied, use a controller step. |
 | Discovery | Produce an implementation plan: bounded work batches, their semantic dependencies, acceptance obligations and justified additional checks. | Supply a read-only workspace; validate the typed plan and scopes; persist its provenance; dispatch independent plan verification. |
 | Successor | Decide how the selected accepted batch should proceed in light of new evidence. Return proceed with useful implementation notes, a scoped amendment proposal, or a concrete blocker. | Select the eligible batch from the verified plan and dependency evidence; inherit its obligations; compile its region, checks, audit and continuation. |
-| Gap/correction planner | Diagnose the bound failure and propose a bounded corrective approach, plan amendment or blocker. | Bind the exact failed candidate/evidence and last accepted baseline; derive correction topology and budgets. |
+| Gap/correction planner | Diagnose the bound failure and propose a bounded corrective approach, plan amendment or blocker. | Bind the exact failed candidate/evidence and the verified baseline when one exists; distinguish plan repair from batch correction and derive bounded topology. |
 | Implementation/corrective worker | Author the requested code or artifact and supply any declared semantic result. A completion declaration means the work is ready for validation. | Enforce scope; capture and stage the candidate; execute mandatory checks; manage commits, receipts and handoff. Editing the requested product remains the worker's work. |
 | Plan/batch verifier and final audit | Assess semantic obligations and explain findings against supplied evidence. | Bind the exact plan/candidate and requirement set; execute required checks; construct the authoritative verification report and pass/fail transition. |
 | Appeal/oversight/recovery advice | Return the declared analysis or recommendation using their existing typed output contract. | Enforce policy and execute any authorized lifecycle action through the existing controller/signal path. A recommendation does not grant new authority. |
@@ -105,6 +105,14 @@ An amendment is a proposal. It does not overwrite an accepted plan or relax its
 requirements. Route it through the existing plan-verification/correction path;
 preserve already accepted batches and supersession rules. Expansion beyond the
 run's authority requires the existing human decision path.
+
+Rejected-plan repair stays in that same decision owner and transaction. Initial
+rejection binds the rejected plan and failed report without inventing a verified
+baseline. Amendment rejection follows exact supersession lineage to preserve
+its last verified ancestor and completed prefix. Both permit conservative plan
+revision or escalation; every replacement requires fresh independent plan
+verification before successor execution. See the phase-specific authority rules
+in [contracts.md](contracts.md#rejected-plan-correction-authority).
 
 ## One owner for each kind of fact
 

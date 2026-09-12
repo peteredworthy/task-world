@@ -1,12 +1,13 @@
-"""Reproduce the Slice 3F rejected-plan contract blocker without a live server.
+"""Exercise the repaired Slice 3F rejected-plan handoff without a live server.
 
 Run from the recovery-stabilization worktree:
     PYTHONPATH=. UV_CACHE_DIR=/tmp/orchestrator-recovery-uv uv run --no-sync python \
         docs/intent/31-decision-runtime/reproduce-rejected-plan-gap.py
 
-The disposable real dispatch sequence produces an F plan verification; resolving
-its generated correction node currently raises DecisionContractResolutionError.
-This is diagnostic evidence of the architectural stop recorded in implementation.md.
+The disposable production dispatch sequence rejects the initial plan and first
+repair, verifies the second repair, and dispatches its successor. This command
+failed during correction resolution at the review checkpoint; it now serves as
+a repeatable closure diagnostic. The original failure is retained in slice-3-review.md.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     node_kinds_view,
     node_payload_view,
+    node_states_view,
     resolve_correction_decision_context,
 )
 from orchestrator.graph_runtime import GraphController
@@ -45,13 +47,20 @@ async def reproduce() -> None:
                 auto_dispatch=False,
             )
             projection = await controller.read_projection("initial-decision-product")
-            correction_id = next(
+            completed_corrections = [
                 node_id
                 for node_id in node_kinds_view(projection)
                 if (node_payload_view(projection, node_id) or {}).get("role") == "gap_planner"
-            )
-            print(f"Generated correction node: {correction_id}")
-            resolve_correction_decision_context(projection, correction_id)
+                and node_states_view(projection).get(node_id) == "completed"
+            ]
+            assert len(completed_corrections) == 2
+            for correction_id in completed_corrections:
+                print(f"Completed correction node: {correction_id}")
+                context = resolve_correction_decision_context(projection, correction_id)
+                assert context.phase == "initial_plan"
+                assert context.selected_batch is None
+                assert context.plan_verification_record_id is None
+            print("Passed: rejected plan → repeated repair → independent verification → successor")
         finally:
             await engine.dispose()
 

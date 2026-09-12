@@ -1383,9 +1383,9 @@ def _bind_decision_successors(
                     "required": True,
                 }
             )
-        if node.get("semantic_stage") == "successor_planning" and not any(
-            item.get("port") == "semantic_artifact" for item in outputs
-        ):
+        if (
+            node.get("semantic_stage") == "successor_planning" or node.get("role") == "gap_planner"
+        ) and not any(item.get("port") == "semantic_artifact" for item in outputs):
             outputs.append(
                 {
                     "port": "semantic_artifact",
@@ -1648,6 +1648,8 @@ def compile_reliable_plan_amendment_ops(
         node = cast(dict[str, Any], raw_node)
         if node.get("node_id") in {verifier_id, successor_id}:
             node["accepted_plan_amendment_record_id"] = amendment_record_id
+        if node.get("node_id") in {verifier_id, successor_id} or node.get("role") == "gap_planner":
+            node["planning_horizon"] = planning_horizon
         if node.get("node_id") == successor_id:
             node["reliable_plan_remaining_horizons"] = remaining_horizons
             node["scope"] = selected["key"]
@@ -2058,6 +2060,14 @@ def _construct_reliable_plan_region(
                 and cast(dict[str, Any], operation.get("node", {})).get("node_id") == discovery_id
             )
             discovery_node["decision_successor_node_id"] = successor_id
+            for operation in ops:
+                raw_node = operation.get("node")
+                if (
+                    operation.get("op") == "create_node"
+                    and isinstance(raw_node, dict)
+                    and cast(dict[str, Any], raw_node).get("role") == "gap_planner"
+                ):
+                    cast(dict[str, Any], raw_node)["planning_horizon"] = 1
         _stamp_semantic_decisions(
             ops,
             scope=scope,

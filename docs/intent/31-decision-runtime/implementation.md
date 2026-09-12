@@ -276,14 +276,14 @@ passing.
 
 ### Review prerequisite and lessons from slice 3
 
-The September 12 review found that slice 3 is not yet fully closed. See
-[slice-3-review.md](slice-3-review.md) for the current evidence and corrections.
-In particular, the generated rejected-plan recovery path must run through gap
-dispatch before slice 4 begins. The current correction resolver requires a
-verified baseline batch; a rejected initial plan has neither a passed plan
-verifier nor a selected batch. A seeded rejected-batch test does not prove this
-handoff. Resolve the plan-repair authority contract explicitly, then prove the
-generated rejection path without fabricating a passing report or batch identity.
+The September 12 [review](slice-3-review.md) found a required rejected-plan
+recovery gap. Its subsequent implementation and independent validation are
+tracked in [the plan-repair closure ledger](slice-3-plan-repair-closure.md).
+Slice 4 requires that closure: the generated rejected-plan path must execute
+correction and independent verification before its successor can proceed.
+A seeded rejected-batch test does not prove this handoff. Plan repair must bind
+the actual rejected plan and report without fabricating a passing report or
+batch identity.
 
 Apply the following constraints throughout slices 4A–4E:
 
@@ -296,6 +296,14 @@ Apply the following constraints throughout slices 4A–4E:
   shared requirements, and amendment verification at the same horizon. Derive
   coverage and aliases from the bound ordered obligation set, not map iteration
   or the global run requirements.
+- Distinguish an admitted semantic plan record from a plan that passed
+  independent verification. A rejected initial plan has no verified baseline;
+  a rejected amendment retains its exact verified ancestor and completed
+  prefix. Preserve proposal obligations through repeated repair, and require
+  a new report for each replacement. Plan rejection permits revision or
+  escalation, never code correction or dismissal of the failed report.
+  Verify the report producer's direct candidate binding: membership in evaluated
+  evidence can come from a transitive reference and does not establish authority.
 - Validate meaning as well as shape in every disposition. Slice 3 review found
   unknown evidence accepted by `no_gap` and unchanged amendments accepted as new
   work. Include unknown/cross-candidate evidence and semantically ineffective
@@ -312,6 +320,8 @@ Apply the following constraints throughout slices 4A–4E:
   independent verification. Assert fresh contexts, exact accepted records,
   terminal leases/attempts and removed MCP routes at each completed phase;
   distinguish deliberately unexecuted downstream nodes from completed work.
+  Use generated node definitions: hand-authored fixture ports hid the missing
+  semantic-plan output on gap planners until the joined repair submitted it.
   During process cleanup, distinguish unavailable inspection from proven exit:
   wait within the existing bound and revalidate identity before another signal.
 - When adding records, update the output-record payload inventory, canonical

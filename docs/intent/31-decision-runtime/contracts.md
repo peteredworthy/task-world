@@ -68,6 +68,42 @@ and total plan size must also respect the existing run capability/horizon budget
   These lists contain additions only. Known obligations and graph facts are not
   repeated. This is a narrow semantic plan proposal, never arbitrary graph ops.
 
+## Rejected-plan correction authority
+
+Acceptance of a semantic plan record means that its schema and producer were
+accepted; only its exact independent passing plan report authorizes execution.
+A failed plan-verification report selects plan repair through that verifier's
+exact `semantic_artifact` input, which must also appear in its evaluated records.
+It does not select an arbitrary globally accepted plan or manufacture a batch
+or passing report. The protected correction question identifies `initial_plan`
+or `plan_amendment`, includes the complete rejected plan and all frozen plan
+requirements/checks, and offers only `plan_revision` and `escalate`. `no_gap` and
+`corrective_work` are rejected for this phase. Existing batch correction keeps
+its four canonical dispositions; no additional submission family is introduced.
+
+A repair uses the existing addition-only PlanAmendment against the rejected
+proposal. It retains that proposal's requirements, checks and acceptance
+obligations, can narrow existing scope, and respects the frozen patch budget.
+If those bounds cannot express the remedy, the planner must escalate. Follow
+explicit `supersedes_record_id` and source-record lineage to the nearest plan
+with an exact passing independent report, if one exists. Preserve that plan's
+batch order, obligations and completed prefix; initial rejection has no verified
+baseline and can refine its first batch. Repeated rejection keeps following the
+same lineage, including an initial-plan repair chain with no passed ancestor.
+Cyclic, ambiguous, weakened or incomplete authority fails closed. At a later
+horizon, retain the exact passed prior-batch report separately from both the
+rejected plan report and the passed baseline-plan report.
+
+The controller emits a new semantic record with the rejected proposal as its
+superseded record and the full authority lineage as sources. Existing macros
+create a fresh independent legacy plan verifier, a failure gap and a successor
+bound to this exact new plan and its new passing verification. Later horizons
+also bind their original passed prior-batch evidence. No worker or successor is
+authorized by the repair answer alone. The unchanged staging, witness and
+finalization transaction protects repair effects; relevant lineage records,
+requirement identities/versions and producing nodes belong to its read set.
+Typed verification remains slice 4 work.
+
 ## Exact authored answer families
 
 The Pydantic models implement these shapes and their discriminated branches.

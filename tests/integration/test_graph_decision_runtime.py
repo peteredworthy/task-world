@@ -28,6 +28,9 @@ from orchestrator.config import AgentRunnerType
 from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
 from orchestrator.graph import (
     DecisionSubmissionEnvelope,
+    build_projection,
+    projection_from_checkpoint,
+    projection_to_checkpoint,
     FakeClock,
     SequentialIdGenerator,
     execution_attempts_view,
@@ -38,6 +41,7 @@ from orchestrator.graph import (
     node_states_view,
     output_record_payloads_view,
     resolve_batch_decision_context,
+    resolve_correction_decision_context,
 )
 from orchestrator.graph_runtime import (
     GraphController,
@@ -751,7 +755,7 @@ class _DecisionRunner:
                 cast(dict[str, Any], arguments["outputs"])["decision"],
             )
             disposition = original_decision.get("disposition")
-            if disposition == "revise_plan":
+            if disposition in {"revise_plan", "plan_revision"}:
                 conflicting_decision = {
                     **original_decision,
                     "reason": "A different valid amendment cannot replace staging.",
@@ -969,7 +973,9 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
     expected_outcome: str | None,
     mutate_after_answer: bool,
     disjoint_plan: bool,
+    repair_failure: str | None = None,
 ) -> None:
+    repair_execution_ids: set[str] = set()
     worktree = tmp_path / "initial-worktree"
     _init_repo(worktree)
     engine = create_engine(tmp_path / "initial-decision.db")
@@ -1394,6 +1400,246 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
         assert input_bindings_view(correction_projection)[correction_id][
             "verification_evidence"
         ].record_ids == [reports[0].record_id]
+
+        async def dispatch_repair_phase(
+            item: Any, *, answer: dict[str, Any] | None = None, grade: str = "A"
+        ) -> _DecisionRunner | _PlanVerifierRunner:
+            current = await controller.read_projection(run_id)
+            phase_node_id = str(item.payload["node_id"])
+            phase_lease = next(
+                lease
+                for lease in leases_view(current).values()
+                if lease.node_id == phase_node_id and lease.state == "active"
+            )
+            assert phase_lease.execution_id is not None
+            assert phase_lease.execution_id not in {
+                runner.execution_context.execution_id,
+                plan_runner.execution_context.execution_id,
+                verifier_runner.execution_context.execution_id,
+                *repair_execution_ids,
+            }
+            repair_execution_ids.add(phase_lease.execution_id)
+            phase_runner = (
+                _DecisionRunner(
+                    controller,
+                    sessions,
+                    artifacts,
+                    phase_lease.execution_id,
+                    runner_type=runner_type,
+                    graph_mcp_registry=registry,
+                    arguments={"outputs": {"decision": answer}},
+                    mutate_path_after_submit=worktree / "repair-unauthorized.txt"
+                    if repair_failure
+                    else None,
+                )
+                if answer is not None
+                else _PlanVerifierRunner(grade, runner_type)
+            )
+
+            def build_phase_runner(
+                _runner_type: AgentRunnerType,
+                _runner_config: dict[str, Any],
+                *,
+                run_id: str,
+                phase: str,
+            ) -> _DecisionRunner | _PlanVerifierRunner:
+                del run_id, phase
+                return phase_runner
+
+            phase_executor = GraphDispatchExecutor(
+                sessions,
+                controller,
+                StaticGraphAgentFactory(
+                    runner_type,
+                    runner_config={"command": "claude"}
+                    if runner_type == AgentRunnerType.CLI_SUBPROCESS
+                    else None,
+                    runner_builder=build_phase_runner,
+                ),
+                worktree_path=worktree,
+                artifact_store=artifacts,
+                graph_mcp_registry=registry,
+                base_url="http://localhost:8000",
+            )
+            await phase_executor.dispatch(item)
+            await phase_executor.wait_for_all(timeout_seconds=10)
+            after = await controller.read_projection(run_id)
+            async with sessions() as session:
+                phase_events = await GraphEventStore(session).read_run(run_id)
+            if repair_failure:
+                assert set(node_kinds_view(after)) == set(node_kinds_view(current))
+                assert set(output_record_payloads_view(after)) == set(
+                    output_record_payloads_view(current)
+                )
+                assert not any(
+                    record.producer_node_id == phase_node_id
+                    for record in output_record_payloads_view(after).values()
+                )
+                assert any(
+                    event.event_type in {"runner_recovery_requested", "runner_execution_rejected"}
+                    for event in phase_events
+                )
+                assert isinstance(phase_runner, _DecisionRunner)
+                assert phase_runner.stage_was_effect_free
+                return phase_runner
+            assert node_states_view(after)[phase_node_id] == "completed", [
+                (event.event_type, dict(event.payload)) for event in phase_events[-8:]
+            ]
+            assert execution_attempts_view(after)[phase_lease.execution_id].state == "finalized"
+            assert not any(
+                lease.state == "active" and lease.node_id == phase_node_id
+                for lease in leases_view(after).values()
+            )
+            assert phase_runner.execution_context is not None
+            if runner_type == AgentRunnerType.CLI_SUBPROCESS:
+                url = phase_runner.execution_context.graph_mcp_url
+                assert url is not None
+                token = url.split("/mcp-graph/", 1)[1].split("/", 1)[0]
+                assert registry.get(token) is None
+            if isinstance(phase_runner, _DecisionRunner):
+                assert phase_runner.stage_was_effect_free
+                assert phase_runner.conflict_rejected
+                assert phase_runner.duplicate_acknowledgement is not None
+            return phase_runner
+
+        async def schedule_repair_phase(target_id: str):
+            async with sessions() as session:
+                history = await GraphEventStore(session).read_run(run_id)
+            result = await controller.handle_command(
+                run_id,
+                max(event.position for event in history),
+                "schedule_tick",
+                {
+                    "base_snapshot_id": "initial-base",
+                    "max_grants": 1,
+                    "priorities": {target_id: 100},
+                },
+            )
+            return result
+
+        rejected_record_id = plan_record.record_id
+        rejected_report_id = reports[0].record_id
+        correction_item = next(
+            item
+            for item in successor_scheduled.outbox_items
+            if item.kind == "agent_dispatch" and item.payload.get("node_id") == correction_id
+        )
+        # Reject the first repair too: the second answer must follow exact lineage,
+        # even though three independently persisted plan records now coexist.
+        for repair_attempt, repair_grade in enumerate(("F", "A"), start=1):
+            correction_projection = await controller.read_projection(run_id)
+            repair_context = resolve_correction_decision_context(
+                correction_projection, correction_id
+            )
+            assert repair_context.phase == "initial_plan"
+            assert repair_context.plan_record_id == rejected_record_id
+            assert repair_context.failed_verification_record_id == rejected_report_id
+            assert repair_context.preserved_plan_record_id is None
+            assert repair_context.plan_verification_record_id is None
+            assert repair_context.selected_batch is None
+            assert repair_context.protected_question_context()["available_dispositions"] == [
+                "plan_revision",
+                "escalate",
+            ]
+            assert set(repair_context.requirement_record_ids) == {
+                "requirement-dynamic-feature-acceptance"
+            }
+            await dispatch_repair_phase(
+                correction_item,
+                answer={
+                    "disposition": "plan_revision",
+                    "reason": f"Address independent plan rejection {repair_attempt}.",
+                    "amendment": {
+                        "refinements": [
+                            {
+                                "batch": repair_context.plan.batches[0].key,
+                                "review_points": [f"Check rejected-plan remedy {repair_attempt}."],
+                            }
+                        ]
+                    },
+                },
+            )
+            if repair_failure:
+                await engine.dispose()
+                return
+            repaired = await controller.read_projection(run_id)
+            revised = next(
+                record
+                for record in output_record_payloads_view(repaired).values()
+                if record.record_type == "semantic_artifact"
+                and record.producer_node_id == correction_id
+            )
+            assert revised.value.supersedes_record_id == rejected_record_id
+            assert rejected_report_id in revised.value.source_record_ids
+            assert rejected_record_id in revised.value.source_record_ids
+            new_verifier_id = next(
+                node_id
+                for node_id in node_kinds_view(repaired)
+                if (node_payload_view(repaired, node_id) or {}).get(
+                    "accepted_plan_amendment_record_id"
+                )
+                == revised.record_id
+                and (node_payload_view(repaired, node_id) or {}).get("kind") == "verifier"
+            )
+            successor_id = next(
+                node_id
+                for node_id in node_kinds_view(repaired)
+                if (node_payload_view(repaired, node_id) or {}).get(
+                    "accepted_plan_amendment_record_id"
+                )
+                == revised.record_id
+                and (node_payload_view(repaired, node_id) or {}).get("semantic_stage")
+                == "successor_planning"
+            )
+            repair_verifier_schedule = await schedule_repair_phase(new_verifier_id)
+            assert not any(
+                item.payload.get("node_id") == successor_id
+                for item in repair_verifier_schedule.outbox_items
+            )
+            repair_verifier_item = next(
+                item
+                for item in repair_verifier_schedule.outbox_items
+                if item.kind == "agent_dispatch"
+            )
+            bound = await controller.read_projection(run_id)
+            assert input_bindings_view(bound)[new_verifier_id]["semantic_artifact"].record_ids == [
+                revised.record_id
+            ]
+            await dispatch_repair_phase(repair_verifier_item, grade=repair_grade)
+            checked = await controller.read_projection(run_id)
+            new_report = next(
+                record
+                for record in output_record_payloads_view(checked).values()
+                if record.record_type == "verification_report"
+                and record.producer_node_id == new_verifier_id
+            )
+            assert revised.record_id in new_report.evaluated_record_ids
+            assert new_report.outcome == ("failed" if repair_grade == "F" else "passed")
+            successor_scheduled = await schedule_repair_phase(successor_id)
+            if repair_grade == "F":
+                assert not any(
+                    item.payload.get("node_id") == successor_id
+                    for item in successor_scheduled.outbox_items
+                )
+                correction_item = next(
+                    item
+                    for item in successor_scheduled.outbox_items
+                    if item.kind == "agent_dispatch"
+                )
+                correction_id = str(correction_item.payload["node_id"])
+                rejected_record_id = revised.record_id
+                rejected_report_id = new_report.record_id
+            else:
+                assert any(
+                    item.payload.get("node_id") == successor_id
+                    for item in successor_scheduled.outbox_items
+                )
+                bound_successor = await controller.read_projection(run_id)
+                context = resolve_batch_decision_context(bound_successor, successor_id)
+                assert context.plan_record_id == revised.record_id
+                assert context.plan_verification_record_id == new_report.record_id
+        assert len(repair_execution_ids) == 4
+        expected_outcome = "passed"
     if expected_outcome == "passed":
         successor_item = next(
             item
@@ -1470,6 +1716,7 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
             runner.execution_context.execution_id,
             plan_runner.execution_context.execution_id,
             verifier_runner.execution_context.execution_id,
+            *repair_execution_ids,
         }
         assert any(
             (node_payload_view(joined, node_id) or {}).get("semantic_stage") == "effectful_batch"
@@ -1485,6 +1732,18 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
                 joined_events
             )
     await engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "runner_type", [AgentRunnerType.CODEX_SERVER, AgentRunnerType.CLI_SUBPROCESS]
+)
+@pytest.mark.asyncio
+async def test_rejected_plan_repair_post_answer_mutation_publishes_no_effects(
+    tmp_path: Path, runner_type: AgentRunnerType
+) -> None:
+    await test_initial_discovery_brief_runs_through_production_dispatch_and_finalization(
+        tmp_path, runner_type, "F", "failed", False, False, repair_failure="mutation"
+    )
 
 
 @pytest.mark.parametrize(
@@ -2115,14 +2374,54 @@ async def test_decision_dispatch_stages_cas_then_atomically_finalizes(
     )
     run_id = "decision-run"
     source_events = decision_successor_events()
+    baseline_position = max(event.position for event in source_events)
+    source_events.extend(
+        [
+            graph_event(
+                "edge_created",
+                {
+                    "edge_id": "baseline-plan-verifier-input",
+                    "from_node_id": "worker-discovery",
+                    "from_port": "semantic_artifact",
+                    "to_node_id": "verifier-plan",
+                    "to_port": "semantic_artifact",
+                    "dependency_type": "input_binding",
+                    "accepted_record_selector": {
+                        "record_id": "accepted-decision-plan",
+                        "record_type": "semantic_artifact",
+                    },
+                },
+                position=baseline_position + 1,
+            ),
+            graph_event(
+                "input_bound",
+                {
+                    "edge_id": "baseline-plan-verifier-input",
+                    "to_node_id": "verifier-plan",
+                    "to_port": "semantic_artifact",
+                    "record_ids": ["accepted-decision-plan"],
+                    "bound_at_position": baseline_position + 2,
+                    "record_bound_positions": {"accepted-decision-plan": baseline_position + 2},
+                },
+                position=baseline_position + 2,
+            ),
+        ]
+    )
     planner_authority = next(
         event.payload
         for event in source_events
         if event.event_type == "node_created" and event.payload.get("node_id") == "planner-plan"
     )
+    cache_authority_hash = next(
+        event.payload["cache_authority_hash"]
+        for event in source_events
+        if event.event_type == "node_created" and event.payload.get("node_id") == "root"
+    )
     seed_events = []
     for event in source_events:
         payload = dict(event.payload)
+        if event.event_type == "node_created":
+            payload.setdefault("cache_authority_hash", cache_authority_hash)
         if event.event_type == "node_created" and payload.get("node_id") == "root":
             for key in (
                 "reliable_plan_skeleton_id",
@@ -2504,6 +2803,192 @@ async def test_decision_dispatch_stages_cas_then_atomically_finalizes(
                 for item in scheduled_successor.outbox_items
             )
             assert successor_dispatched is (expected_outcome == "passed")
+            if expected_outcome == "failed":
+                repair_item = next(
+                    item
+                    for item in scheduled_successor.outbox_items
+                    if item.kind == "agent_dispatch"
+                )
+                repair_id = str(repair_item.payload["node_id"])
+                repair_projection = await restarted_controller.read_projection(run_id)
+                repair_context = resolve_correction_decision_context(repair_projection, repair_id)
+                assert repair_context.phase == "plan_amendment"
+                assert repair_context.plan_record_id == amendment_id
+                assert repair_context.preserved_plan_record_id == "accepted-decision-plan"
+                assert repair_context.preserved_plan_verification_record_id == "plan-passed"
+                assert repair_context.failed_verification_record_id == reports[0].record_id
+                repair_execution_ids = {lease.execution_id, verifier_lease.execution_id}
+
+                async def run_amendment_phase(item: Any, answer: dict[str, Any] | None):
+                    async with sessions() as session:
+                        phase_history = await GraphEventStore(session).read_run(run_id)
+                    replayed = build_projection(phase_history)
+                    projection_from_checkpoint(
+                        projection_to_checkpoint(replayed, position=phase_history[-1].position)
+                    )
+                    current = await restarted_controller.read_projection(run_id)
+                    phase_id = str(item.payload["node_id"])
+                    phase_lease = next(
+                        lease
+                        for lease in leases_view(current).values()
+                        if lease.node_id == phase_id and lease.state == "active"
+                    )
+                    assert phase_lease.execution_id is not None
+                    assert phase_lease.execution_id not in repair_execution_ids
+                    repair_execution_ids.add(phase_lease.execution_id)
+                    phase_runner = (
+                        _PlanVerifierRunner("A")
+                        if answer is None
+                        else _DecisionRunner(
+                            restarted_controller,
+                            sessions,
+                            artifacts,
+                            phase_lease.execution_id,
+                            arguments={"outputs": {"decision": answer}},
+                        )
+                    )
+
+                    def build_phase_runner(
+                        _runner_type: AgentRunnerType,
+                        _runner_config: dict[str, Any],
+                        *,
+                        run_id: str,
+                        phase: str,
+                    ) -> _PlanVerifierRunner | _DecisionRunner:
+                        del run_id, phase
+                        return phase_runner
+
+                    phase_executor = GraphDispatchExecutor(
+                        sessions,
+                        restarted_controller,
+                        StaticGraphAgentFactory(
+                            AgentRunnerType.CODEX_SERVER, runner_builder=build_phase_runner
+                        ),
+                        worktree_path=worktree,
+                        artifact_store=artifacts,
+                    )
+                    await phase_executor.dispatch(item)
+                    await phase_executor.wait_for_all(timeout_seconds=10)
+                    current = await restarted_controller.read_projection(run_id)
+                    assert node_states_view(current)[phase_id] == "completed"
+                    assert (
+                        execution_attempts_view(current)[phase_lease.execution_id].state
+                        == "finalized"
+                    )
+                    return current
+
+                repaired = await run_amendment_phase(
+                    repair_item,
+                    {
+                        "disposition": "plan_revision",
+                        "reason": "Resolve rejected amendment review.",
+                        "amendment": {
+                            "refinements": [
+                                {
+                                    "batch": repair_context.plan.batches[
+                                        repair_context.planning_horizon - 1
+                                    ].key,
+                                    "review_points": ["Verify the rejected amendment remedy."],
+                                }
+                            ]
+                        },
+                    },
+                )
+                repair_plan = next(
+                    record
+                    for record in output_record_payloads_view(repaired).values()
+                    if record.record_type == "semantic_artifact"
+                    and record.producer_node_id == repair_id
+                )
+                assert repair_plan.value.supersedes_record_id == amendment_id
+                assert {
+                    "accepted-decision-plan",
+                    "plan-passed",
+                    amendment_id,
+                    reports[0].record_id,
+                }.issubset(repair_plan.value.source_record_ids)
+                repair_verifier_id = next(
+                    node_id
+                    for node_id in node_kinds_view(repaired)
+                    if (node_payload_view(repaired, node_id) or {}).get(
+                        "accepted_plan_amendment_record_id"
+                    )
+                    == repair_plan.record_id
+                    and (node_payload_view(repaired, node_id) or {}).get("kind") == "verifier"
+                )
+                repair_successor_id = next(
+                    node_id
+                    for node_id in node_kinds_view(repaired)
+                    if (node_payload_view(repaired, node_id) or {}).get(
+                        "accepted_plan_amendment_record_id"
+                    )
+                    == repair_plan.record_id
+                    and (node_payload_view(repaired, node_id) or {}).get("semantic_stage")
+                    == "successor_planning"
+                )
+                async with sessions() as session:
+                    position = await GraphEventStore(session).current_position(run_id)
+                repair_verifier_schedule = await restarted_controller.handle_command(
+                    run_id,
+                    position,
+                    "schedule_tick",
+                    {
+                        "base_snapshot_id": "decision-base",
+                        "max_grants": 1,
+                        "priorities": {repair_verifier_id: 100},
+                    },
+                )
+                assert not any(
+                    item.payload.get("node_id") == repair_successor_id
+                    for item in repair_verifier_schedule.outbox_items
+                )
+                checked = await run_amendment_phase(
+                    next(
+                        item
+                        for item in repair_verifier_schedule.outbox_items
+                        if item.kind == "agent_dispatch"
+                    ),
+                    None,
+                )
+                repair_report = next(
+                    record
+                    for record in output_record_payloads_view(checked).values()
+                    if record.record_type == "verification_report"
+                    and record.producer_node_id == repair_verifier_id
+                )
+                assert repair_report.outcome == "passed"
+                assert repair_plan.record_id in repair_report.evaluated_record_ids
+                async with sessions() as session:
+                    position = await GraphEventStore(session).current_position(run_id)
+                repair_successor_schedule = await restarted_controller.handle_command(
+                    run_id,
+                    position,
+                    "schedule_tick",
+                    {
+                        "base_snapshot_id": "decision-base",
+                        "max_grants": 1,
+                        "priorities": {repair_successor_id: 100},
+                    },
+                )
+                successor_projection = await restarted_controller.read_projection(run_id)
+                successor_context = resolve_batch_decision_context(
+                    successor_projection, repair_successor_id
+                )
+                assert successor_context.plan_record_id == repair_plan.record_id
+                assert successor_context.plan_verification_record_id == repair_report.record_id
+                completed = await run_amendment_phase(
+                    next(
+                        item
+                        for item in repair_successor_schedule.outbox_items
+                        if item.kind == "agent_dispatch"
+                    ),
+                    {
+                        "disposition": "proceed",
+                        "implementation_notes": "Implement the independently repaired plan.",
+                    },
+                )
+                assert not any(lease.state == "active" for lease in leases_view(completed).values())
+                assert len(repair_execution_ids) == 5
             async with sessions() as session:
                 cleanup_position = await GraphEventStore(session).current_position(run_id)
             cancelled = await restarted_controller.handle_command(
