@@ -39,6 +39,7 @@ from orchestrator.graph_runtime.dispatch import (
     build_graph_runtime,
     reconcile_runtime,
 )
+from orchestrator.graph_runtime.graph_mcp_tools import build_graph_mcp_server
 from orchestrator.graph_runtime.errors import (
     CacheScanBudgetExceededError,
     CompromisedFileStateError,
@@ -51,6 +52,7 @@ from orchestrator.graph_runtime.errors import (
     RecoveryEventError,
     RecoveryRestoreError,
     StaleProjectionError,
+    PatchOperationConflictError,
     SubmissionQualityGateError,
 )
 from orchestrator.graph_runtime.file_state import (
@@ -215,6 +217,7 @@ __all__ = [
     "SeedRunResult",
     "SideEffectExecutor",
     "StaleProjectionError",
+    "PatchOperationConflictError",
     "SubmissionQualityGateError",
     "GateRejectionEvidence",
     "SUBMISSION_GATE_MAX_COMMANDS",
@@ -240,6 +243,7 @@ __all__ = [
     "submission_gate_commands_from_baseline",
     "submission_gate_failure_fingerprint",
     "StaticGraphAgentFactory",
+    "build_graph_mcp_server",
     "assemble_graph_dispatch_context",
     "build_graph_runtime",
     "apply_cleanup_requested",

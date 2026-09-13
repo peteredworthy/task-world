@@ -13,6 +13,7 @@ from orchestrator.graph._commands import (
     RUN_LIFECYCLE_TRANSITIONS,
     TERMINAL_RUN_STATES,
     command_rejected,
+    authoritative_batch_verification_report_ids,
     event_factory,
     serialize_event_payload,
 )
@@ -46,6 +47,8 @@ from orchestrator.graph.command_models import (
     StartCommand,
     SubmitCallbackCommand,
     SubmitPatchCommand,
+    submit_patch_operation_fingerprint,
+    submit_patch_operation_key,
     RecordRunnerBaselineCommand,
     StageRunnerSubmissionCommand,
     WitnessRunnerCompletionCommand,
@@ -230,6 +233,9 @@ __all__ = [
     "TERMINAL_RUN_STATES",
     "NONTERMINAL_RUN_STATES",
     "apply_command",
+    "authoritative_batch_verification_report_ids",
     "COMMAND_SPECS",
     "serialize_event_payload",
+    "submit_patch_operation_fingerprint",
+    "submit_patch_operation_key",
 ]

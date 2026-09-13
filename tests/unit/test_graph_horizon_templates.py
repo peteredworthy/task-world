@@ -180,6 +180,7 @@ def _bind_test_check_command(ops: list[dict[str, Any]]) -> None:
         node = op.get("node")
         if isinstance(node, dict) and node.get("kind") == "check":
             node["command_binding"] = "dynamic_feature_hidden_oracle"
+            node["command_definition"] = {"cmd": "true"}
 
 
 def _projection_for_template(purpose: str, region_id: str) -> GraphProjection:

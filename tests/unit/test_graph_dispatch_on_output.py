@@ -38,6 +38,7 @@ from orchestrator.graph_runtime import (
 from orchestrator.graph_runtime.dispatch import (
     DEFAULT_GAP_PLANNER_RUNTIME_DEATH_MAX_ATTEMPTS,
     _callback_conflict_reason,
+    _bound_file_state_snapshot,
     _declared_output_contract_error,
     _execute_check_command,
     _output_records_for_submit,
@@ -62,7 +63,6 @@ from orchestrator.runners.types import (
     SubmitCallback,
 )
 from orchestrator.runners import (
-    ReliablePlanToolPreflightError,
     build_codex_server_prompt,
     build_dynamic_tool_specs,
     validate_reliable_plan_tool_specs,
@@ -915,6 +915,100 @@ class PatchThenSubmitAgent(OutputAgent):
         return ExecutionResult(success=True)
 
 
+class SuccessorPatchThenSubmitAgent(OutputAgent):
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        assert context.graph_patch_callback is not None
+        await context.graph_patch_callback(
+            {
+                "patch_id": "patch-successor",
+                "base_graph_position": 3,
+                "macro_invocations": [
+                    {
+                        "macro": "create_successor_planner",
+                        "args": {
+                            "region_id": "batch-1",
+                            "node_id": "planner-h2",
+                            "evidence_source_node_id": "verifier-batch-1",
+                            "evidence_source_port": "verification_report",
+                            "planning_horizon": 2,
+                        },
+                    }
+                ],
+            }
+        )
+        await on_submit()
+        self.submitted = True
+        return ExecutionResult(success=True)
+
+
+class FinalizationPatchThenSubmitAgent(OutputAgent):
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        assert context.graph_patch_callback is not None
+        await context.graph_patch_callback(
+            {
+                "patch_id": "patch-finalization",
+                "base_graph_position": 3,
+                "ops": [
+                    {
+                        "op": "create_node",
+                        "node": {
+                            "node_id": "batch-worker",
+                            "kind": "worker",
+                            "semantic_stage": "effectful_batch",
+                        },
+                    },
+                    {
+                        "op": "create_node",
+                        "node": {
+                            "node_id": "final-acceptance",
+                            "kind": "check",
+                            "semantic_stage": "final_acceptance",
+                            "command_binding": "dynamic_feature_acceptance",
+                        },
+                    },
+                    {
+                        "op": "create_node",
+                        "node": {
+                            "node_id": "final-audit",
+                            "kind": "verifier",
+                            "role": "verifier",
+                            "semantic_stage": "final_audit",
+                        },
+                    },
+                    {
+                        "op": "create_node",
+                        "node": {
+                            "node_id": "final-gate",
+                            "kind": "final_gate",
+                            "role": "final_gate",
+                        },
+                    },
+                ],
+            }
+        )
+        await on_submit()
+        self.submitted = True
+        return ExecutionResult(success=True)
+
+
 class NoOpPatchThenSubmitAgent(OutputAgent):
     async def execute(
         self,
@@ -1005,6 +1099,9 @@ class RecordingExecutor(GraphDispatchExecutor):
         self.joins.append(context)
 
     async def _agent_died(self, context: GraphDispatchContext, reason: str) -> None:
+        self.failures.append(reason)
+
+    async def _invalid_execution_contract(self, context: GraphDispatchContext, reason: str) -> None:
         self.failures.append(reason)
 
 
@@ -1363,6 +1460,92 @@ async def test_planner_graph_patch_callback_allows_submit() -> None:
 
 
 @pytest.mark.asyncio
+async def test_nonfinal_reliable_plan_horizon_requires_successor_before_submit() -> None:
+    context = _context(
+        node_id="planner-h1",
+        node_kind="planner",
+        node_role="planner",
+        node_payload={
+            "semantic_stage": "successor_planning",
+            "reliable_plan_skeleton_id": "reliable-plan",
+            "reliable_plan_remaining_horizons": 2,
+        },
+    )
+    executor = RecordingExecutor()
+
+    await executor._run_agent(context, PatchThenSubmitAgent([]))
+
+    assert executor.submitted == []
+    assert executor.failures == [
+        "nonfinal reliable-plan horizon must create an accepted successor planner, "
+        "pass-gated by this batch verifier, before submit"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_nonfinal_reliable_plan_horizon_accepts_successor_before_submit() -> None:
+    context = _context(
+        node_id="planner-h1",
+        node_kind="planner",
+        node_role="planner",
+        node_payload={
+            "semantic_stage": "successor_planning",
+            "reliable_plan_skeleton_id": "reliable-plan",
+            "reliable_plan_remaining_horizons": 2,
+        },
+    )
+    executor = RecordingExecutor()
+
+    await executor._run_agent(context, SuccessorPatchThenSubmitAgent([]))
+
+    assert executor.submitted == [context]
+    assert executor.failures == []
+
+
+@pytest.mark.asyncio
+async def test_final_reliable_plan_horizon_requires_finalization_before_submit() -> None:
+    context = _context(
+        node_id="planner-h2",
+        node_kind="planner",
+        node_role="planner",
+        node_payload={
+            "semantic_stage": "successor_planning",
+            "reliable_plan_skeleton_id": "reliable-plan",
+            "reliable_plan_remaining_horizons": 1,
+        },
+    )
+    executor = RecordingExecutor()
+
+    await executor._run_agent(context, PatchThenSubmitAgent([]))
+
+    assert executor.submitted == []
+    assert executor.failures == [
+        "final reliable-plan horizon must atomically create the batch, dynamic acceptance "
+        "check, final audit, and final gate before submit"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_final_reliable_plan_horizon_accepts_finalization_before_submit() -> None:
+    context = _context(
+        node_id="planner-h2",
+        node_kind="planner",
+        node_role="planner",
+        node_payload={
+            "semantic_stage": "successor_planning",
+            "reliable_plan_skeleton_id": "reliable-plan",
+            "reliable_plan_remaining_horizons": 1,
+        },
+    )
+    executor = RecordingExecutor()
+
+    await executor._run_agent(context, FinalizationPatchThenSubmitAgent([]))
+
+    assert executor.submitted == [context]
+    assert executor.failures == []
+
+
+@pytest.mark.asyncio
 async def test_planner_rejected_graph_patch_does_not_allow_submit() -> None:
     context = _context(node_id="planner-1", node_kind="planner", node_role="planner")
     executor = RecordingExecutor(graph_patch_feedback="graph patch patch-1 rejected: invalid")
@@ -1478,6 +1661,29 @@ def test_raw_patch_tool_feedback_includes_all_locations_beyond_durable_cap() -> 
     assert diagnostics["errors"][0]["path"] == "ops[0].unexpected_0"
     assert diagnostics["errors"][-1]["path"] == "ops[9].unexpected_9"
     assert all(item["message"] == "Extra field is not allowed" for item in diagnostics["errors"])
+
+
+def test_macro_patch_preflight_defaults_omitted_ops_but_rejects_explicit_null() -> None:
+    macro_payload = {
+        "patch_id": "macro-only",
+        "base_graph_position": 3,
+        "macro_invocations": [{"macro": "create_join", "args": {"join_id": "join-1"}}],
+    }
+
+    assert _full_raw_patch_validation_diagnostics(macro_payload, "planner-1") is None
+    diagnostics = _full_raw_patch_validation_diagnostics(
+        {**macro_payload, "ops": None},
+        "planner-1",
+    )
+
+    assert diagnostics is not None
+    assert diagnostics["errors"] == [
+        {
+            "path": "ops",
+            "code": "list_type",
+            "message": "Input must be a list",
+        }
+    ]
 
 
 @pytest.mark.parametrize(
@@ -2325,7 +2531,7 @@ async def test_reliable_plan_dispatch_rejects_missing_registration_before_runner
             specs = [
                 spec
                 for spec in build_dynamic_tool_specs(context=execution_context)
-                if spec["name"] != "create_successor_planner"
+                if spec["name"] != "construct_reliable_plan_region"
             ]
             validate_reliable_plan_tool_specs(specs)
 
@@ -2349,10 +2555,7 @@ async def test_reliable_plan_dispatch_rejects_missing_registration_before_runner
             "reliable_plan_skeleton_id": "reliable-plan-v1",
             "available_tools": [
                 "submit_graph_patch",
-                "create_discovery_region",
-                "create_plan_verification",
-                "create_successor_planner",
-                "create_effectful_batch",
+                "construct_reliable_plan_region",
             ],
         },
     )
@@ -2360,10 +2563,12 @@ async def test_reliable_plan_dispatch_rejects_missing_registration_before_runner
     executor = RecordingExecutor(agent_factory=factory)
     executor.dispatch_context = context
 
-    with pytest.raises(ReliablePlanToolPreflightError) as raised:
-        await executor.dispatch(cast(Any, SimpleNamespace(kind="agent_dispatch")))
+    await executor.dispatch(cast(Any, SimpleNamespace(kind="agent_dispatch")))
 
-    assert raised.value.missing_tools == ("create_successor_planner",)
+    assert executor.failures == [
+        "Agent runner 'reliable_plan' configuration error: planner tool preflight failed; "
+        "missing tools: construct_reliable_plan_region"
+    ]
     assert factory.create_calls == 0
     assert executor._running == {}
 
@@ -2379,7 +2584,9 @@ async def test_reliable_plan_dispatch_rejects_malformed_schema_before_runner_cre
         ) -> None:
             del graph_mcp_available
             specs = [dict(spec) for spec in build_dynamic_tool_specs(context=execution_context)]
-            malformed = next(spec for spec in specs if spec["name"] == "create_plan_verification")
+            malformed = next(
+                spec for spec in specs if spec["name"] == "construct_reliable_plan_region"
+            )
             malformed["inputSchema"] = {"type": "array"}
             validate_reliable_plan_tool_specs(specs)
 
@@ -2403,10 +2610,7 @@ async def test_reliable_plan_dispatch_rejects_malformed_schema_before_runner_cre
             "reliable_plan_skeleton_id": "reliable-plan-v1",
             "available_tools": [
                 "submit_graph_patch",
-                "create_discovery_region",
-                "create_plan_verification",
-                "create_successor_planner",
-                "create_effectful_batch",
+                "construct_reliable_plan_region",
             ],
         },
     )
@@ -2414,12 +2618,12 @@ async def test_reliable_plan_dispatch_rejects_malformed_schema_before_runner_cre
     executor = RecordingExecutor(agent_factory=factory)
     executor.dispatch_context = context
 
-    with pytest.raises(ReliablePlanToolPreflightError) as raised:
-        await executor.dispatch(cast(Any, SimpleNamespace(kind="agent_dispatch")))
+    await executor.dispatch(cast(Any, SimpleNamespace(kind="agent_dispatch")))
 
-    assert raised.value.invalid_tools == {
-        "create_plan_verification": "inputSchema root type must be object"
-    }
+    assert executor.failures == [
+        "Agent runner 'reliable_plan' configuration error: planner tool preflight failed; "
+        "invalid tools: construct_reliable_plan_region (inputSchema root type must be object)"
+    ]
     assert factory.create_calls == 0
     assert executor._running == {}
 
@@ -2457,16 +2661,10 @@ async def test_reliable_plan_codex_cli_rejected_before_runner_creation() -> None
     executor = RecordingExecutor(agent_factory=factory)
     executor.dispatch_context = context
 
-    with pytest.raises(ReliablePlanToolPreflightError) as raised:
-        await executor.dispatch(cast(Any, SimpleNamespace(kind="agent_dispatch")))
+    await executor.dispatch(cast(Any, SimpleNamespace(kind="agent_dispatch")))
 
-    assert tuple(raised.value.invalid_tools) == (
-        "create_discovery_region",
-        "create_plan_verification",
-        "create_successor_planner",
-        "create_effectful_batch",
-    )
-    assert "command 'codex' cannot attach" in str(raised.value)
+    assert len(executor.failures) == 1
+    assert "command 'codex' cannot attach" in executor.failures[0]
     assert factory.create_calls == 0
     assert executor._running == {}
 
@@ -2501,10 +2699,10 @@ async def test_reliable_plan_claude_cli_requires_graph_mcp_registry_before_creat
     executor = RecordingExecutor(agent_factory=factory)
     executor.dispatch_context = context
 
-    with pytest.raises(ReliablePlanToolPreflightError) as raised:
-        await executor.dispatch(cast(Any, SimpleNamespace(kind="agent_dispatch")))
+    await executor.dispatch(cast(Any, SimpleNamespace(kind="agent_dispatch")))
 
-    assert "graph MCP registry is unavailable" in str(raised.value)
+    assert len(executor.failures) == 1
+    assert "graph MCP registry is unavailable" in executor.failures[0]
     assert factory.create_calls == 0
     assert executor._running == {}
 
@@ -2976,7 +3174,43 @@ async def test_execute_check_command_resolves_bound_dynamic_feature_oracle(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_execute_check_command_cites_verification_when_oracle_falls_back_to_acceptance(
+async def test_check_dispatch_reports_unavailable_binding_as_terminal_contract_failure(
+    tmp_path: Path,
+) -> None:
+    context = _context(
+        node_id="check-blank-oracle",
+        node_kind="check",
+        worktree_path=str(tmp_path),
+        node_payload={"command_binding": "dynamic_feature_hidden_oracle"},
+        graph_events=[
+            _event(
+                "node_created",
+                {
+                    "node_id": "routine-snapshot",
+                    "kind": "routine_snapshot",
+                    "state": "completed",
+                    "snapshot": {
+                        "dynamic_feature": {
+                            "hidden_oracle_command": "",
+                            "acceptance_command": "uv run pytest tests -q",
+                        }
+                    },
+                },
+                1,
+            )
+        ],
+    )
+    executor = RecordingExecutor()
+
+    await executor._run_check(context)
+
+    assert executor.submitted_checks == []
+    assert len(executor.failures) == 1
+    assert "non-empty hidden_oracle_command" in executor.failures[0]
+
+
+@pytest.mark.asyncio
+async def test_dynamic_acceptance_runs_mechanically_despite_passed_verification(
     tmp_path: Path,
 ) -> None:
     graph_events = [
@@ -3030,16 +3264,17 @@ async def test_execute_check_command_cites_verification_when_oracle_falls_back_t
         graph_events=graph_events,
         node_payload={
             "task_region_id": "task-1",
-            "command_binding": "dynamic_feature_hidden_oracle",
+            "command_binding": "dynamic_feature_acceptance",
         },
     )
 
     record = await _execute_check_command(context, FilesystemArtifactStore(tmp_path / "artifacts"))
 
     value = cast(dict[str, Any], record["value"])
-    assert value["status"] == "passed"
-    assert value["classification"] == "passed"
-    assert value["citation_mode"] == "verification_report_reused"
+    assert value["status"] == "failed"
+    assert value["classification"] == "tool_unavailable"
+    assert value["exit_code"] == 127
+    assert "citation_mode" not in value
     assert record["evaluated_record_ids"] == ["verification-1", "candidate-1"]
 
 
@@ -3145,6 +3380,378 @@ async def test_execute_check_command_cites_bound_verification_and_region_file_st
         "candidate-1",
         "file-state-1",
     ]
+
+
+def test_final_acceptance_snapshot_rejects_stale_receipt_basis_after_correction() -> None:
+    events = [
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-a",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "batch-1",
+                "semantic_stage": "effectful_batch",
+                "declared_batch_id": "batch-1",
+            },
+            1,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-a",
+                "kind": "verifier",
+                "state": "completed",
+                "task_region_id": "batch-1",
+                "semantic_stage": "effectful_batch",
+                "declared_batch_id": "batch-1",
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "final-acceptance",
+                "kind": "check",
+                "state": "planned",
+                "task_region_id": "batch-1",
+                "semantic_stage": "final_acceptance",
+                "command_binding": "dynamic_feature_acceptance",
+            },
+            3,
+        ),
+        _event(
+            "file_state_accepted",
+            {
+                "record_id": "file-a",
+                "record_kind": "file_state",
+                "record_type": "file_state",
+                "producer_node_id": "worker-a",
+                "port": "file_state",
+                "schema": "FileStateRecord",
+                "snapshot_id": "snapshot-a",
+                "candidate_id": "candidate-a",
+                "task_region_id": "batch-1",
+                "git": {"ref": "refs/orchestrator/snapshots/a"},
+                "verdict": "captured",
+            },
+            4,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-a",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-a",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-a",
+                "task_region_id": "batch-1",
+                "file_state_record_ids": ["file-a"],
+                "value": {"summary": "A", "file_state_record_ids": ["file-a"]},
+            },
+            5,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "report-a",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verifier-a",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-a",
+                "candidate_record_ids": ["candidate-a"],
+                "file_state_record_ids": ["file-a"],
+                "evaluated_record_ids": ["candidate-a", "file-a", "check-a-result"],
+                "outcome": "passed",
+                "value": {"outcome": "passed"},
+            },
+            6,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "final-acceptance",
+                "to_port": "verification_report_batch_1",
+                "record_ids": ["report-a"],
+            },
+            7,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-a",
+                "kind": "check",
+                "state": "completed",
+                "task_region_id": "batch-1",
+                "declared_batch_id": "batch-1",
+            },
+            8,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "candidate-a-to-verifier-a",
+                "from_node_id": "worker-a",
+                "from_port": "candidate",
+                "to_node_id": "verifier-a",
+                "to_port": "candidate_under_test",
+            },
+            9,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "check-a-to-verifier-a",
+                "from_node_id": "check-a",
+                "from_port": "check_result",
+                "to_node_id": "verifier-a",
+                "to_port": "check_result_1",
+            },
+            10,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-a-result",
+                "record_kind": "check",
+                "record_type": "check_result",
+                "producer_node_id": "check-a",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "candidate_id": "candidate-a",
+                "status": "passed",
+                "value": {"status": "passed"},
+            },
+            11,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "verifier-a",
+                "to_port": "check_result_1",
+                "record_ids": ["check-a-result"],
+            },
+            12,
+        ),
+    ]
+    context_a = _context(
+        node_id="final-acceptance",
+        node_kind="check",
+        node_payload={
+            "task_region_id": "batch-1",
+            "semantic_stage": "final_acceptance",
+            "command_binding": "dynamic_feature_acceptance",
+        },
+        graph_projection=_project(events),
+    )
+    assert _bound_file_state_snapshot(context_a) == (
+        "snapshot-a",
+        "refs/orchestrator/snapshots/a",
+    )
+    unbound_context = replace(
+        context_a,
+        graph_projection=_project(
+            [
+                event
+                for event in events
+                if not (
+                    event.event_type == "input_bound"
+                    and event.payload.get("to_node_id") == "final-acceptance"
+                )
+            ]
+        ),
+    )
+    with pytest.raises(ValueError, match="requires bound batch verification reports"):
+        _bound_file_state_snapshot(unbound_context)
+
+    ambiguous_events = []
+    for event in events:
+        if (
+            event.event_type != "output_record_accepted"
+            or event.payload.get("record_id") != "report-a"
+        ):
+            ambiguous_events.append(event)
+            continue
+        ambiguous_payload = dict(event.payload)
+        ambiguous_payload["file_state_record_ids"] = ["file-a", "file-other"]
+        ambiguous_events.append(event.model_copy(update={"payload": ambiguous_payload}))
+    ambiguous_context = replace(context_a, graph_projection=_project(ambiguous_events))
+    with pytest.raises(ValueError, match="exactly one final file-state record"):
+        _bound_file_state_snapshot(ambiguous_context)
+
+    correction_events = [
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-b",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "correction-b",
+                "semantic_stage": "corrective_work",
+                "declared_batch_id": "batch-1",
+                "base_snapshot_selection": "rejected_candidate",
+                "base_snapshot_candidate_id": "candidate-a",
+                "failed_candidate_id": "candidate-a",
+                "failed_verification_record_id": "report-a",
+                "correction_trigger": "failed_final_acceptance",
+                "recovery_reason": "failed_verification",
+                "recovery_of_node_id": "verifier-a",
+                "recovery_of_record_id": "report-a",
+            },
+            20,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-b",
+                "kind": "verifier",
+                "state": "completed",
+                "task_region_id": "correction-b",
+                "semantic_stage": "corrective_work",
+                "declared_batch_id": "batch-1",
+                "failed_candidate_id": "candidate-a",
+                "recovery_reason": "failed_verification",
+                "recovery_of_node_id": "verifier-a",
+                "recovery_of_record_id": "report-a",
+            },
+            21,
+        ),
+        _event(
+            "file_state_accepted",
+            {
+                "record_id": "file-b",
+                "record_kind": "file_state",
+                "record_type": "file_state",
+                "producer_node_id": "worker-b",
+                "port": "file_state",
+                "schema": "FileStateRecord",
+                "snapshot_id": "snapshot-b",
+                "candidate_id": "candidate-b",
+                "task_region_id": "correction-b",
+                "git": {"ref": "refs/orchestrator/snapshots/b"},
+                "verdict": "captured",
+            },
+            22,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-b",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-b",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-b",
+                "task_region_id": "correction-b",
+                "file_state_record_ids": ["file-b"],
+                "supersedes_task_region_id": "batch-1",
+                "value": {"summary": "B", "file_state_record_ids": ["file-b"]},
+            },
+            23,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "report-b",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verifier-b",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-b",
+                "candidate_record_ids": ["candidate-b"],
+                "file_state_record_ids": ["file-b"],
+                "evaluated_record_ids": ["candidate-b", "file-b", "check-b-result"],
+                "outcome": "passed",
+                "value": {"outcome": "passed"},
+            },
+            24,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-b",
+                "kind": "check",
+                "state": "completed",
+                "task_region_id": "correction-b",
+                "declared_batch_id": "batch-1",
+            },
+            25,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "candidate-b-to-verifier-b",
+                "from_node_id": "worker-b",
+                "from_port": "candidate",
+                "to_node_id": "verifier-b",
+                "to_port": "candidate_under_test",
+            },
+            26,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "check-b-to-verifier-b",
+                "from_node_id": "check-b",
+                "from_port": "check_result",
+                "to_node_id": "verifier-b",
+                "to_port": "check_result_1",
+            },
+            27,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-b-result",
+                "record_kind": "check",
+                "record_type": "check_result",
+                "producer_node_id": "check-b",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "candidate_id": "candidate-b",
+                "status": "passed",
+                "value": {"status": "passed"},
+            },
+            28,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "verifier-b",
+                "to_port": "check_result_1",
+                "record_ids": ["check-b-result"],
+            },
+            29,
+        ),
+    ]
+    stale_context = replace(context_a, graph_projection=_project([*events, *correction_events]))
+    with pytest.raises(ValueError, match="stale batch verification evidence"):
+        _bound_file_state_snapshot(stale_context)
+
+    rebound = _event(
+        "input_bound",
+        {
+            "to_node_id": "final-acceptance",
+            "to_port": "verification_report_batch_1",
+            "record_ids": ["report-b"],
+            "binding_policy": "bind_latest",
+        },
+        30,
+    )
+    corrected_context = replace(
+        context_a,
+        graph_projection=_project([*events, *correction_events, rebound]),
+    )
+    assert _bound_file_state_snapshot(corrected_context) == (
+        "snapshot-b",
+        "refs/orchestrator/snapshots/b",
+    )
 
 
 @pytest.mark.asyncio

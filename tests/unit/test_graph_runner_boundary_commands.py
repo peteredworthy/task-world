@@ -5,6 +5,7 @@ from copy import deepcopy
 
 from orchestrator.graph import (
     node_states_view,
+    non_gap_planner_completion_contract_satisfied,
     Actor,
     ActorKind,
     EventEnvelope,
@@ -24,6 +25,7 @@ from orchestrator.graph import (
     projection_from_checkpoint,
     projection_to_checkpoint,
     project_final_invariant_blockers,
+    reliable_plan_successor_horizon_materialized,
 )
 from orchestrator.graph import BoundaryValidationError
 from orchestrator.graph_runtime.outbox import outbox_payload_for_event
@@ -69,6 +71,7 @@ def _projection(
     role: str | None = None,
     attempt_number: int | None = None,
     max_attempts: int | None = None,
+    node_overrides: dict[str, object] | None = None,
 ):
     projection = initial_projection()
     node_payload = {"node_id": "node", "kind": kind, "state": "running"}
@@ -78,6 +81,8 @@ def _projection(
         node_payload["attempt_number"] = attempt_number
     if max_attempts is not None:
         node_payload["max_attempts"] = max_attempts
+    if node_overrides is not None:
+        node_payload.update(node_overrides)
     for event in (
         _event("node_created", node_payload, 1),
         _event(
@@ -272,12 +277,14 @@ def _staged_projection(
     role: str | None = None,
     attempt_number: int | None = None,
     max_attempts: int | None = None,
+    node_overrides: dict[str, object] | None = None,
 ):
     projection = _projection(
         kind=kind,
         role=role,
         attempt_number=attempt_number,
         max_attempts=max_attempts,
+        node_overrides=node_overrides,
     )
     baseline = _apply(
         projection,
@@ -1073,6 +1080,171 @@ def test_runner_recovery_completes_non_gap_planner_with_accepted_patch() -> None
         "trigger": "accepted_graph_patch_before_agent_death",
     }
     assert not any(event.event_type == "runtime_retry_scheduled" for event in completed)
+
+
+def test_runner_recovery_retries_final_horizon_planner_missing_finalization() -> None:
+    projection = _staged_projection(
+        kind="planner",
+        role="planner",
+        node_overrides={
+            "semantic_stage": "successor_planning",
+            "planning_horizon": 2,
+            "reliable_plan_remaining_horizons": 1,
+            "reliable_plan_skeleton_id": "skeleton-1",
+        },
+    )
+    for event in (
+        _event(
+            "graph_patch_accepted",
+            {"patch_id": "batch-2", "proposed_by_node_id": "node"},
+            3,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-batch-2",
+                "kind": "worker",
+                "state": "planned",
+                "semantic_stage": "effectful_batch",
+                "planning_horizon": 2,
+                "reliable_plan_skeleton_id": "skeleton-1",
+                "patch_id": "batch-2",
+            },
+            4,
+        ),
+    ):
+        projection = reduce_event(projection, event)
+    assert not non_gap_planner_completion_contract_satisfied(projection, "node")
+    assert reliable_plan_successor_horizon_materialized(projection, "node")
+    entries = [_entry("src/a.py", status="modified", fingerprint="sha256:" + "c" * 64)]
+    requested = _apply(
+        projection,
+        "request_runner_recovery",
+        {
+            "execution_id": "exec",
+            "node_id": "node",
+            "lease_id": "lease",
+            "lease_generation": 1,
+            "reason": "runner_died",
+            "max_attempts": 3,
+            "recovery_snapshot_id": "recovery",
+            "recovery_snapshot_ref": "refs/orchestrator/snapshots/recovery",
+            "recovery_commit_sha": OID,
+            "final_tree_sha": OID,
+            "boundary_hash": boundary_manifest_hash(OID, entries),
+            "boundary_entries": entries,
+        },
+    )
+    projection = reduce_event(projection, requested[0])
+    recovery_id = requested[0].payload["recovery_id"]
+    completed = _apply(
+        projection,
+        "complete_runner_recovery",
+        {
+            "execution_id": "exec",
+            "recovery_id": recovery_id,
+            "node_id": "node",
+            "lease_id": "lease",
+            "lease_generation": 1,
+            "baseline_snapshot_id": "snap",
+            "baseline_tree_sha": OID,
+            "requested_paths": ["src/a.py"],
+            "proof_hash": recovery_proof_hash(
+                execution_id="exec",
+                recovery_id=recovery_id,
+                node_id="node",
+                lease_id="lease",
+                lease_generation=1,
+                baseline_snapshot_id="snap",
+                baseline_tree_sha=OID,
+                requested_paths=("src/a.py",),
+                restored_paths=("src/a.py",),
+                removed_paths=(),
+            ),
+            "restored_paths": ["src/a.py"],
+            "removed_paths": [],
+        },
+    )
+
+    assert [event.event_type for event in completed[:4]] == [
+        "runner_recovery_completed",
+        "lease_revoked",
+        "runtime_retry_scheduled",
+        "node_state_changed",
+    ]
+    assert completed[3].payload["new_state"] == "ready"
+    assert completed[3].payload["trigger"] == "runner_recovery_completed_retry_scheduled"
+
+    complete_projection = projection
+    for position, payload in enumerate(
+        (
+            {
+                "node_id": "final-audit",
+                "kind": "verifier",
+                "semantic_stage": "final_audit",
+                "patch_id": "finalization",
+                "state": "planned",
+            },
+            {
+                "node_id": "final-gate",
+                "kind": "final_gate",
+                "patch_id": "finalization",
+                "state": "planned",
+            },
+        ),
+        start=5,
+    ):
+        complete_projection = reduce_event(
+            complete_projection, _event("node_created", payload, position)
+        )
+    complete_projection = reduce_event(
+        complete_projection,
+        _event(
+            "graph_patch_accepted",
+            {"patch_id": "finalization", "proposed_by_node_id": "node"},
+            7,
+        ),
+    )
+    # A batch and finalization accepted in separate patches do not satisfy the
+    # atomic final-horizon contract, so recovery must still retry the planner.
+    assert not non_gap_planner_completion_contract_satisfied(complete_projection, "node")
+
+
+def test_successor_discovery_patch_does_not_materialize_effectful_horizon() -> None:
+    projection = _staged_projection(
+        kind="planner",
+        role="planner",
+        node_overrides={
+            "semantic_stage": "successor_planning",
+            "planning_horizon": 2,
+            "reliable_plan_remaining_horizons": 1,
+            "reliable_plan_skeleton_id": "skeleton-1",
+        },
+    )
+    for event in (
+        _event(
+            "graph_patch_accepted",
+            {"patch_id": "discovery", "proposed_by_node_id": "node"},
+            3,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-discovery",
+                "kind": "worker",
+                "semantic_stage": "discovery",
+                "planning_horizon": 2,
+                "reliable_plan_skeleton_id": "skeleton-1",
+                "patch_id": "discovery",
+                "state": "planned",
+            },
+            4,
+        ),
+    ):
+        projection = reduce_event(projection, event)
+
+    assert not reliable_plan_successor_horizon_materialized(projection, "node")
+    assert not non_gap_planner_completion_contract_satisfied(projection, "node")
 
 
 def test_runner_recovery_request_is_a_durable_selective_restore_outbox_effect() -> None:

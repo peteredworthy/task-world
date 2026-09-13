@@ -1,0 +1,148 @@
+{
+  "repo_name": "task-world-current",
+  "branch": "codex/recovery-stabilization",
+  "routine_embedded": {
+    "id": "recovery-bounded-task",
+    "name": "Bounded Recovery Task",
+    "description": "One bounded implementation attempt with configured checks and fresh independent verification.",
+    "inputs": [
+      {
+        "name": "request",
+        "required": true,
+        "default": null,
+        "description": "Complete task contract, allowed paths, and verification instructions"
+      },
+      {
+        "name": "acceptance_command",
+        "required": true,
+        "default": null,
+        "description": "Operator-selected acceptance command run unchanged in the candidate worktree"
+      }
+    ],
+    "steps": [
+      {
+        "id": "S-01",
+        "kind": null,
+        "file": null,
+        "title": "Implement and independently verify the bounded task",
+        "step_context": "Follow the supplied task contract, preserve existing checks, and submit through the normal workflow.",
+        "builder_agent": null,
+        "verifier_agent": null,
+        "gate": null,
+        "tasks": [
+          {
+            "id": "T-01",
+            "title": "Deliver the requested behavior",
+            "task_context": "{{request}}\n\nThe configured acceptance command is:\n{{acceptance_command}}\n\nKeep changes within the requested scope. Do not modify the\noperator-owned acceptance command or weaken existing checks.\nDo not merge, deploy, or start servers. Submit through the normal\norchestrator callback for a fresh independent verifier.\n",
+            "work_mode": "implementation",
+            "complexity": "standard",
+            "profile": null,
+            "builder_agent": null,
+            "verifier_agent": null,
+            "available_tools": null,
+            "mcp_servers": null,
+            "model_overrides": null,
+            "requirements": [
+              {
+                "id": "R1",
+                "desc": "The complete supplied task contract is satisfied by the actual candidate.",
+                "must": true,
+                "priority": "critical"
+              },
+              {
+                "id": "R2",
+                "desc": "The configured acceptance command passes unchanged against the candidate.",
+                "must": true,
+                "priority": "critical"
+              },
+              {
+                "id": "R3",
+                "desc": "Changes respect the allowed scope, include the requested real tests and documentation, and preserve required submission checks.",
+                "must": true,
+                "priority": "critical"
+              }
+            ],
+            "auto_verify": {
+              "items": [
+                {
+                  "id": "acceptance",
+                  "cmd": "{{acceptance_command}}",
+                  "must": true
+                }
+              ],
+              "tail_lines": 20
+            },
+            "accepted_baseline_failure_fingerprints": [],
+            "acceptance_command_timeout_seconds": 180.0,
+            "verifier": {
+              "rubric": [
+                {
+                  "id": "R1",
+                  "text": "A only if the actual behavior satisfies the complete task contract, including edge cases; otherwise F with a reproducible discrepancy."
+                },
+                {
+                  "id": "R2",
+                  "text": "A only if the exact configured acceptance command passes against the current candidate; otherwise F with the command and result."
+                },
+                {
+                  "id": "R3",
+                  "text": "A only if scope, tests, documentation and required submission checks meet the task contract. Use current check evidence and focused verification; additional checks are appropriate for a specific unresolved concern. Do not substitute an invented command for a configured acceptance command."
+                }
+              ],
+              "submission_template": {
+                "grade_scale": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "F"
+                ],
+                "require_reason_if_below": "A",
+                "require_remediation_if_below": "B"
+              }
+            },
+            "retry": {
+              "max_attempts": 1
+            },
+            "artifacts": [],
+            "implementation_paths": [],
+            "context_from": [],
+            "fan_out": null,
+            "script": null
+          }
+        ],
+        "transitions": null,
+        "type": "standard",
+        "dry_run": null,
+        "child_routines": [],
+        "available_tools": null,
+        "mcp_servers": null,
+        "step_auto_verify": [],
+        "condition": null
+      }
+    ],
+    "builder_agent": null,
+    "verifier_agent": null,
+    "execution_mode": "legacy",
+    "env_files": [],
+    "clarifications": null,
+    "strict_validation": false,
+    "planner_generation_budget": 8,
+    "file_state_policy": null,
+    "semantic_artifact_schemas": []
+  },
+  "execution_mode": "legacy",
+  "agent_runner_type": "codex_server",
+  "agent_runner_config": {
+    "model": "gpt-5.6-luna",
+    "restrictions": "managed",
+    "reasoning_effort": "medium"
+  },
+  "config": {
+    "request": "# Feedback task: explain a blocked run through public APIs\n\nCreate a small read-only developer utility at\n`examples/recovery/run_diagnostic.py`, real tests under\n`tests/unit/test_recovery_run_diagnostic.py` and\n`tests/integration/test_recovery_run_diagnostic_cli.py`, and concise usage in\n`examples/recovery/README.md`. Do not modify orchestrator server code, existing\ntests, gates, database, or run state. Use Luna and one fixed builder/check/verifier\nattempt. Do not merge, deploy, or start the orchestrator server.\n\nThe utility must help an operator understand the original cause when the run\nsummary only says that a graph node failed. Keep it small: no new framework,\ndashboard, background monitor, repair endpoint, or inferred recovery commands.\n\nPublic contract:\n\n1. Export Pydantic models `FailureDetail` and `RunDiagnostic` and pure\n   `build_diagnostic(run: dict, graph: dict | None,\n   node_details: tuple[dict, ...], unavailable: tuple[str, ...] = ())` returning\n   `RunDiagnostic`. `FailureDetail` has `node_id`, nullable `reason`, and nullable\n   `event_position`. `RunDiagnostic` has `run_id`, `status`, nullable\n   `pause_reason`, nullable `summary_error`, `failures`, and `unavailable`.\n   Validate malformed input at this boundary with a typed error; do not fabricate\n   success or silently use the wrong run's node details.\n2. Enumerate failed graph nodes in stable node-ID order. For each, prefer the\n   earliest nonempty runtime failure `reason` from `agent_died` or a failed\n   `node_state_changed` entry in `callback_history`/`events`. Deduplicate overlap\n   by event identity/position. Retain the exact graph position; absent evidence\n   yields null and an unavailable diagnostic. Preserve the run's summary error\n   separately. This incident must expose\n   `check command_definition requires non-empty argv or cmd` at position 486.\n3. CLI: `uv run python examples/recovery/run_diagnostic.py RUN_UUID\n   --base-url http://localhost:8000`. Validate the UUID and HTTP(S) base URL.\n   Fetch only public GET endpoints: run, graph for a graph-backed run, and at\n   most ten failed-node detail pages. URL-encode node path segments. Use async\n   HTTP with bounded connect/read timeouts, bounded response bytes, no automatic\n   retry, and no redirects. Report omitted nodes as unavailable. A non-graph\n   run needs only its run response.\n4. Print exactly one JSON diagnostic to stdout. Exit 0 for a fully read report\n   (even if the reported run failed), 1 for a partial report, 2 for usage or\n   inability to fetch/validate the run. Concise stderr diagnostics, no secrets\n   or tracebacks. A failed or missing graph/node endpoint must produce partial\n   evidence rather than an empty healthy-looking report.\n5. Unit tests use real data and pure functions; integration tests use a real\n   local HTTP fixture server and real subprocess CLI. Cover original-cause\n   selection, duplicate events, missing/partial data, wrong-run evidence,\n   invalid UUID/base URL, unavailable server, oversized responses, failed-node\n   cap, and a legacy run. No patch, MagicMock, monkeypatching, or credentials.\n6. Run focused tests and the unchanged submission checks. Then use the actual\n   CLI against existing run `d20ff4dd-9cd1-4f29-9df1-d344a0582907` through the\n   existing server. It must report the exact empty-command cause and position\n   if that readback is available. If unavailable, record partial evidence and\n   do not claim live validation. Submit for independent verification.\n\nAccept only if the real utility explains the incident, focused tests pass, and\nthe independent verifier checks the stated behavior and scope. Any expansion\noutside this contract needs a new task; do not turn the utility into a server\nrepair project.\n",
+    "acceptance_command": "uv run pytest -n 0 tests/unit/test_recovery_run_diagnostic.py tests/integration/test_recovery_run_diagnostic_cli.py -q",
+    "recovery_campaign": "2026-09-09",
+    "routine_template_path": "routines/recovery-bounded-task/routine.yaml",
+    "routine_template_commit": "751d3a72491c439bf78768fc21571cdf4954cbbc"
+  }
+}

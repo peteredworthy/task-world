@@ -7,6 +7,8 @@ from orchestrator.runners import build_openhands_prompt
 from orchestrator.runners import CLIAgent
 from orchestrator.runners.types import ExecutionContext
 from orchestrator.config.models import (
+    AutoVerifyConfig,
+    AutoVerifyItemConfig,
     RequirementConfig,
     RubricItemConfig,
     SubmissionTemplateConfig,
@@ -28,6 +30,7 @@ def _task_config(
     model_overrides: dict[str, dict[str, str]] | None = None,
     rubric: list[RubricItemConfig] | None = None,
     work_mode: Literal["implementation", "oversight"] = "implementation",
+    auto_verify: AutoVerifyConfig | None = None,
 ) -> TaskConfig:
     verifier = VerifierConfig()
     if rubric:
@@ -43,6 +46,7 @@ def _task_config(
         ],
         verifier=verifier,
         work_mode=work_mode,
+        auto_verify=auto_verify or AutoVerifyConfig(),
     )
 
 
@@ -230,6 +234,167 @@ def test_verifier_prompt_submission_instructions() -> None:
     assert "A, B, C" in prompt.submission_instructions
     assert "reason if grade below A" in prompt.submission_instructions
     assert "remediation if grade below B" in prompt.submission_instructions
+
+
+def test_verifier_prompt_renders_resolved_contract_and_current_attempt_evidence() -> None:
+    """Verifier context includes the current contract and only current receipts."""
+    config = _task_config(task_context="Implement the {{feature}} parser")
+    state = TaskState(id="task-1", config_id="T-01", current_attempt=2)
+    state.attempts.extend(
+        [
+            Attempt(
+                attempt_num=1,
+                verifier_comment="old builder feedback must not be copied",
+                end_commit="old-candidate",
+                auto_verify_results=[
+                    {
+                        "item_id": "old-check",
+                        "cmd": "old command",
+                        "passed": True,
+                        "exit_code": 0,
+                        "output": "old receipt",
+                    }
+                ],
+            ),
+            Attempt(
+                attempt_num=2,
+                end_commit="current-candidate",
+                auto_verify_results=[
+                    {
+                        "item_id": "unicode",
+                        "cmd": "uv run pytest tests/test_unicode.py -q",
+                        "passed": False,
+                        "exit_code": 1,
+                        "output": "current failure",
+                    }
+                ],
+            ),
+        ]
+    )
+
+    config = _task_config(
+        task_context="Implement the auth parser",
+        auto_verify=AutoVerifyConfig(
+            items=[AutoVerifyItemConfig(id="unicode", cmd="uv run pytest tests/test_unicode.py -q")]
+        ),
+    )
+    prompt = generate_verifier_prompt(
+        config,
+        state,
+        step_context="This step implements the parser.",
+    )
+
+    assert "## Task Context\nImplement the auth parser" in prompt.user
+    assert "This step implements the parser." in prompt.user
+    assert "uv run pytest tests/test_unicode.py -q" in prompt.user
+    assert "current-candidate" in prompt.user
+    assert "current failure" in prompt.user
+    assert "old-candidate" not in prompt.user
+    assert "old receipt" not in prompt.user
+    assert "old builder feedback" not in prompt.user
+
+
+def test_verifier_prompt_resolves_step_context_variables() -> None:
+    config = _task_config(task_context="Implement {{feature}}")
+    prompt = generate_verifier_prompt(
+        config,
+        _task_state(),
+        step_context="The {{feature}} step is in scope.",
+        run_config={"feature": "auth"},
+    )
+
+    assert "The auth step is in scope." in prompt.user
+    assert "{{feature}}" not in prompt.user
+
+
+def test_verifier_prompt_does_not_promote_prior_receipt_without_current_evidence() -> None:
+    """A correction with no receipt says the configured check is unproven."""
+    config = _task_config(
+        auto_verify=AutoVerifyConfig(
+            items=[AutoVerifyItemConfig(id="current-check", cmd="uv run pytest -q")]
+        )
+    )
+    state = TaskState(id="task-1", config_id="T-01", current_attempt=2)
+    state.attempts.extend(
+        [
+            Attempt(
+                attempt_num=1,
+                end_commit="old-candidate",
+                auto_verify_results=[
+                    {
+                        "item_id": "old-check",
+                        "cmd": "old command",
+                        "passed": True,
+                        "exit_code": 0,
+                        "output": "old receipt",
+                    }
+                ],
+            ),
+            Attempt(attempt_num=2, end_commit="current-candidate"),
+        ]
+    )
+
+    prompt = generate_verifier_prompt(config, state)
+
+    assert "old receipt" not in prompt.user
+    assert "No trustworthy current-attempt receipts are available" in prompt.user
+    assert "remain unproven evidence" in prompt.user
+    assert "current-candidate" in prompt.user
+
+
+def test_verifier_prompt_marks_mismatched_observation_unproven_and_bounds_fields() -> None:
+    """Receipt-like state cannot claim proof when its command identity differs."""
+    config = _task_config(
+        auto_verify=AutoVerifyConfig(
+            items=[AutoVerifyItemConfig(id="check", cmd="uv run pytest -q")]
+        )
+    )
+    state = TaskState(id="task-1", config_id="T-01", current_attempt=1)
+    state.attempts.append(
+        Attempt(
+            attempt_num=1,
+            end_commit="observed-commit",
+            auto_verify_results=[
+                {
+                    "item_id": "renamed-check",
+                    "cmd": "a" * 900,
+                    "passed": "false",
+                    "exit_code": 0,
+                    "output": "output",
+                    "crashed": "false",
+                    "crash_error": "e" * 3000,
+                }
+            ],
+        )
+    )
+
+    prompt = generate_verifier_prompt(config, state)
+
+    assert "unproven observation" in prompt.user
+    assert "PASSED" not in prompt.user
+    assert "uv run pytest -q" in prompt.user
+    assert "a" * 513 not in prompt.user
+    assert "e" * 2049 not in prompt.user
+
+
+def test_verifier_prompt_resolves_task_and_acceptance_contract_from_run_config() -> None:
+    config = _task_config(
+        task_context="Implement {{feature}}",
+        auto_verify=AutoVerifyConfig(
+            items=[AutoVerifyItemConfig(id="check", cmd="uv run pytest {{suite}} -q")]
+        ),
+    )
+    state = _task_state()
+
+    prompt = generate_verifier_prompt(
+        config, state, run_config={"feature": "auth", "suite": "tests/auth"}
+    )
+
+    assert prompt.task_context == "Implement auth"
+    assert "Implement auth" in prompt.user
+    assert "[check; must=True] uv run pytest tests/auth -q" in prompt.user
+    assert "{{feature}}" not in prompt.user
+    assert "{{suite}}" not in prompt.user
 
 
 # --- step_context in builder prompt ---

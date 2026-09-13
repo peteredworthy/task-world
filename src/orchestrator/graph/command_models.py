@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Protocol, cast
@@ -677,6 +679,52 @@ class SubmitPatchCommand(PatchCommandFields):
     patch_id: CommandIdentifier
     base_graph_position: int = Field(ge=-1)
     ops: list[dict[str, Any]] = Field(default_factory=_empty_patch_ops, max_length=200)
+
+
+def submit_patch_operation_fingerprint(payload: "SubmitPatchCommand | dict[str, Any]") -> str:
+    """Return the durable semantic identity of one logical patch operation.
+
+    ``base_graph_position`` is optimistic-concurrency metadata rather than part
+    of the requested mutation.  Excluding it lets a caller reconcile an
+    already-committed operation after losing the acknowledgement and refreshing
+    the graph head, while every substantive field remains conflict-sensitive.
+    """
+
+    command = (
+        payload
+        if isinstance(payload, SubmitPatchCommand)
+        else SubmitPatchCommand.model_validate(payload)
+    )
+    exclude = {"base_graph_position"}
+    if any(
+        invocation.macro == "construct_reliable_plan_region"
+        for invocation in command.macro_invocations
+    ):
+        exclude.add("patch_id")
+    canonical = command.model_dump(mode="json", exclude=exclude)
+    encoded = json.dumps(
+        canonical,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def submit_patch_operation_key(payload: "SubmitPatchCommand | dict[str, Any]") -> str:
+    """Return the planner's stable semantic key, or the patch ID for raw patches."""
+    command = (
+        payload
+        if isinstance(payload, SubmitPatchCommand)
+        else SubmitPatchCommand.model_validate(payload)
+    )
+    semantic_keys = [
+        invocation.args.get("operation_key")
+        for invocation in command.macro_invocations
+        if invocation.macro == "construct_reliable_plan_region"
+        and isinstance(invocation.args.get("operation_key"), str)
+    ]
+    return cast(str, semantic_keys[0]) if len(semantic_keys) == 1 else command.patch_id
 
 
 class AcknowledgeStartCommand(StrictCommandPayload):

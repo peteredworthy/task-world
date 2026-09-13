@@ -510,7 +510,13 @@ def _dynamic_input_port(contract: NodeContract, port: str) -> PortContract | Non
         return _port(port, "artifact_reference", schemas=("ContextArtifact",))
     if port.startswith("check_result_") and contract.node_type == "verifier":
         return _port(port, "check_result", schemas=("CheckResult",))
+    if port == "dynamic_feature_acceptance" and contract.node_type in {
+        "verifier",
+        "final_gate",
+    }:
+        return _port(port, "check_result", schemas=("CheckResult",))
     if port.startswith("verification_report_") and contract.node_type in {
+        "check",
         "verifier",
         "final_gate",
     }:
@@ -774,6 +780,7 @@ DEFAULT_NODE_CONTRACTS = _registry(
                 _port("completion", "completion", schemas=("NodeCompletion",), required=False),
             ),
             tools=(
+                "construct_reliable_plan_region",
                 "create_work_region",
                 "attach_verifier",
                 "attach_check",
@@ -860,6 +867,7 @@ DEFAULT_NODE_CONTRACTS = _registry(
                 _port("completion", "completion", schemas=("NodeCompletion",), required=False),
             ),
             tools=(
+                "construct_reliable_plan_region",
                 "create_corrective_region",
                 "attach_verifier",
                 "attach_check",

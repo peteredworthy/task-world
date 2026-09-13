@@ -15,6 +15,7 @@ Design documentation lives in `docs/intent/`. Implementation follows the phased 
 - Routine-declared orchestrator MCP access is scoped per task. Runners should use the scoped MCP config generated from `available_tools` instead of exposing the full `/mcp/sse` tool set by default.
 - Artifacts created by agents are written inside the run worktree first (for example `worktrees/run-<run-id>/docs/<feature>/...`).
 - Auto-verify and verification steps run against the run worktree path.
+- Legacy submit, commit, and reset operations use `workflow/worktree_mutations.py` for process-external checkout ownership. Keep Git work off the API event loop and drain cancelled operations before releasing ownership; do not replace this with shared API/executor memory locks.
 - Run commits (`start_commit`/`end_commit`) are recorded from the worktree branch (`orchestrator/run-<run-id>`), then merged back according to completion actions.
 - If expected files are not visible in the main repo root, check the run worktree before assuming generation failed.
 

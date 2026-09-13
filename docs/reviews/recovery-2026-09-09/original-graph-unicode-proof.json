@@ -1,0 +1,10 @@
+{
+  "run_id": "d20ff4dd-9cd1-4f29-9df1-d344a0582907",
+  "at": "2026-09-09T13:23:30.545091+00:00",
+  "command": "UV_CACHE_DIR=/tmp/orchestrator-recovery-uv uv run --no-sync python /private/tmp/recovery_unicode_oracle.py",
+  "cwd": "/Users/peter/code/task-world/worktrees/r215",
+  "exit_code": 0,
+  "output": "PASS: supplemental Unicode JSONL acceptance",
+  "source_sha256": "5d1b01162dc8d40bf4014e640ac5ec7d0f65dd4132733a990c77db030d1bd193",
+  "meaning": "Original graph artifact passes the edge case missed by the first fixed Luna baseline; run completion still failed."
+}

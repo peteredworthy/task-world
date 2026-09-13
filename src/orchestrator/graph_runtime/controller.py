@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
@@ -19,13 +19,18 @@ from orchestrator.graph import (
     ActorKind,
     EventEnvelope,
     GraphCommandContext,
+    PatchCommandContext,
     GraphProjection,
     validate_emitted_event_type,
     apply_command,
     build_projection,
     serialize_event_payload,
     StoredArtifactRef,
+    SubmitPatchCommand,
+    planner_patch_decisions_by_id_view,
     semantic_schema_declarations_view,
+    submit_patch_operation_fingerprint,
+    submit_patch_operation_key,
 )
 from orchestrator.artifacts import ArtifactStore
 from orchestrator.artifacts import ArtifactIntegrityError, ArtifactNotFoundError
@@ -37,7 +42,7 @@ from orchestrator.db import (
     retry_committed_secondary_output,
 )
 from orchestrator.graph import Clock, IdGenerator
-from orchestrator.graph_runtime.errors import StaleProjectionError
+from orchestrator.graph_runtime.errors import PatchOperationConflictError, StaleProjectionError
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, append_outbox_rows
 from orchestrator.graph_runtime.store import GraphEventStore
 
@@ -50,6 +55,14 @@ class GraphCommandResult:
     events: list[EventEnvelope]
     outbox_items: list[OutboxItem]
     projection_position: int
+    reconciled_patch_id: str | None = None
+    reconciled_successor_planner_node_ids: tuple[str, ...] = ()
+
+
+CommandCommitObserver = Callable[
+    [Literal["before_commit", "after_commit"], str, str, tuple[EventEnvelope, ...]],
+    Awaitable[None],
+]
 
 
 MAX_NODE_USAGE_WRITE_RETRIES = 5
@@ -87,6 +100,7 @@ class GraphController:
         journal_max_bytes: int = 64 * 1024 * 1024,
         runtime_boundary_capability: RuntimeBoundaryCapability | None = None,
         artifact_store: ArtifactStore | None = None,
+        command_commit_observer: CommandCommitObserver | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._clock = clock
@@ -98,6 +112,7 @@ class GraphController:
             runtime_boundary_capability or RuntimeBoundaryCapability()
         )
         self._artifact_store = artifact_store
+        self._command_commit_observer = command_commit_observer
 
     async def handle_command(
         self,
@@ -174,6 +189,28 @@ class GraphController:
                 existing_events,
                 current_position,
             ) = await read_store.load_projection_with_tail(run_id)
+        reconciled = None
+        if (
+            command_type == "submit_patch"
+            and isinstance(context, PatchCommandContext)
+            and context.run_id == run_id
+            and context.actor_role == "planner"
+        ):
+            reconciled = _reconciled_committed_patch(
+                projection,
+                command_type,
+                command_payload,
+                context,
+            )
+        if reconciled is not None:
+            patch_id, successor_node_ids = reconciled
+            return GraphCommandResult(
+                events=[],
+                outbox_items=[],
+                projection_position=current_position,
+                reconciled_patch_id=patch_id,
+                reconciled_successor_planner_node_ids=successor_node_ids,
+            )
         if current_position != expected_position:
             msg = (
                 f"stale graph projection for run {run_id}: "
@@ -245,6 +282,13 @@ class GraphController:
                     authoritative_projection=projection,
                 )
                 outbox_items = await append_outbox_rows(session, stored_events, self._clock)
+                if self._command_commit_observer is not None:
+                    await self._command_commit_observer(
+                        "before_commit",
+                        run_id,
+                        command_type,
+                        tuple(stored_events),
+                    )
                 # Graph events queue the same post-commit JSONL observer used
                 # by workflow events. A secondary journal failure propagates
                 # only after the authoritative graph transaction is committed.
@@ -264,6 +308,13 @@ class GraphController:
                             "committed graph events await startup journal reconciliation",
                             exc_info=retry_error,
                         )
+                if self._command_commit_observer is not None:
+                    await self._command_commit_observer(
+                        "after_commit",
+                        run_id,
+                        command_type,
+                        tuple(stored_events),
+                    )
             except Exception:
                 await session.rollback()
                 raise
@@ -497,3 +548,41 @@ def _patch_base_graph_position(
     if isinstance(value, int):
         return value
     return None
+
+
+def _reconciled_committed_patch(
+    projection: GraphProjection,
+    command_type: str,
+    payload: dict[str, object],
+    context: PatchCommandContext,
+) -> tuple[str, tuple[str, ...]] | None:
+    """Recognize an identical durable patch after its acknowledgement was lost."""
+
+    if command_type != "submit_patch":
+        return None
+    try:
+        command = SubmitPatchCommand.model_validate(payload)
+    except ValueError:
+        return None
+    operation_key = submit_patch_operation_key(command)
+    proposed_by_node_id = context.proposed_by_node_id
+    decisions = [
+        decision
+        for decision in planner_patch_decisions_by_id_view(projection).values()
+        if decision.status == "accepted"
+        and (decision.operation_key or decision.patch_id) == operation_key
+        and decision.proposed_by_node_id == proposed_by_node_id
+    ]
+    if not decisions:
+        return None
+    if len(decisions) != 1:
+        raise PatchOperationConflictError(
+            f"semantic patch operation {operation_key!r} has multiple durable decisions"
+        )
+    decision = decisions[0]
+    fingerprint = submit_patch_operation_fingerprint(command)
+    if decision.operation_fingerprint != fingerprint:
+        raise PatchOperationConflictError(
+            f"semantic patch operation {operation_key!r} was already committed with different intent"
+        )
+    return decision.patch_id, tuple(decision.successor_planner_node_ids)

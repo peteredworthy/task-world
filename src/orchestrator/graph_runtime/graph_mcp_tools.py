@@ -18,6 +18,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.tools import Tool
 from pydantic import WithJsonSchema
 
+from orchestrator.graph import reliable_plan_check_decision_tool_schema
 from orchestrator.runners import submission_tool_input_schema, validate_reliable_plan_tool_specs
 from orchestrator.runners.graph_tool_routing import route_tool_call
 from orchestrator.runners.types import (
@@ -39,6 +40,7 @@ _GRAPH_MCP_ALLOWLIST = frozenset(
         "create_join",
         "request_gate",
         "retire_or_supersede",
+        "construct_reliable_plan_region",
         "create_discovery_region",
         "create_plan_verification",
         "create_successor_planner",
@@ -46,6 +48,19 @@ _GRAPH_MCP_ALLOWLIST = frozenset(
         "graph_grade",
     }
 )
+
+
+_OMITTED = object()
+
+_GRAPH_PATCH_OPS_SCHEMA = {
+    "type": "array",
+    "items": {"type": "object"},
+}
+_GRAPH_PATCH_MACROS_SCHEMA = {
+    "type": "array",
+    "items": {"type": "object"},
+}
+_STRING_SCHEMA = {"type": "string"}
 
 
 async def _noop_checklist(*_args: Any, **_kwargs: Any) -> None:
@@ -149,20 +164,21 @@ def build_graph_mcp_server(
     async def submit_graph_patch(
         patch_id: str,
         base_graph_position: int,
-        ops: list[dict[str, Any]] | None = None,
-        macro_invocations: list[dict[str, Any]] | None = None,
-        rationale_record_id: str | None = None,
+        ops: Annotated[Any, WithJsonSchema(_GRAPH_PATCH_OPS_SCHEMA)] = _OMITTED,
+        macro_invocations: Annotated[Any, WithJsonSchema(_GRAPH_PATCH_MACROS_SCHEMA)] = _OMITTED,
+        rationale_record_id: Annotated[Any, WithJsonSchema(_STRING_SCHEMA)] = _OMITTED,
     ) -> str:
         """Submit one atomic graph patch envelope of raw ops and/or macros."""
-        args: dict[str, Any] = {
+        values = {
             "patch_id": patch_id,
             "base_graph_position": base_graph_position,
-            "ops": ops or [],
+            "ops": ops,
+            "macro_invocations": macro_invocations,
+            "rationale_record_id": rationale_record_id,
         }
-        if macro_invocations is not None:
-            args["macro_invocations"] = macro_invocations
-        if rationale_record_id is not None:
-            args["rationale_record_id"] = rationale_record_id
+        if ops is _OMITTED and macro_invocations is not _OMITTED:
+            values["ops"] = []
+        args = {key: value for key, value in values.items() if value is not _OMITTED}
         return await _route("submit_graph_patch", args)
 
     _add_tool(
@@ -450,6 +466,61 @@ def build_graph_mcp_server(
         retire_or_supersede,
         name="retire_or_supersede",
         description="Retire or supersede an existing graph node.",
+    )
+
+    async def construct_reliable_plan_region(
+        patch_id: str,
+        base_graph_position: int,
+        operation_key: str,
+        scope: str,
+        objective: str,
+        requirement_ids: list[str],
+        acceptance: list[str],
+        checks: list[dict[str, Any]],
+        rubric: list[str],
+        dependencies: list[str] | None = None,
+        rationale_record_id: str | None = None,
+    ) -> str:
+        """Construct one complete reliable-plan region from semantic work decisions."""
+        args: dict[str, Any] = {
+            "patch_id": patch_id,
+            "base_graph_position": base_graph_position,
+            "operation_key": operation_key,
+            "scope": scope,
+            "objective": objective,
+            "requirement_ids": requirement_ids,
+            "acceptance": acceptance,
+            "checks": checks,
+            "rubric": rubric,
+        }
+        if dependencies is not None:
+            args["dependencies"] = dependencies
+        if rationale_record_id is not None:
+            args["rationale_record_id"] = rationale_record_id
+        return await _route("construct_reliable_plan_region", args)
+
+    check_decision_schema = reliable_plan_check_decision_tool_schema()
+    construct_reliable_plan_region.__annotations__["checks"] = Annotated[
+        list[dict[str, Any]],
+        WithJsonSchema(
+            {
+                "type": "array",
+                "description": (
+                    "May be empty for initial discovery; effectful horizons require "
+                    "at least one mechanical check."
+                ),
+                "items": check_decision_schema,
+            }
+        ),
+    ]
+
+    _add_tool(
+        construct_reliable_plan_region,
+        name="construct_reliable_plan_region",
+        description=(
+            "Construct the complete reliable-plan horizon from semantic work decisions; "
+            "the controller derives graph identities and all execution mechanics."
+        ),
     )
 
     async def create_discovery_region(

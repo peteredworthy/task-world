@@ -1,0 +1,148 @@
+[2026-09-07T11:07:43-0400] [backend] [09/07/26 11:07:43] INFO     CodexServerAgent: closing app-server   agent.py:975
+[2026-09-07T11:07:43-0400] [backend]                              transport —                                        
+[2026-09-07T11:07:43-0400] [backend]                              run=c15e02ab-052c-45af-ab65-b3334b2c9f             
+[2026-09-07T11:07:43-0400] [backend]                              fb                                                 
+[2026-09-07T11:07:43-0400] [backend]                              task=recovery-trial1-jsonl-discovery-p             
+[2026-09-07T11:07:43-0400] [backend]                              lan                                                
+[2026-09-07T11:07:43-0400] [backend]                              thread_id=01a07c61-c805-7f53-ad9f-abd7             
+[2026-09-07T11:07:43-0400] [backend]                              8eee4fa2                                           
+[2026-09-07T11:07:44-0400] [backend] [09/07/26 11:07:44] INFO     GraphRunDriver: execution wait  graph_driver.py:944
+[2026-09-07T11:07:44-0400] [backend]                              complete for                                       
+[2026-09-07T11:07:44-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:44-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:44-0400] [backend]                     INFO     GraphRunDriver: dispatch pass   graph_driver.py:925
+[2026-09-07T11:07:44-0400] [backend]                              starting for                                       
+[2026-09-07T11:07:44-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:44-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:45-0400] [backend] [09/07/26 11:07:45] WARNING  Graph outbox dispatch failed:         outbox.py:242
+[2026-09-07T11:07:45-0400] [backend]                              run=c15e02ab-052c-45af-ab65-b3334b2c9              
+[2026-09-07T11:07:45-0400] [backend]                              ffb outbox_id=3459                                 
+[2026-09-07T11:07:45-0400] [backend]                              kind=agent_dispatch attempt=2                      
+[2026-09-07T11:07:45-0400] [backend]                              error=reliable-plan execution is                   
+[2026-09-07T11:07:45-0400] [backend]                              missing sealed assignment carrier;                 
+[2026-09-07T11:07:45-0400] [backend]                              recreate the run with a qualified                  
+[2026-09-07T11:07:45-0400] [backend]                              assignment arm                                     
+[2026-09-07T11:07:45-0400] [backend]                     INFO     GraphRunDriver: dispatch pass   graph_driver.py:927
+[2026-09-07T11:07:45-0400] [backend]                              complete for                                       
+[2026-09-07T11:07:45-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:45-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:45-0400] [backend]                     INFO     GraphRunDriver: waiting for 1   graph_driver.py:934
+[2026-09-07T11:07:45-0400] [backend]                              execution(s) on                                    
+[2026-09-07T11:07:45-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:45-0400] [backend]                              c9ffb (timeout=3539.207264)                        
+[2026-09-07T11:07:45-0400] [backend]                     INFO     GraphRunDriver: execution wait  graph_driver.py:944
+[2026-09-07T11:07:45-0400] [backend]                              complete for                                       
+[2026-09-07T11:07:45-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:45-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:45-0400] [backend]                     INFO     GraphRunDriver: dispatch pass   graph_driver.py:925
+[2026-09-07T11:07:45-0400] [backend]                              starting for                                       
+[2026-09-07T11:07:45-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:45-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:45-0400] [backend]                     INFO     GraphRunDriver: dispatch pass   graph_driver.py:927
+[2026-09-07T11:07:45-0400] [backend]                              complete for                                       
+[2026-09-07T11:07:45-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:45-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:45-0400] [backend]                     INFO     GraphRunDriver: waiting for 1   graph_driver.py:934
+[2026-09-07T11:07:45-0400] [backend]                              execution(s) on                                    
+[2026-09-07T11:07:45-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:45-0400] [backend]                              c9ffb (timeout=3539.1208)                          
+[2026-09-07T11:07:45-0400] [backend]                     INFO     GraphRunDriver: execution wait  graph_driver.py:944
+[2026-09-07T11:07:45-0400] [backend]                              complete for                                       
+[2026-09-07T11:07:45-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:45-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:48-0400] [backend] [09/07/26 11:07:48] INFO     GraphRunDriver: dispatch pass   graph_driver.py:925
+[2026-09-07T11:07:48-0400] [backend]                              starting for                                       
+[2026-09-07T11:07:48-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:48-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:48-0400] [backend]                     WARNING  Graph outbox dispatch failed:         outbox.py:242
+[2026-09-07T11:07:48-0400] [backend]                              run=c15e02ab-052c-45af-ab65-b3334b2c9              
+[2026-09-07T11:07:48-0400] [backend]                              ffb outbox_id=3459                                 
+[2026-09-07T11:07:48-0400] [backend]                              kind=agent_dispatch attempt=3                      
+[2026-09-07T11:07:48-0400] [backend]                              error=reliable-plan execution is                   
+[2026-09-07T11:07:48-0400] [backend]                              missing sealed assignment carrier;                 
+[2026-09-07T11:07:48-0400] [backend]                              recreate the run with a qualified                  
+[2026-09-07T11:07:48-0400] [backend]                              assignment arm                                     
+[2026-09-07T11:07:48-0400] [backend]                     INFO     GraphRunDriver: dispatch pass   graph_driver.py:927
+[2026-09-07T11:07:48-0400] [backend]                              complete for                                       
+[2026-09-07T11:07:48-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:48-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:48-0400] [backend]                     INFO     GraphRunDriver: waiting for 1   graph_driver.py:934
+[2026-09-07T11:07:48-0400] [backend]                              execution(s) on                                    
+[2026-09-07T11:07:48-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:48-0400] [backend]                              c9ffb (timeout=3536.499454)                        
+[2026-09-07T11:07:48-0400] [backend]                     INFO     GraphRunDriver: execution wait  graph_driver.py:944
+[2026-09-07T11:07:48-0400] [backend]                              complete for                                       
+[2026-09-07T11:07:48-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:48-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:48-0400] [backend]                     INFO     GraphRunDriver: dispatch pass   graph_driver.py:925
+[2026-09-07T11:07:48-0400] [backend]                              starting for                                       
+[2026-09-07T11:07:48-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:48-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:48-0400] [backend]                     INFO     GraphRunDriver: dispatch pass   graph_driver.py:927
+[2026-09-07T11:07:48-0400] [backend]                              complete for                                       
+[2026-09-07T11:07:48-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:48-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:48-0400] [backend]                     INFO     GraphRunDriver: waiting for 1   graph_driver.py:934
+[2026-09-07T11:07:48-0400] [backend]                              execution(s) on                                    
+[2026-09-07T11:07:48-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:48-0400] [backend]                              c9ffb (timeout=3536.427339)                        
+[2026-09-07T11:07:48-0400] [backend]                     INFO     GraphRunDriver: execution wait  graph_driver.py:944
+[2026-09-07T11:07:48-0400] [backend]                              complete for                                       
+[2026-09-07T11:07:48-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:48-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:56-0400] [backend] [09/07/26 11:07:56] INFO     GraphRunDriver: dispatch pass   graph_driver.py:925
+[2026-09-07T11:07:56-0400] [backend]                              starting for                                       
+[2026-09-07T11:07:56-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:56-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:56-0400] [backend]                     WARNING  Graph outbox dispatch failed:         outbox.py:242
+[2026-09-07T11:07:56-0400] [backend]                              run=c15e02ab-052c-45af-ab65-b3334b2c9              
+[2026-09-07T11:07:56-0400] [backend]                              ffb outbox_id=3459                                 
+[2026-09-07T11:07:56-0400] [backend]                              kind=agent_dispatch attempt=4                      
+[2026-09-07T11:07:56-0400] [backend]                              error=reliable-plan execution is                   
+[2026-09-07T11:07:56-0400] [backend]                              missing sealed assignment carrier;                 
+[2026-09-07T11:07:56-0400] [backend]                              recreate the run with a qualified                  
+[2026-09-07T11:07:56-0400] [backend]                              assignment arm                                     
+[2026-09-07T11:07:56-0400] [backend]                     INFO     GraphRunDriver: dispatch pass   graph_driver.py:927
+[2026-09-07T11:07:56-0400] [backend]                              complete for                                       
+[2026-09-07T11:07:56-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:56-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:56-0400] [backend]                     INFO     GraphRunDriver: waiting for 1   graph_driver.py:934
+[2026-09-07T11:07:56-0400] [backend]                              execution(s) on                                    
+[2026-09-07T11:07:56-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:56-0400] [backend]                              c9ffb (timeout=3527.869541)                        
+[2026-09-07T11:07:56-0400] [backend]                     INFO     GraphRunDriver: execution wait  graph_driver.py:944
+[2026-09-07T11:07:56-0400] [backend]                              complete for                                       
+[2026-09-07T11:07:56-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:56-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:57-0400] [backend] [09/07/26 11:07:57] INFO     GraphRunDriver: dispatch pass   graph_driver.py:925
+[2026-09-07T11:07:57-0400] [backend]                              starting for                                       
+[2026-09-07T11:07:57-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:57-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:57-0400] [backend]                     INFO     GraphRunDriver: dispatch pass   graph_driver.py:927
+[2026-09-07T11:07:57-0400] [backend]                              complete for                                       
+[2026-09-07T11:07:57-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:57-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:57-0400] [backend]                     INFO     GraphRunDriver: waiting for 0   graph_driver.py:934
+[2026-09-07T11:07:57-0400] [backend]                              execution(s) on                                    
+[2026-09-07T11:07:57-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:57-0400] [backend]                              c9ffb (timeout=0.0)                                
+[2026-09-07T11:07:57-0400] [backend]                     INFO     GraphRunDriver: execution wait  graph_driver.py:944
+[2026-09-07T11:07:57-0400] [backend]                              complete for                                       
+[2026-09-07T11:07:57-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:57-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:57-0400] [backend]                     INFO     GraphRunDriver: dispatch pass   graph_driver.py:925
+[2026-09-07T11:07:57-0400] [backend]                              starting for                                       
+[2026-09-07T11:07:57-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:57-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:57-0400] [backend]                     INFO     GraphRunDriver: dispatch pass   graph_driver.py:927
+[2026-09-07T11:07:57-0400] [backend]                              complete for                                       
+[2026-09-07T11:07:57-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:57-0400] [backend]                              c9ffb                                              
+[2026-09-07T11:07:57-0400] [backend]                     INFO     GraphRunDriver: waiting for 0   graph_driver.py:934
+[2026-09-07T11:07:57-0400] [backend]                              execution(s) on                                    
+[2026-09-07T11:07:57-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:57-0400] [backend]                              c9ffb (timeout=0.0)                                
+[2026-09-07T11:07:57-0400] [backend]                     INFO     GraphRunDriver: execution wait  graph_driver.py:944
+[2026-09-07T11:07:57-0400] [backend]                              complete for                                       
+[2026-09-07T11:07:57-0400] [backend]                              c15e02ab-052c-45af-ab65-b3334b2                    
+[2026-09-07T11:07:57-0400] [backend]                              c9ffb                                              

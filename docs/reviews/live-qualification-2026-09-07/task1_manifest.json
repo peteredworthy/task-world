@@ -1,0 +1,15 @@
+{
+  "run_id": "c15e02ab-052c-45af-ab65-b3334b2c9ffb",
+  "source_commit": "13b6ebd07678ed404ebf8024013af2374699700d",
+  "worktree_path": "/Users/peter/code/task-world/worktrees/r199",
+  "captured_at": "2026-09-07T14:55:31.812427+00:00",
+  "files": {
+    "task1_spec.md": "b2ee02ef2c3d1f03ea454fd6aca4ca079a5ea12a02c0ef8dc7821903215ff5a6",
+    "task1_oracle.py": "6d2fc9501e319b28e683913accf0dc51dd1877383d45c1bc9eaf334881cb9724",
+    "routine.yaml": "728769bfc6f6c799333d56bb0502c34392336a492a56d790a9a624ca93bff18f"
+  },
+  "routine_version_note": "API routine_sha and routine_commit are null; source commit plus checked-in routine hash retained.",
+  "restart_performed": false,
+  "manual_graph_edits": 0,
+  "manual_state_repairs": 0
+}

@@ -1,0 +1,13 @@
+{
+  "target_task_id": "e2a535c9-995e-4458-9658-53881c982897",
+  "additional_attempts": 1,
+  "agent_runner_type": "codex_server",
+  "agent_runner_config": {
+    "model": "gpt-5.6-luna",
+    "restrictions": "managed",
+    "reasoning_effort": "medium"
+  },
+  "preserve_checklist": false,
+  "reset_branch": false,
+  "guidance": "One bounded correction attempt, preserving the candidate and original scope/acceptance command. Address verifier R1 feedback: failed-node detail with no usable failure event must yield unavailable evidence and CLI exit 1. Independent real HTTP/subprocess checks also found: (1) request UUID d20ff4dd-9cd1-4f29-9df1-d344a0582907 whose run endpoint returns id 00000000-0000-0000-0000-000000000001/status completed/is_graph_backed false currently exits 0 reporting the wrong run; validate response identity against requested UUID and exit 2 without a report. (2) a valid graph-backed run whose graph response is JSON [] currently exits 2 with no report; malformed graph or node evidence must preserve the valid run in a partial report, exit 1, and never fabricate a complete report. Keep the pure reducer strict for malformed inputs; the CLI should handle invalid subordinate evidence as unavailable. Add real regression coverage for these exact cases, including malformed/wrong-run node evidence. Adjust the existing cap fixture so it still independently tests ten-node read limits with valid failure evidence for fetched nodes; do not weaken assertions to conceal missing evidence. Run the exact configured tests and actual read-only CLI against the incident again. Do not change server code, gates, run state, or acceptance command. Fresh verifier should check complete original contract plus these demonstrated cases."
+}

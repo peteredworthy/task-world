@@ -1,0 +1,37 @@
+{
+  "at": "2026-09-09T14:26:08.217191+00:00",
+  "base_commit": "751d3a72491c439bf78768fc21571cdf4954cbbc",
+  "repair_commit": "98ca9f6cb74cebd527540dc9a9207c661eaa89cc",
+  "files": [
+    {
+      "path": "src/orchestrator/graph/_commands.py",
+      "before_sha256": "f38af95a38d8bb13e205d0e0b94402a3a6dc475b01c3725cbd453fa0416a7dd1",
+      "after_sha256": "5ec9606fcd17b7d9e789984f366c829236c4f9baf5e27103f38879afec922495"
+    },
+    {
+      "path": "src/orchestrator/graph/macros.py",
+      "before_sha256": "7ff68527f3f69306473892d552a64dfced0496da41c33b861a8297e7ab48286e",
+      "after_sha256": "d3c4833dd3e76950b223c21e62aa1e3413bcc261c6fed006d9797eb6c0776893"
+    },
+    {
+      "path": "src/orchestrator/graph_runtime/__init__.py",
+      "before_sha256": "5d9247ea1861de74695edb9eecb6e57e5d933cb2f407413dc211cc34bb4942c7",
+      "after_sha256": "c5690c3eb806c141f8beddeb7d8678d9cd76b096c5d07b44c5f0a291caa67973"
+    },
+    {
+      "path": "src/orchestrator/graph_runtime/dispatch.py",
+      "before_sha256": "0a7fe7f4ec97f05ab684d9f3742d4bc13e2e2bd9ae068564447c0b8df06c1fc5",
+      "after_sha256": "22b778ecb82db18790c70cd7615e1cc326a41a702b4cb10fb01fee9cd1ad8c6d"
+    },
+    {
+      "path": "tests/integration/test_graph_patch_acknowledgement_recovery.py",
+      "before_sha256": "a6b0567fbcd0814229956d38a27bade9e2f064898fde5b940a9c214cbc59825f",
+      "after_sha256": "015345cab2e73feeb043efa4750372932989e50fc037587d9033069a7d3f1d3c"
+    },
+    {
+      "path": "tests/unit/test_graph_dispatch_on_output.py",
+      "before_sha256": "6aaafeac4d7c788892630cbbbe7f9488fc51ca90c757388a6f2e598e46b71947",
+      "after_sha256": "ed9ac8c2f7395065b01a5133ec7ecc10a6d922ddcca3d037cee3e68eb5b78762"
+    }
+  ]
+}

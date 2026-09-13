@@ -1,0 +1,223 @@
+{
+  "qualification": {
+    "runner_id": "sqlite-controller-product-path-v1",
+    "manifest": {
+      "incident_id": "fff4f6b7-bf33-475f-8280-31ff5e1ef7ca",
+      "skeleton_id": "reliable-plan-fff4f6b7-v1",
+      "scenarios": [
+        {
+          "number": 1,
+          "name": "analysis-only discovery authority",
+          "product_path": "planner patch validation and controller scheduling"
+        },
+        {
+          "number": 2,
+          "name": "accepted discovery and plan verification readiness",
+          "product_path": "controller schedule_tick readiness"
+        },
+        {
+          "number": 3,
+          "name": "declared batch topology or accepted amendment",
+          "product_path": "planner patch validation"
+        },
+        {
+          "number": 4,
+          "name": "bound requirement and evidence prompt hydration",
+          "product_path": "runtime dispatch packet assembly"
+        },
+        {
+          "number": 5,
+          "name": "exact corrective grades and check results",
+          "product_path": "corrective runtime dispatch packet assembly"
+        },
+        {
+          "number": 6,
+          "name": "semantic schema selector compatibility",
+          "product_path": "controller callback acceptance"
+        },
+        {
+          "number": 7,
+          "name": "accepted snapshot base authority",
+          "product_path": "controller lease grant"
+        },
+        {
+          "number": 8,
+          "name": "all batch verifications and final audit",
+          "product_path": "controller final reconciliation"
+        },
+        {
+          "number": 9,
+          "name": "conclusive callback and lease recovery",
+          "product_path": "controller agent_died recovery"
+        },
+        {
+          "number": 10,
+          "name": "operator semantic incompleteness visibility",
+          "product_path": "durable node and region read models"
+        }
+      ]
+    },
+    "results": [
+      {
+        "number": 1,
+        "name": "analysis-only discovery authority",
+        "product_path": "planner patch validation and controller scheduling",
+        "run_id": "reliable-plan-s1-1afad530",
+        "passed": true,
+        "product_path_passed": true,
+        "evidence": [
+          "patch_rejection=discovery worker cannot declare access_mode write; use a separate effectful artifact-writer region: worker-discovery"
+        ]
+      },
+      {
+        "number": 2,
+        "name": "accepted discovery and plan verification readiness",
+        "product_path": "controller schedule_tick readiness",
+        "run_id": "reliable-plan-s2-52cf1b32",
+        "passed": true,
+        "product_path_passed": true,
+        "evidence": [
+          "missing:leased=[]",
+          "failed:leased=[]",
+          "passed:leased=['worker-implementation']"
+        ]
+      },
+      {
+        "number": 3,
+        "name": "declared batch topology or accepted amendment",
+        "product_path": "planner patch validation",
+        "run_id": "reliable-plan-s3-38eea6f1",
+        "passed": true,
+        "product_path_passed": true,
+        "evidence": [
+          "generic_rejected=implementation against a declared batch plan must use effectful_batch semantics",
+          "controller_accepted_amendment=accepted-plan+verification-plan",
+          "amended_effectful_batch=worker+check+verifier"
+        ]
+      },
+      {
+        "number": 4,
+        "name": "bound requirement and evidence prompt hydration",
+        "product_path": "runtime dispatch packet assembly",
+        "run_id": "reliable-plan-s4-ca968be3",
+        "passed": true,
+        "product_path_passed": true,
+        "evidence": [
+          "prompt includes exact bound requirement",
+          "prompt summary reports hydrated evidence IDs"
+        ]
+      },
+      {
+        "number": 5,
+        "name": "exact corrective grades and check results",
+        "product_path": "corrective runtime dispatch packet assembly",
+        "run_id": "reliable-plan-s5-29a9459f",
+        "passed": true,
+        "product_path_passed": true,
+        "evidence": [
+          "corrective prompt contains exact immutable verification/check/gap payloads"
+        ]
+      },
+      {
+        "number": 6,
+        "name": "semantic schema selector compatibility",
+        "product_path": "controller callback acceptance",
+        "run_id": "reliable-plan-s6-2bb2aa14",
+        "passed": true,
+        "product_path_passed": true,
+        "evidence": [
+          "controller_accepted_nonmatching_records=['candidate-impostor', 'file-state-impostor', 'wrong-schema']",
+          "semantic_input_rejected=candidate,file-state,different-plan",
+          "exact_artifact_bound_and_consumer_leased=exact-artifact"
+        ]
+      },
+      {
+        "number": 7,
+        "name": "accepted snapshot base authority",
+        "product_path": "controller lease grant",
+        "run_id": "reliable-plan-s7-179eaf29",
+        "passed": true,
+        "product_path_passed": true,
+        "evidence": [
+          "accepted_base_before_correction=snapshot-one",
+          "explicit_rejected_correction_base=snapshot-two",
+          "accepted_base_after_correction=snapshot-three",
+          "candidate+file-state+verdict lineage persisted by callbacks"
+        ]
+      },
+      {
+        "number": 8,
+        "name": "all batch verifications and final audit",
+        "product_path": "controller final reconciliation",
+        "run_id": "reliable-plan-s8-0a27d107",
+        "passed": true,
+        "product_path_passed": true,
+        "evidence": [
+          "missing_batch_blocked=missing_declared_batch_verification",
+          "batch_callback_accepted_candidate+file-state+check=task-region-accepted",
+          "batch_bound_missing_audit_blocked=missing_final_independent_audit",
+          "exact_bound_batch+audit_callbacks=passed"
+        ]
+      },
+      {
+        "number": 9,
+        "name": "conclusive callback and lease recovery",
+        "product_path": "controller agent_died recovery",
+        "run_id": "reliable-plan-s9-c1223242",
+        "passed": true,
+        "product_path_passed": true,
+        "evidence": [
+          "revoked_without_retry=lease-6",
+          "healthy_retry=lease-19",
+          "persisted health evidence differentiates retry; one active lease"
+        ]
+      },
+      {
+        "number": 10,
+        "name": "operator semantic incompleteness visibility",
+        "product_path": "durable node and region read models",
+        "run_id": "reliable-plan-s10-955407a2",
+        "passed": true,
+        "product_path_passed": true,
+        "evidence": [
+          "durable_node_readiness=missing_required_input:semantic_artifact",
+          "semantic_contract_keys=['acceptance', 'declared_batch_id', 'inputs', 'objective', 'planning_horizon', 'scope', 'semantic_stage', 'work_mode']",
+          "public_archival_region_exposes=worker-disconnected+pending_node"
+        ]
+      }
+    ]
+  },
+  "receipt": {
+    "receipt_record_id": "reliable-plan-qualification-receipt",
+    "runner_id": "sqlite-controller-product-path-v1",
+    "runner_version": 1,
+    "incident_id": "fff4f6b7-bf33-475f-8280-31ff5e1ef7ca",
+    "skeleton_id": "reliable-plan-fff4f6b7-v1",
+    "manifest_hash": "sha256:0c784464f412d4bf58aaddced9d1fee6906577d8eed475f2e57f2e85a413f5f6",
+    "observation_record_ids": [
+      "qualification-observation-1",
+      "qualification-observation-2",
+      "qualification-observation-3",
+      "qualification-observation-4",
+      "qualification-observation-5",
+      "qualification-observation-6",
+      "qualification-observation-7",
+      "qualification-observation-8",
+      "qualification-observation-9",
+      "qualification-observation-10"
+    ],
+    "observation_hashes": [
+      "sha256:63defb9852d6b18255cdcd23069f71f0c01bac44bbe498876a24d7b6d6a507d5",
+      "sha256:9d3e6c6c26d281e3545d09e57f1939bcfcb251daadccd8405e384488c464df08",
+      "sha256:c3ac4f845bc73ea6e5fe4987d46c934235c1d6db18304fab46fd37228d7a1667",
+      "sha256:7359fd575eb1e9036e0016b6e48234053ee45f8f23188da19824e41143858c34",
+      "sha256:70e44e17fe465559a28274911e981adffbf769c51f39bb0838a0f58d7420a2d7",
+      "sha256:c8ec6e8e8e39aaf9a2d76dd5d0aaaf25c25640734c7900789c4cbc2dace32004",
+      "sha256:cc71ac1204ce121ff6d05605e6d59925214d7ea643beb26478715c6a1e86d3a0",
+      "sha256:60d6dcd3bdc3b0564028ce5179df96c7f6ebf3662efbc57d80bd12d83179f41c",
+      "sha256:4f68e4852a3480fdb00185d9fab4e89f5c2cfb79650f5a999db933a15633b40a",
+      "sha256:937b4190b2ce2967bd33d5d4f4302fa614e8f192cab5587878d0e957dab213ef"
+    ],
+    "evidence_hash": "sha256:d5e658ea05c5ae9ca2bec18e090ca376933ec29eb7233d0d299583579017daab"
+  }
+}

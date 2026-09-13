@@ -91,6 +91,7 @@ from orchestrator.workflow.commands.clarifications import (
     handle_record_approval_decision,
     handle_record_clarification_response,
 )
+from orchestrator.workflow.worktree_mutations import WorktreeMutationCoordinator
 from orchestrator.state.models import Attempt, ChecklistItem, Run, StepState, TaskState
 from orchestrator.state.session import SessionStateManager
 from orchestrator.state.errors import (
@@ -341,6 +342,7 @@ class WorkflowService:
         fan_out_policy: FanOutDelegationPolicy | None = None,
         event_store_v2: SqliteEventStore | None = None,
         artifact_gc: ArtifactGarbageCollectionCoordinator | None = None,
+        worktree_mutations: WorktreeMutationCoordinator | None = None,
     ) -> None:
         self._session = session
         self._repo = repo or RunRepository(session)
@@ -358,6 +360,7 @@ class WorkflowService:
         self._fan_out_policy = fan_out_policy or FanOutDelegationPolicy()
         self._delegation_recorder = DelegationRecorder(self._clock)
         self._artifact_gc = artifact_gc
+        self._worktree_mutations = worktree_mutations or WorktreeMutationCoordinator()
 
     async def _update_parent_oversight_facts(
         self,
@@ -1400,9 +1403,29 @@ class WorkflowService:
         reason: str,
         target_ref: str | None = None,
         branch_name: str | None = None,
+        _worktree_lock_held: bool = False,
     ) -> None:
+        if not _worktree_lock_held:
+            ownership_path = worktree_path or f"missing-worktree:{run_id}"
+
+            async def _owned_reset() -> None:
+                await self._run_event_sourced_worktree_reset(
+                    run_id=run_id,
+                    worktree_path=worktree_path,
+                    reset_type=reset_type,
+                    reason=reason,
+                    target_ref=target_ref,
+                    branch_name=branch_name,
+                    _worktree_lock_held=True,
+                )
+
+            await self._worktree_mutations.run(ownership_path, _owned_reset)
+            return
+
         event_worktree_path = worktree_path or ""
-        head_before = get_head_commit(Path(worktree_path)) if worktree_path else None
+        head_before = (
+            await asyncio.to_thread(get_head_commit, Path(worktree_path)) if worktree_path else None
+        )
         request_events = await handle_request_run_worktree_reset(
             RequestRunWorktreeResetCommand(
                 run_id=run_id,
@@ -1423,13 +1446,14 @@ class WorkflowService:
             if not worktree_path:
                 raise WorktreeResetError("", "run has no worktree_path")
             if reset_type == "discard_changes":
-                result = reset_worktree_changes(worktree_path)
+                result = await asyncio.to_thread(reset_worktree_changes, worktree_path)
             else:
                 if target_ref is None:
                     raise WorktreeResetError(worktree_path, "target_ref is required")
                 if branch_name is None:
                     raise WorktreeResetError(worktree_path, "branch_name is required")
-                result = reset_worktree_to_ref(
+                result = await asyncio.to_thread(
+                    reset_worktree_to_ref,
                     worktree_path,
                     branch_name=branch_name,
                     target_ref=target_ref,
@@ -1480,12 +1504,29 @@ class WorkflowService:
         message: str,
         commit_type: str,
         reason: str,
+        _worktree_lock_held: bool = False,
     ) -> str | None:
+        if not _worktree_lock_held:
+
+            async def _owned_commit() -> str | None:
+                return await self._run_event_sourced_worktree_commit(
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                    worktree_path=worktree_path,
+                    message=message,
+                    commit_type=commit_type,
+                    reason=reason,
+                    _worktree_lock_held=True,
+                )
+
+            return await self._worktree_mutations.run(worktree_path, _owned_commit)
+
         path = Path(worktree_path)
         if not path.exists() or not path.is_dir():
             head_before = None
         else:
-            head_before = get_head_commit(path)
+            head_before = await asyncio.to_thread(get_head_commit, path)
         request_events = await handle_request_run_worktree_commit(
             RequestRunWorktreeCommitCommand(
                 run_id=run_id,
@@ -1526,7 +1567,7 @@ class WorkflowService:
             return None
 
         try:
-            result = commit_uncommitted_changes_or_raise(path, message)
+            result = await asyncio.to_thread(commit_uncommitted_changes_or_raise, path, message)
         except WorktreeCommitError as exc:
             failed_events = await handle_fail_run_worktree_commit(
                 FailRunWorktreeCommitCommand(
@@ -2824,7 +2865,13 @@ class WorkflowService:
             logger.warning(f"Run {run_id}: script task {task_id} failed with exit code {exit_code}")
             return TransitionResult(success=True, new_status=TaskStatus.FAILED)
 
-    async def submit_for_verification(self, run_id: str, task_id: str) -> TransitionResult:
+    async def submit_for_verification(
+        self,
+        run_id: str,
+        task_id: str,
+        *,
+        _worktree_lock_held: bool = False,
+    ) -> TransitionResult:
         """Submit task for verification (BUILDING -> VERIFYING).
 
         Runs task-level auto-verify once before the checklist gate. If must-items
@@ -2835,6 +2882,21 @@ class WorkflowService:
             GateBlockedError: If the checklist gate does not pass.
         """
         run = await self._repo.get(run_id)
+        if run.worktree_path and not _worktree_lock_held:
+
+            async def _owned_submit() -> TransitionResult:
+                # The path lookup may have waited behind another service
+                # instance. End that read transaction so the owned retry sees
+                # the preceding owner's durable task state and receipts.
+                await self._session.rollback()
+                return await self.submit_for_verification(
+                    run_id,
+                    task_id,
+                    _worktree_lock_held=True,
+                )
+
+            return await self._worktree_mutations.run(run.worktree_path, _owned_submit)
+
         if run.status not in (RunStatus.ACTIVE, RunStatus.STOPPING):
             raise InvalidTransitionError(
                 run.status.value, "submit_for_verification (requires ACTIVE or STOPPING run)"
@@ -2869,6 +2931,7 @@ class WorkflowService:
                         message=f"Auto-commit builder changes for task {task_id}",
                         commit_type="builder_submit",
                         reason="pre_auto_verify",
+                        _worktree_lock_held=True,
                     )
 
                 av_results = await run_auto_verify(
@@ -2967,6 +3030,7 @@ class WorkflowService:
                 message=f"Auto-commit builder changes for task {task_id}",
                 commit_type="builder_submit",
                 reason="submit_for_verification",
+                _worktree_lock_held=True,
             )
 
         try:
@@ -3118,7 +3182,13 @@ class WorkflowService:
 
     # --- Check/apply split methods for synchronous-check + async-signal pattern ---
 
-    async def check_submission(self, run_id: str, task_id: str) -> TransitionResult:
+    async def check_submission(
+        self,
+        run_id: str,
+        task_id: str,
+        *,
+        _worktree_lock_held: bool = False,
+    ) -> TransitionResult:
         """Check submission readiness without transitioning task state.
 
         Runs auto-verify, auto-marks checklist items, and validates the checklist
@@ -3139,6 +3209,18 @@ class WorkflowService:
             GateBlockedError: Checklist gate does not pass after auto-verify.
         """
         run = await self._repo.get(run_id)
+        if run.worktree_path and not _worktree_lock_held:
+
+            async def _owned_check() -> TransitionResult:
+                await self._session.rollback()
+                return await self.check_submission(
+                    run_id,
+                    task_id,
+                    _worktree_lock_held=True,
+                )
+
+            return await self._worktree_mutations.run(run.worktree_path, _owned_check)
+
         if run.status not in (RunStatus.ACTIVE, RunStatus.STOPPING):
             raise InvalidTransitionError(
                 run.status.value, "check_submission (requires ACTIVE or STOPPING run)"
@@ -3164,6 +3246,7 @@ class WorkflowService:
                         message=f"Auto-commit builder changes for task {task_id}",
                         commit_type="builder_submit",
                         reason="check_submission_pre_auto_verify",
+                        _worktree_lock_held=True,
                     )
 
                 av_results = await run_auto_verify(
@@ -3253,7 +3336,13 @@ class WorkflowService:
         await self._persist(state, run_id, buffer)
         return TransitionResult(success=True, new_status=TaskStatus.BUILDING)
 
-    async def apply_submission(self, run_id: str, task_id: str) -> TransitionResult:
+    async def apply_submission(
+        self,
+        run_id: str,
+        task_id: str,
+        *,
+        _worktree_lock_held: bool = False,
+    ) -> TransitionResult:
         """Apply BUILDING → VERIFYING transition after a validated ACTIVITY_COMPLETED signal.
 
         Called by the signal handler.  Assumes check_submission has already
@@ -3263,6 +3352,18 @@ class WorkflowService:
             InvalidTransitionError: Run is not ACTIVE or STOPPING.
         """
         run = await self._repo.get(run_id)
+        if run.worktree_path and not _worktree_lock_held:
+
+            async def _owned_apply() -> TransitionResult:
+                await self._session.rollback()
+                return await self.apply_submission(
+                    run_id,
+                    task_id,
+                    _worktree_lock_held=True,
+                )
+
+            return await self._worktree_mutations.run(run.worktree_path, _owned_apply)
+
         if run.status not in (RunStatus.ACTIVE, RunStatus.STOPPING):
             raise InvalidTransitionError(
                 run.status.value, "apply_submission (requires ACTIVE or STOPPING run)"
@@ -3283,6 +3384,7 @@ class WorkflowService:
                 message=f"Auto-commit builder changes for task {task_id}",
                 commit_type="builder_submit",
                 reason="apply_submission",
+                _worktree_lock_held=True,
             )
 
         try:

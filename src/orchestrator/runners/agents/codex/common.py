@@ -23,7 +23,7 @@ from typing import Any, cast
 
 from typing_extensions import Protocol
 
-from orchestrator.graph import RecordSelector
+from orchestrator.graph import RecordSelector, reliable_plan_check_decision_tool_schema
 from orchestrator.state.models import ActionLog
 from orchestrator.runners.graph_tool_routing import (
     GRAPH_MACRO_TOOL_NAMES,
@@ -604,6 +604,72 @@ def build_dynamic_tool_specs(
         },
     }
     planner_macro_specs: dict[str, dict[str, Any]] = {
+        "construct_reliable_plan_region": {
+            "name": "construct_reliable_plan_region",
+            "description": (
+                "Construct the complete reliable-plan region from substantive work decisions. "
+                "The controller derives all graph identities, evidence wiring, snapshots, "
+                "assignments, verification, final acceptance, and continuations."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "required": [
+                    "patch_id",
+                    "base_graph_position",
+                    "operation_key",
+                    "scope",
+                    "objective",
+                    "requirement_ids",
+                    "acceptance",
+                    "checks",
+                    "rubric",
+                ],
+                "properties": {
+                    **macro_patch_properties,
+                    "operation_key": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                    },
+                    "scope": {
+                        "type": "string",
+                        "description": (
+                            "Initial planning scope, or the exact accepted batch identity for "
+                            "a successor horizon."
+                        ),
+                    },
+                    "objective": {"type": "string", "minLength": 1},
+                    "requirement_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                    },
+                    "dependencies": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "acceptance": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                    },
+                    "checks": {
+                        "type": "array",
+                        "title": "Checks",
+                        "description": (
+                            "May be empty for initial discovery; effectful horizons require "
+                            "at least one mechanical check."
+                        ),
+                        "items": reliable_plan_check_decision_tool_schema(),
+                    },
+                    "rubric": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
         "create_discovery_region": {
             "name": "create_discovery_region",
             "description": "Create a read-only discovery region with a declared semantic output.",
@@ -1367,6 +1433,9 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
         if context.node_kind == "planner" and context.node_role in {"planner", "gap_planner"}:
             planner_tool_section = (
                 "\n### Planner Graph-Mutation Tool\n"
+                "- Reliable-plan planners use **construct_reliable_plan_region** for one "
+                "semantic, atomic region; the controller derives IDs, evidence, snapshots, "
+                "assignments, verification, and continuations.\n"
                 "- Prefer graph macros: **create_work_region**, **attach_verifier**, "
                 "**attach_check**, **create_gap_planner**, **create_join**, "
                 "**request_gate**, and **retire_or_supersede**. Gap planners use "

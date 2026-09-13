@@ -462,7 +462,7 @@ class ReliablePlanProductPathRunner:
                     event.event_type == "output_record_accepted"
                     and event.payload.get("record_id") == "verification-plan"
                     and event.payload.get("evaluated_record_ids")
-                    == ["accepted-plan", "req-incident"]
+                    == ["req-incident", "accepted-plan"]
                     for event in accepted_verification.events
                 ),
                 _event_summary(accepted_verification.events),
@@ -530,7 +530,10 @@ class ReliablePlanProductPathRunner:
                                 "checks": [
                                     {
                                         "check_id": "check-batch-combined",
-                                        "command_binding": "dynamic_feature_hidden_oracle",
+                                        "command_definition": {
+                                            "id": "check-batch-combined",
+                                            "cmd": "printf amended-batch-check",
+                                        },
                                     }
                                 ],
                                 "rubric": ["candidate satisfies the amended batch"],
@@ -1118,25 +1121,54 @@ class ReliablePlanProductPathRunner:
                 f"blockers={sorted(missing_audit_blockers)}",
             )
 
-            position, audit_lease = await _lease_node(
+            position, acceptance_lease = await _lease_node(
                 probe,
                 missing_audit.projection_position,
+                "final-acceptance",
+            )
+            accepted = await _submit_records(
+                probe,
+                position,
+                acceptance_lease,
+                [_passed_final_acceptance_record()],
+                callback_id="final-acceptance",
+            )
+            _require(
+                any(
+                    event.event_type == "output_record_accepted"
+                    and event.payload.get("record_id") == "final-acceptance-report"
+                    for event in accepted.events
+                ),
+                _event_summary(accepted.events),
+            )
+
+            position, audit_lease = await _lease_node(
+                probe,
+                accepted.projection_position,
                 "final-audit",
             )
+            audit_record = _verification_record(
+                "passed",
+                record_id="audit-report",
+                producer="final-audit",
+                candidate_id="batch-report",
+                grades=[],
+                evaluated_record_ids=[
+                    "final-acceptance-report",
+                    "batch-report",
+                    "check-result-batch",
+                    "candidate-batch",
+                    "file-state-batch",
+                ],
+            )
+            audit_record.pop("candidate_record_id")
+            audit_record["candidate_record_ids"] = ["batch-report", "candidate-batch"]
+            audit_record["file_state_record_ids"] = ["file-state-batch"]
             audited = await _submit_records(
                 probe,
                 position,
                 audit_lease,
-                [
-                    _verification_record(
-                        "passed",
-                        record_id="audit-report",
-                        producer="final-audit",
-                        candidate_id="batch-report",
-                        grades=[],
-                        evaluated_record_ids=["batch-report"],
-                    )
-                ],
+                [audit_record],
                 callback_id="final-audit",
             )
             _require(
@@ -2273,6 +2305,17 @@ def _final_gate_facts() -> list[tuple[str, dict[str, object]]]:
         (
             "node_created",
             {
+                "node_id": "final-acceptance",
+                "kind": "check",
+                "role": "acceptance_gate",
+                "state": "planned",
+                "semantic_stage": "final_acceptance",
+                "command_binding": "dynamic_feature_acceptance",
+            },
+        ),
+        (
+            "node_created",
+            {
                 "node_id": "final-audit",
                 "kind": "verifier",
                 "role": "verifier",
@@ -2327,6 +2370,50 @@ def _passed_check_record(*, base_snapshot_id: str, execution_id: str) -> dict[st
     }
 
 
+def _passed_final_acceptance_record() -> dict[str, object]:
+    return {
+        "record_id": "final-acceptance-report",
+        "record_kind": "output",
+        "record_type": "check_result",
+        "producer_node_id": "final-acceptance",
+        "port": "check_result",
+        "schema": "CheckResult",
+        "candidate_id": "candidate-batch",
+        "task_region_id": "region-batch-1",
+        "attempt_number": 1,
+        "candidate_record_ids": ["candidate-batch"],
+        "file_state_record_ids": ["file-state-batch"],
+        "verification_report_record_ids": ["batch-report"],
+        "evaluated_record_ids": [
+            "batch-report",
+            "check-result-batch",
+            "candidate-batch",
+            "file-state-batch",
+        ],
+        "value": {
+            "status": "passed",
+            "classification": "passed",
+            "command_id": "dynamic-feature-acceptance",
+            "command_binding": "dynamic_feature_acceptance",
+            "command_text": "true",
+            "command": {"argv": ["true"]},
+            "worktree_path": "/work",
+            "base_snapshot_id": "snapshot-batch",
+            "execution_snapshot_id": "snapshot-batch",
+            "execution_snapshot_ref": "refs/orchestrator/snapshots/snapshot-batch",
+            "execution_id": "execution-final-acceptance",
+            "exit_code": 0,
+            "duration_ms": 1,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "stdout_truncated": False,
+            "stderr_truncated": False,
+            "timeout_seconds": 1.0,
+            "environment_policy": {},
+        },
+    }
+
+
 def _final_gate_topology() -> list[tuple[str, dict[str, object]]]:
     passed_report_selector: dict[str, object] = {
         "record_type": "verification_report",
@@ -2334,6 +2421,21 @@ def _final_gate_topology() -> list[tuple[str, dict[str, object]]]:
         "outcome": "passed",
     }
     facts: list[tuple[str, dict[str, object]]] = [
+        (
+            "edge_created",
+            {
+                "edge_id": "edge-batch-acceptance",
+                "from_node_id": "batch-verifier",
+                "from_port": "verification_report",
+                "to_node_id": "final-acceptance",
+                "to_port": "verification_report_batch_1",
+                "required": True,
+                "accepted_record_selector": {
+                    **passed_report_selector,
+                    "record_id": "batch-report",
+                },
+            },
+        ),
         (
             "edge_created",
             {
@@ -2347,6 +2449,40 @@ def _final_gate_topology() -> list[tuple[str, dict[str, object]]]:
                     "record_type": "semantic_artifact",
                     "schema": "SemanticArtifact",
                     "authority_status": "accepted",
+                },
+            },
+        ),
+        (
+            "edge_created",
+            {
+                "edge_id": "edge-acceptance-audit",
+                "from_node_id": "final-acceptance",
+                "from_port": "check_result",
+                "to_node_id": "final-audit",
+                "to_port": "dynamic_feature_acceptance",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "check_result",
+                    "schema": "CheckResult",
+                    "status": "passed",
+                    "record_id": "final-acceptance-report",
+                },
+            },
+        ),
+        (
+            "edge_created",
+            {
+                "edge_id": "edge-acceptance-gate",
+                "from_node_id": "final-acceptance",
+                "from_port": "check_result",
+                "to_node_id": "gate-final",
+                "to_port": "dynamic_feature_acceptance",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "check_result",
+                    "schema": "CheckResult",
+                    "status": "passed",
+                    "record_id": "final-acceptance-report",
                 },
             },
         ),

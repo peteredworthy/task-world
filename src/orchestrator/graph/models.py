@@ -1696,6 +1696,8 @@ class GraphPatchAcceptedPayload(GraphEventPayloadBase):
     successor_planner_node_ids: list[str] = Field(default_factory=list)
     session_id: str | None = None
     carryover_record_id: str | None = None
+    operation_key: str | None = None
+    operation_fingerprint: str | None = None
 
 
 class GraphPatchRejectedPayload(GraphEventPayloadBase):
@@ -1982,6 +1984,7 @@ class NodeCreatedPayload(GraphEventPayloadBase):
             "plan_verification",
             "successor_planning",
             "effectful_batch",
+            "final_acceptance",
             "final_audit",
             "final_gate",
             "corrective_work",
@@ -1996,6 +1999,9 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     accepted_plan_amendment_record_id: str | None = None
     failed_verification_record_id: str | None = None
     failed_check_record_ids: list[str] | None = None
+    correction_trigger: (
+        Literal["failed_batch", "failed_final_acceptance", "failed_final_audit"] | None
+    ) = None
     classified_gap_record_id: str | None = None
     final_audit_required: StrictBool | None = None
     reliable_plan_skeleton_id: str | None = None
@@ -3202,6 +3208,10 @@ class RevisionCreatedPayload(StrictEventPayload):
     node: NodeModel
     worker_node: NodeModel
     verifier_node: NodeModel
+
+    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        kwargs.setdefault("by_alias", True)
+        return super().model_dump(*args, **kwargs)
 
 
 class CanonicalFileStateRecord(FileStateRecord):

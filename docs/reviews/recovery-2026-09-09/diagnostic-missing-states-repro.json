@@ -1,0 +1,6 @@
+{
+  "case": "missing node_states",
+  "exit_code": 0,
+  "stdout": "{\"run_id\":\"d20ff4dd-9cd1-4f29-9df1-d344a0582907\",\"status\":\"paused\",\"pause_reason\":null,\"summary_error\":null,\"failures\":[],\"unavailable\":[]}\n",
+  "stderr": ""
+}

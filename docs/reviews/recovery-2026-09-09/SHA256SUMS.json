@@ -1,0 +1,17 @@
+{
+  "baseline-created.json": "4e173808748813a358621820a9d24887b47fd7fb32f1389c29fee5c8ec4feed8",
+  "baseline-request.json": "35c9628fbe115187f5c729ce66aef3142c961e139ccfddecfbe8af72266ee6ed",
+  "baseline-start.json": "4e173808748813a358621820a9d24887b47fd7fb32f1389c29fee5c8ec4feed8",
+  "baseline-status.json": "f1671e502e259ad8d23553d116bba7a802bbe4f58e8f5a805297654a3f4d11ad",
+  "diagnostic-request.pending.json": "f1b271a0e2c5d0d4487513328c4db00988661db743280455f690cf040647a2e0",
+  "diagnostic-spec.md": "c9b071f322f533438d43e545260902554adbd5079c5bef0e7eeaf71ca580ae72",
+  "failed-node.json": "638c78d0b7039b7bca5dfdaf7125b947279b942f1c46cfc522d46647d7334a12",
+  "jsonl-contract.md": "00cc937542c5c2603f62d136f15453b7856a3f883848875f86180e6699090b45",
+  "observations.json": "35184aa5ee328a7b81692cf908590d801ca42943906dbcb2fb76f08433c946a5",
+  "repair-brief.md": "c317755fad679a2a2273ea132377d8dd3e5c27b35e158f0d053c853554431918",
+  "unicode-correction-created.json": "528b20c899a26c5c54ef0196bb7f5389a9e07e15bd18f1997349b646bf1a6216",
+  "unicode-correction-request.json": "eabb2eafa074be26845e3e32fdd94ee3ff7b16059daa3f7d4f1e8693ec27865b",
+  "unicode-correction-start.json": "528b20c899a26c5c54ef0196bb7f5389a9e07e15bd18f1997349b646bf1a6216",
+  "unicode-correction-status.json": "35c81c89c52414a62006f2665c1a8a4a8b25b04edcfcc7df0f3f9f46ad89eeea",
+  "unicode-oracle.py.txt": "fe04dc3112d1a6a0e588f3cf73295d7256c105c50acd3c3ff9488d29f3ad576d"
+}

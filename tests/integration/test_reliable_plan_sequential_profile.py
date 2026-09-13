@@ -61,6 +61,25 @@ async def test_two_effectful_horizons_materialize_only_after_accepted_evidence(
                     make_event(
                         "output_record_accepted",
                         {
+                            "record_id": "routine-snapshot-record",
+                            "record_kind": "graph_record",
+                            "record_type": "routine_snapshot",
+                            "producer_node_id": "routine-snapshot",
+                            "port": "snapshot",
+                            "schema": "RoutineSnapshot",
+                            "value": {
+                                "routine_id": "sequential-reliable-plan",
+                                "name": "Sequential reliable-plan fixture",
+                                "content_hash": "sequential-fixture",
+                                "step_count": 1,
+                                "task_count": 2,
+                                "dynamic_feature": {"acceptance_command": "true"},
+                            },
+                        },
+                    ),
+                    make_event(
+                        "output_record_accepted",
+                        {
                             "record_id": "plan-schema",
                             "record_kind": "graph_record",
                             "record_type": "semantic_schema_declaration",
@@ -291,6 +310,58 @@ async def test_two_effectful_horizons_materialize_only_after_accepted_evidence(
         assert node_states_view(projection)["worker-batch-2"] in {"planned", "ready"}
 
         position = await _accept_batch(controller, run_id, horizon_two.projection_position, 2)
+        position, acceptance_lease = await _lease(controller, run_id, position, "final-acceptance")
+        position = await _callback(
+            controller,
+            run_id,
+            position,
+            acceptance_lease,
+            [
+                {
+                    "record_id": "final-acceptance-result",
+                    "record_kind": "output",
+                    "record_type": "check_result",
+                    "producer_node_id": "final-acceptance",
+                    "port": "check_result",
+                    "schema": "CheckResult",
+                    "candidate_id": "candidate-batch-2",
+                    "candidate_record_ids": [
+                        "candidate-batch-1",
+                        "candidate-batch-2",
+                    ],
+                    "file_state_record_ids": [
+                        "file-state-batch-1",
+                        "file-state-batch-2",
+                    ],
+                    "verification_report_record_ids": [
+                        "verification-batch-1",
+                        "verification-batch-2",
+                    ],
+                    "task_region_id": "batch-2",
+                    "attempt_number": 1,
+                    "value": {
+                        "status": "passed",
+                        "classification": "passed",
+                        "command_id": "dynamic-feature-acceptance",
+                        "command_binding": "dynamic_feature_acceptance",
+                        "command_text": "true",
+                        "command": {"argv": ["true"]},
+                        "worktree_path": "/worktree",
+                        "base_snapshot_id": "snapshot-batch-2",
+                        "execution_snapshot_id": "snapshot-batch-2",
+                        "execution_id": str(acceptance_lease["execution_id"]),
+                        "exit_code": 0,
+                        "duration_ms": 1,
+                        "stdout_tail": "",
+                        "stderr_tail": "",
+                        "stdout_truncated": False,
+                        "stderr_truncated": False,
+                        "timeout_seconds": 1.0,
+                        "environment_policy": {},
+                    },
+                }
+            ],
+        )
         position, audit_lease = await _lease(controller, run_id, position, "final-audit")
         position = await _callback(
             controller,
@@ -305,11 +376,15 @@ async def test_two_effectful_horizons_materialize_only_after_accepted_evidence(
                     "producer_node_id": "final-audit",
                     "port": "verification_report",
                     "schema": "VerificationReport",
-                    "candidate_id": "verification-batch-2",
+                    "candidate_id": "candidate-batch-2",
+                    "candidate_record_ids": [
+                        "candidate-batch-1",
+                        "candidate-batch-2",
+                    ],
                     "outcome": "passed",
-                    "evaluated_record_ids": [
-                        "verification-batch-1",
-                        "verification-batch-2",
+                    "file_state_record_ids": [
+                        "file-state-batch-1",
+                        "file-state-batch-2",
                     ],
                     "value": {
                         "outcome": "passed",
@@ -403,9 +478,43 @@ async def _submit_horizon(
                 },
             }
         )
-    ops: list[dict[str, Any]] = []
+    finalization_ops: list[dict[str, Any]] = []
     if not with_successor:
-        ops = [
+        finalization_ops = [
+            {
+                "op": "create_node",
+                "node": {
+                    "node_id": "final-acceptance",
+                    "kind": "check",
+                    "role": "acceptance_gate",
+                    "state": "planned",
+                    "semantic_stage": "final_acceptance",
+                    "task_region_id": f"batch-{horizon}",
+                    "command_binding": "dynamic_feature_acceptance",
+                    "inputs": [
+                        {
+                            "port": "verification_report_batch_1",
+                            "direction": "input",
+                            "schema": "VerificationReport",
+                            "required": True,
+                        },
+                        {
+                            "port": "verification_report_batch_2",
+                            "direction": "input",
+                            "schema": "VerificationReport",
+                            "required": True,
+                        },
+                    ],
+                    "outputs": [
+                        {
+                            "port": "check_result",
+                            "direction": "output",
+                            "schema": "CheckResult",
+                            "required": True,
+                        }
+                    ],
+                },
+            },
             {
                 "op": "create_node",
                 "node": {
@@ -426,6 +535,12 @@ async def _submit_horizon(
                             "port": "verification_report_batch_2",
                             "direction": "input",
                             "schema": "VerificationReport",
+                            "required": True,
+                        },
+                        {
+                            "port": "dynamic_feature_acceptance",
+                            "direction": "input",
+                            "schema": "CheckResult",
                             "required": True,
                         },
                     ],
@@ -462,6 +577,12 @@ async def _submit_horizon(
                             "required": True,
                         },
                         {
+                            "port": "dynamic_feature_acceptance",
+                            "direction": "input",
+                            "schema": "CheckResult",
+                            "required": True,
+                        },
+                        {
                             "port": "verification_report_final_audit",
                             "direction": "input",
                             "schema": "VerificationReport",
@@ -484,6 +605,23 @@ async def _submit_horizon(
                     "outcome": "passed",
                 },
             },
+            *[
+                {
+                    "op": "create_edge",
+                    "edge_id": f"edge-batch-{batch}-to-final-acceptance",
+                    "from_node_id": f"verifier-batch-{batch}",
+                    "from_port": "verification_report",
+                    "to_node_id": "final-acceptance",
+                    "to_port": f"verification_report_batch_{batch}",
+                    "required": True,
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                        "outcome": "passed",
+                    },
+                }
+                for batch in (1, 2)
+            ],
             *[
                 {
                     "op": "create_edge",
@@ -529,6 +667,23 @@ async def _submit_horizon(
                     "outcome": "passed",
                 },
             },
+            *[
+                {
+                    "op": "create_edge",
+                    "edge_id": f"edge-final-acceptance-to-{target}",
+                    "from_node_id": "final-acceptance",
+                    "from_port": "check_result",
+                    "to_node_id": target,
+                    "to_port": "dynamic_feature_acceptance",
+                    "required": True,
+                    "accepted_record_selector": {
+                        "record_type": "check_result",
+                        "schema": "CheckResult",
+                        "status": "passed",
+                    },
+                }
+                for target in ("final-audit", "final-gate")
+            ],
         ]
     result = await controller.handle_command(
         run_id,
@@ -537,7 +692,7 @@ async def _submit_horizon(
         {
             "patch_id": f"horizon-{horizon}",
             "base_graph_position": position,
-            "ops": ops,
+            "ops": finalization_ops,
             "macro_invocations": invocations,
         },
         context=PatchCommandContext(
@@ -642,8 +797,17 @@ async def _accept_batch(controller: GraphController, run_id: str, position: int,
                 "port": "verification_report",
                 "schema": "VerificationReport",
                 "candidate_id": f"candidate-batch-{batch}",
+                "candidate_record_id": f"candidate-batch-{batch}",
+                "candidate_record_ids": [f"candidate-batch-{batch}"],
+                "file_state_record_ids": [f"file-state-batch-{batch}"],
                 "task_region_id": f"batch-{batch}",
                 "outcome": "passed",
+                "evaluated_record_ids": [
+                    f"check-result-batch-{batch}",
+                    "requirement-R-1",
+                    f"candidate-batch-{batch}",
+                    f"file-state-batch-{batch}",
+                ],
                 "value": {
                     "outcome": "passed",
                     "grades": [

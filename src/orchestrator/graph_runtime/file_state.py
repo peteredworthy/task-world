@@ -67,11 +67,21 @@ def collect_worktree_status(
     tracked: list[FileStatePath] = []
     untracked: list[FileStatePath] = []
     ignored: list[FileStatePath] = []
-    for line, original_path in _porcelain_v2_records(result.stdout):
+    records = _porcelain_v2_records(result.stdout)
+    ignored_roots = tuple(line[2:].rstrip("/") for line, _ in records if line.startswith("! "))
+    for line, original_path in records:
         prefix = line[0]
         if prefix == "?":
             relpath = line[2:]
-            untracked.extend(_paths_with_metadata(path, relpath, "untracked", active_policy))
+            untracked.extend(
+                _paths_with_metadata(
+                    path,
+                    relpath,
+                    "untracked",
+                    active_policy,
+                    excluded_roots=ignored_roots,
+                )
+            )
         elif prefix == "!":
             relpath = line[2:]
             ignored.extend(_paths_with_metadata(path, relpath, "ignored", active_policy))
@@ -464,8 +474,12 @@ def _paths_with_metadata(
     relpath: str,
     kind: FileStatePathKind,
     policy: FileStatePolicy,
+    *,
+    excluded_roots: tuple[str, ...] = (),
 ) -> list[FileStatePath]:
     normalized = relpath.rstrip("/")
+    if _path_is_within_roots(normalized, excluded_roots):
+        return []
     full_path = worktree_path / normalized
     if not full_path.is_dir() or full_path.is_symlink():
         return [_path_with_metadata(worktree_path, normalized, kind, policy)]
@@ -484,6 +498,9 @@ def _paths_with_metadata(
         for dirname in list(dirs):
             dir_path = Path(root) / dirname
             relative = dir_path.relative_to(worktree_path).as_posix()
+            if _path_is_within_roots(relative, excluded_roots):
+                dirs.remove(dirname)
+                continue
             if not _is_declared_tool_cache(relative, kind, policy):
                 continue
             paths.append(_path_with_metadata(worktree_path, relative, kind, policy))
@@ -505,15 +522,22 @@ def _paths_with_metadata(
                 )
         for filename in sorted(files):
             file_path = Path(root) / filename
+            relative = file_path.relative_to(worktree_path).as_posix()
+            if _path_is_within_roots(relative, excluded_roots):
+                continue
             paths.append(
                 _path_with_metadata(
                     worktree_path,
-                    file_path.relative_to(worktree_path).as_posix(),
+                    relative,
                     kind,
                     policy,
                 )
             )
     return paths
+
+
+def _path_is_within_roots(path: str, roots: tuple[str, ...]) -> bool:
+    return any(path == root or path.startswith(f"{root}/") for root in roots)
 
 
 def _is_declared_tool_cache(path: str, kind: FileStatePathKind, policy: FileStatePolicy) -> bool:

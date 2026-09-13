@@ -84,6 +84,7 @@ def test_allowlist_contains_expected_tools() -> None:
             "create_plan_verification",
             "create_successor_planner",
             "create_effectful_batch",
+            "construct_reliable_plan_region",
         }
     )
     assert CodexServerAgent.TOOL_ALLOWLIST == expected

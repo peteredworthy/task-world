@@ -1,0 +1,55 @@
+[2026-09-07T11:09:16-0400] [backend] INFO:     127.0.0.1:49446 - "GET /api/runs/cost-rollup?group_by=run&group_by=model&from=2026-09-07T14%3A53%3A00Z&to=2026-09-07T15%3A09%3A00Z HTTP/1.1" 500 Internal Server Error
+[2026-09-07T11:09:16-0400] [backend] ERROR:    Exception in ASGI application
+[2026-09-07T11:09:16-0400] [backend] Traceback (most recent call last):
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 416, in run_asgi
+[2026-09-07T11:09:16-0400] [backend]     result = await app(  # type: ignore[func-returns-value]
+[2026-09-07T11:09:16-0400] [backend]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+[2026-09-07T11:09:16-0400] [backend]     return await self.app(scope, receive, send)
+[2026-09-07T11:09:16-0400] [backend]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/fastapi/applications.py", line 1135, in __call__
+[2026-09-07T11:09:16-0400] [backend]     await super().__call__(scope, receive, send)
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/starlette/applications.py", line 107, in __call__
+[2026-09-07T11:09:16-0400] [backend]     await self.middleware_stack(scope, receive, send)
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 186, in __call__
+[2026-09-07T11:09:16-0400] [backend]     raise exc
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+[2026-09-07T11:09:16-0400] [backend]     await self.app(scope, receive, _send)
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/starlette/middleware/cors.py", line 85, in __call__
+[2026-09-07T11:09:16-0400] [backend]     await self.app(scope, receive, send)
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+[2026-09-07T11:09:16-0400] [backend]     await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+[2026-09-07T11:09:16-0400] [backend]     raise exc
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+[2026-09-07T11:09:16-0400] [backend]     await app(scope, receive, sender)
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+[2026-09-07T11:09:16-0400] [backend]     await self.app(scope, receive, send)
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/starlette/routing.py", line 716, in __call__
+[2026-09-07T11:09:16-0400] [backend]     await self.middleware_stack(scope, receive, send)
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/starlette/routing.py", line 736, in app
+[2026-09-07T11:09:16-0400] [backend]     await route.handle(scope, receive, send)
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/starlette/routing.py", line 290, in handle
+[2026-09-07T11:09:16-0400] [backend]     await self.app(scope, receive, send)
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 115, in app
+[2026-09-07T11:09:16-0400] [backend]     await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+[2026-09-07T11:09:16-0400] [backend]     raise exc
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+[2026-09-07T11:09:16-0400] [backend]     await app(scope, receive, sender)
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 101, in app
+[2026-09-07T11:09:16-0400] [backend]     response = await f(request)
+[2026-09-07T11:09:16-0400] [backend]                ^^^^^^^^^^^^^^^^
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 355, in app
+[2026-09-07T11:09:16-0400] [backend]     raw_response = await run_endpoint_function(
+[2026-09-07T11:09:16-0400] [backend]                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 243, in run_endpoint_function
+[2026-09-07T11:09:16-0400] [backend]     return await dependant.call(**values)
+[2026-09-07T11:09:16-0400] [backend]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/src/orchestrator/api/routers/cost_rollup.py", line 104, in get_cost_rollup
+[2026-09-07T11:09:16-0400] [backend]     return compute_cost_rollup(await load_cost_rollup_facts(session, filters), tuple(group_by))
+[2026-09-07T11:09:16-0400] [backend]                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[2026-09-07T11:09:16-0400] [backend]   File "/Users/peter/code/task-world/src/orchestrator/api/routers/cost_rollup.py", line 75, in load_cost_rollup_facts
+[2026-09-07T11:09:16-0400] [backend]     CostRollupFact(
+[2026-09-07T11:09:16-0400] [backend] TypeError: orchestrator.api.schemas.cost_rollup.CostRollupFact() got multiple values for keyword argument 'run_id'
+[2026-09-07T11:09:53-0400] [backend] INFO:     127.0.0.1:49454 - "GET /api/runs/c15e02ab-052c-45af-ab65-b3334b2c9ffb/activity?event_type=run_status_changed&limit=20&payload_mode=full HTTP/1.1" 200 OK

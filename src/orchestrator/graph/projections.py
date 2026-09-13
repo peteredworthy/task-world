@@ -78,6 +78,7 @@ from orchestrator.graph.models import (
     RuntimeRetryScheduledPayload,
     ResourceClaimProjection,
     RecoveryPlanRecord,
+    SemanticArtifactRecord,
     SupportEvidencePayload,
     RoutineSnapshotRecord,
     StoredArtifactRef,
@@ -1768,6 +1769,9 @@ def _reduce_accepted_graph_patch(state: GraphProjection, event: EventEnvelope) -
                 position=event.position,
                 proposed_by_node_id=payload.proposed_by_node_id,
                 base_graph_position=payload.base_graph_position,
+                operation_key=payload.operation_key,
+                operation_fingerprint=payload.operation_fingerprint,
+                successor_planner_node_ids=tuple(payload.successor_planner_node_ids),
             ),
         ),
     }
@@ -3697,12 +3701,36 @@ def _completion_decision_blockers(
     events: list[EventEnvelope],
     projection: GraphProjection,
 ) -> Iterable[FinalInvariantBlocker]:
+    reliable_plan_node_ids = {
+        node_id
+        for node_id, node in projection.nodes.items()
+        if isinstance(node.spec.dispatch_payload.get("reliable_plan_skeleton_id"), str)
+        and node.runtime.state not in {"retired", "cancelled"}
+    }
     final_gate_node_ids = {
         node_id
         for node_id, node in projection.nodes.items()
-        if node.spec.kind == "final_gate" and node.runtime.state != "retired"
+        if node.spec.kind == "final_gate" and node.runtime.state not in {"retired", "cancelled"}
     }
     if not final_gate_node_ids:
+        if reliable_plan_node_ids:
+            carrier_node_id = next(
+                (
+                    node_id
+                    for node_id in sorted(reliable_plan_node_ids)
+                    if projection.nodes[node_id].spec.kind == "root"
+                ),
+                min(reliable_plan_node_ids),
+            )
+            yield {
+                "kind": "missing_reliable_plan_final_gate",
+                "reason": (
+                    "active reliable-plan skeleton has no active final gate or passing "
+                    "completion decision"
+                ),
+                "node_id": carrier_node_id,
+                "state": projection.nodes[carrier_node_id].runtime.state or "unknown",
+            }
         return
 
     latest: dict[str, tuple[str, dict[str, Any]]] = {}
@@ -6026,14 +6054,37 @@ def _semantic_plan_region_accepted(
     state: GraphProjection,
     task_region_id: str,
 ) -> bool:
-    """Treat a passed plan verifier as acceptance for its read-only plan region."""
-    return any(
-        node.spec.task_region_id == task_region_id
-        and node.spec.dispatch_payload.get("semantic_stage") == "plan_verification"
+    """Accept both a passed plan verifier region and its semantic producer region."""
+    passed_plan_verifier_ids = {
+        node_id
+        for node_id, node in state.nodes.items()
+        if node.spec.dispatch_payload.get("semantic_stage") == "plan_verification"
         and node.runtime.state == "completed"
         and (verdict := state.verification.verdicts_by_node.get(node_id)) is not None
         and verdict.verdict == "passed"
-        for node_id, node in state.nodes.items()
+    }
+    if any(
+        state.nodes[node_id].spec.task_region_id == task_region_id
+        for node_id in passed_plan_verifier_ids
+    ):
+        return True
+    semantic_plan_record_ids = {
+        record_id
+        for record_id, record in state.records.by_id.items()
+        if isinstance(record, SemanticArtifactRecord)
+        and record.value.semantic_role == "implementation_plan"
+        and (producer := state.nodes.get(record.producer_node_id)) is not None
+        and producer.spec.task_region_id == task_region_id
+    }
+    return any(
+        any(record_id in semantic_plan_record_ids for record_id in binding.record_ids)
+        for verifier_node_id in passed_plan_verifier_ids
+        if (
+            binding := state.topology.input_bindings.get(verifier_node_id, FrozenMap()).get(
+                "semantic_artifact"
+            )
+        )
+        is not None
     )
 
 
@@ -6066,10 +6117,15 @@ def _derive_candidate_free_region_state(
     ]
     if node_ids and not active_node_ids:
         return "accepted"
-    contributing_node_ids = [
+    task_contributing_node_ids = [
         node_id
         for node_id in active_node_ids
-        if _contract_fulfillment_contribution(state, node_id) != "none"
+        if _contract_fulfillment_contribution(state, node_id) == "task_acceptance"
+    ]
+    contributing_node_ids = task_contributing_node_ids or [
+        node_id
+        for node_id in active_node_ids
+        if _contract_fulfillment_contribution(state, node_id) == "final_invariant"
     ]
     if not contributing_node_ids:
         return "pending"

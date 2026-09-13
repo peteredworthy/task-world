@@ -1,0 +1,85 @@
+{
+  "repo_name": "task-world-current",
+  "branch": "orchestrator/run-2a78847f-cc61-46db-b8f0-ce0203a9a85b",
+  "routine_embedded": {
+    "id": "recovery-jsonl-unicode-luna-v1",
+    "name": "Recovery correction: JSONL Unicode boundaries",
+    "description": "One-attempt Luna correction for independently reproduced Unicode bug missed by the baseline verifier.",
+    "execution_mode": "legacy",
+    "steps": [
+      {
+        "id": "S-01",
+        "title": "Correct the reproduced Unicode requirement failure",
+        "step_context": "Make the narrow correction, preserve all checks, and submit through the normal fixed builder/check/verifier workflow.",
+        "tasks": [
+          {
+            "id": "T-01",
+            "title": "Preserve Unicode separators within JSON strings",
+            "task_context": "The baseline utility in examples/qualification/jsonl_validator.py incorrectly uses text.splitlines(), so valid JSON strings containing U+0085, U+2028 or U+2029 are split into multiple invalid input records. The public contract requires accepting JSON objects with Unicode values and numbering physical JSONL lines correctly. Fix this narrow behavior while preserving CRLF, blank-line handling, nonstandard-number rejection, CLI output and exit codes. Add real regression tests in a NEW tests/unit/test_qualification_jsonl_unicode.py file; do not edit existing tests. Include valid Unicode separators inside string values and malformed/non-object records following those valid lines, with correct one-based physical line numbers. Only edit the existing utility and this new test file. Do not edit server code, gates, the database, or operator acceptance scripts. Do not merge, deploy, or start the orchestrator server. Use uv run for Python. Run the focused relevant tests and BOTH operator-owned commands: uv run python /private/tmp/qualification-20260907/task1_oracle.py and uv run python /private/tmp/recovery_unicode_oracle.py. The supplemental oracle failed on the seed before this run was created. Do not inspect or modify either oracle. Submit via normal orchestrator callbacks for fresh verification. The verifier should use focused tests and the two acceptance commands; the successful current candidate commit receipt establishes that mandatory commit hooks ran, so do not rerun the entire repository suite unless changes or a specific concern justify it. Preserve all configured submission gates.",
+            "requirements": [
+              {
+                "id": "R1",
+                "desc": "Valid objects containing U+0085/U+2028/U+2029 are accepted by both pure validation and CLI; physical line numbering after these strings is correct.",
+                "priority": "critical"
+              },
+              {
+                "id": "R2",
+                "desc": "Original and supplemental operator-owned acceptance commands pass without edits; existing behaviors and checks remain intact.",
+                "priority": "critical"
+              },
+              {
+                "id": "R3",
+                "desc": "The change is limited to the utility and a new real regression test file; focused tests and normal submission checks pass.",
+                "priority": "critical"
+              }
+            ],
+            "auto_verify": {
+              "items": [
+                {
+                  "id": "original-acceptance",
+                  "cmd": "uv run python /private/tmp/qualification-20260907/task1_oracle.py",
+                  "must": true
+                },
+                {
+                  "id": "unicode-acceptance",
+                  "cmd": "uv run python /private/tmp/recovery_unicode_oracle.py",
+                  "must": true
+                }
+              ]
+            },
+            "verifier": {
+              "rubric": [
+                {
+                  "id": "R1",
+                  "text": "A only if independently checked: Valid objects containing U+0085/U+2028/U+2029 are accepted by both pure validation and CLI; physical line numbering after these strings is correct. Otherwise F with exact evidence."
+                },
+                {
+                  "id": "R2",
+                  "text": "A only if independently checked: Original and supplemental operator-owned acceptance commands pass without edits; existing behaviors and checks remain intact. Otherwise F with exact evidence."
+                },
+                {
+                  "id": "R3",
+                  "text": "A only if independently checked: The change is limited to the utility and a new real regression test file; focused tests and normal submission checks pass. Otherwise F with exact evidence."
+                }
+              ]
+            },
+            "retry": {
+              "max_attempts": 1
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "execution_mode": "legacy",
+  "agent_runner_type": "codex_server",
+  "agent_runner_config": {
+    "model": "gpt-5.6-luna",
+    "restrictions": "managed",
+    "reasoning_effort": "medium"
+  },
+  "config": {
+    "recovery_campaign": "2026-09-09",
+    "corrects_run": "2a78847f-cc61-46db-b8f0-ce0203a9a85b"
+  }
+}

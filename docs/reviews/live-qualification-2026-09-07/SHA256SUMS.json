@@ -1,0 +1,21 @@
+{
+  "cost_rollup_error.txt": "1352b9b476c0256525d1dafa66f5525b0658b474dc4e357db4ca81bc86f027e0",
+  "qualification_facts.json": "59be512aa3bb3bd6099189b5f5af22fec521b14ba1df43f806f90f5791c8c45f",
+  "task1_corrective_worker.json": "fc78144b2848148c4dd4cee86617cead07da8d2fa7ed8a3b829f44ad5ef7a6ac",
+  "task1_dispatch_log.txt": "f286b06ed1b07bea7f1ff5dcaa76f275821c2e3d4dadb0c19a872ef290d7c7b7",
+  "task1_graph.json": "25a0811e4022bfe52e46d8f1f5a85b60b3f8f8b31751233f6da0f5d71f16ffe7",
+  "task1_graph_events.json": "3f4c5eea03ee485041a6c80316ede8914029203002e71724bcb632f42248c254",
+  "task1_health.json": "880b22358ddd9d9398d0360fd36f99109f83780650a0c4800e6f54cbe902402c",
+  "task1_lifecycle.json": "ae177b0c48bc40d4a55bfe9ec8fedf6294aa3ce02255377b23156bfe786c6958",
+  "task1_manifest.json": "0f0d95aea7ff12e3b6dbdc800156c63d23a6d0a491dd7787cab0bd1eae29814a",
+  "task1_oracle.py.txt": "6d2fc9501e319b28e683913accf0dc51dd1877383d45c1bc9eaf334881cb9724",
+  "task1_request.json": "cce1f107c1e53641eb17e89b5909c9a91aaf9871c3d0b28bc7b4c9d7f5355459",
+  "task1_result.json": "ea8144fda0e3b664a839d89f404130eeb55f00d7162122d63c2f1ebba760732b",
+  "task1_runtime_health.json": "0bcdb1bccdd968eaf4da842d77133945fa93e5e9d38cbe1f80ef49b2ae28784f",
+  "task1_spec.md": "b2ee02ef2c3d1f03ea454fd6aca4ca079a5ea12a02c0ef8dc7821903215ff5a6",
+  "task1_status.json": "b23414a88a5b4ba66825be9db3f555bcdcbe9a4d841e72f0ffb236f5c0b7c9fa",
+  "task2_spec.md": "77cb48da01a35e0b4b2e0cfe6cf17cf114ab2d6c332298917b8e4729ccccc8d3",
+  "task3_spec.md": "72b2630627979f5c9b0730c58c045968cbfc930165be9eefb11a0d53e73e24b3",
+  "task4_spec.md": "ed3b92394c26059d5c04ee0f48602bab2882ccf7d69c10dad3a1fee1df4dd36f",
+  "task5_spec.md": "d21d4710870d6ce16d57b1a9d0773fa1e80224e8f747022761d346668f4dcaaa"
+}

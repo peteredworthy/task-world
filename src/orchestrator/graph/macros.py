@@ -6,11 +6,35 @@ low-level patch ops as the kernel's internal representation.
 
 from __future__ import annotations
 
+import hashlib
+import re
 from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from orchestrator.graph._error_rendering import safe_exception_reason
+from orchestrator.graph._error_rendering import safe_exception_reason, safe_validation_diagnostics
+from orchestrator.graph.command_bindings import (
+    CheckCommandBindingError,
+    has_dynamic_feature_context,
+    validate_check_command_binding,
+)
+from orchestrator.graph.models import (
+    CheckResultRecord,
+    GapClassificationRecord,
+    RequirementRecord,
+    SemanticArtifactRecord,
+    VerificationReportRecord,
+)
+from orchestrator.graph.projection_models import GraphProjection
+from orchestrator.graph.projection_queries import (
+    effective_active_node_ids_view,
+    input_bindings_view,
+    leases_view,
+    node_kinds_view,
+    node_payload_view,
+    output_record_payloads_view,
+    semantic_schema_declarations_view,
+)
 
 
 MACRO_FIELD = "macro_invocations"
@@ -21,6 +45,109 @@ class MacroInvocation(BaseModel):
 
     macro: str = Field(min_length=1)
     args: dict[str, Any] = Field(default_factory=dict)
+
+
+class MacroInvocationValidationError(ValueError):
+    """Safe structured diagnostics for one invalid macro invocation."""
+
+    def __init__(self, macro: str, diagnostics: dict[str, Any], detail: str) -> None:
+        super().__init__(detail)
+        self.macro = macro
+        self.diagnostics = diagnostics
+
+    def with_index(self, index: int) -> "MacroInvocationValidationError":
+        errors = [
+            {
+                **error,
+                "path": f"macro_invocations[{index}].args.{error['path']}",
+            }
+            for error in self.diagnostics["errors"]
+        ]
+        return MacroInvocationValidationError(
+            self.macro,
+            {
+                **self.diagnostics,
+                "errors": errors,
+            },
+            str(self),
+        )
+
+
+ReliablePlanMacroCode = Literal[
+    "reliable_plan_planner_required",
+    "unknown_requirement_identity",
+    "initial_dependencies_forbidden",
+    "implementation_plan_schema_unavailable",
+]
+
+
+class ReliablePlanMacroError(ValueError):
+    """Safe static classification for controller-owned reliable-plan guards."""
+
+    def __init__(
+        self,
+        code: ReliablePlanMacroCode,
+        message: str,
+        detail: str,
+        path: str = "macro_invocations[].args",
+    ) -> None:
+        super().__init__(detail)
+        self.code: ReliablePlanMacroCode = code
+        self.message = message
+        self.path = path
+
+    def with_index(self, index: int) -> "ReliablePlanMacroError":
+        return ReliablePlanMacroError(
+            self.code,
+            self.message,
+            str(self),
+            path=f"macro_invocations[{index}].args",
+        )
+
+    @property
+    def diagnostics(self) -> dict[str, Any]:
+        return {
+            "error_count": 1,
+            "errors": [
+                {
+                    "path": self.path,
+                    "code": self.code,
+                    "message": self.message,
+                }
+            ],
+            "omitted_error_count": 0,
+        }
+
+
+class MacroCheckBindingError(ValueError):
+    """Safe structured diagnostics for an unavailable check command binding."""
+
+    def __init__(self, detail: str, *, path: str = "macro_invocations[].args") -> None:
+        super().__init__(detail)
+        self.path = path
+
+    def with_index(self, index: int) -> "MacroCheckBindingError":
+        return MacroCheckBindingError(
+            str(self),
+            path=f"macro_invocations[{index}].args",
+        )
+
+    @property
+    def diagnostics(self) -> dict[str, Any]:
+        return {
+            "error_count": 1,
+            "errors": [
+                {
+                    "path": self.path,
+                    "code": "unavailable_command_binding",
+                    "message": (
+                        "The check command binding is unavailable; provide a concrete "
+                        "command_definition."
+                    ),
+                }
+            ],
+            "omitted_error_count": 0,
+        }
 
 
 class MacroArgs(BaseModel):
@@ -194,6 +321,59 @@ class CreateEffectfulBatchArgs(SemanticStageArgs):
     accepted_plan_amendment_record_id: str | None = None
 
 
+class ReliablePlanCheckDecision(BaseModel):
+    """A substantive check choice without graph execution identities."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    command_binding: Literal["dynamic_feature_hidden_oracle"] | None = None
+    command_definition: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def command_is_declared(self) -> "ReliablePlanCheckDecision":
+        if (self.command_binding is None) == (self.command_definition is None):
+            raise ValueError("check requires exactly one command binding or command definition")
+        return self
+
+
+class ConstructReliablePlanRegionArgs(MacroArgs):
+    """Semantic decisions used by the controller to build one reliable-plan region."""
+
+    operation_key: str = Field(min_length=1, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
+    scope: str = Field(min_length=1)
+    objective: str = Field(min_length=1)
+    requirement_ids: list[str] = Field(min_length=1)
+    dependencies: list[str] = Field(default_factory=list)
+    acceptance: list[str] = Field(min_length=1)
+    checks: list[ReliablePlanCheckDecision]
+    rubric: list[str] = Field(min_length=1)
+
+
+def reliable_plan_check_decision_tool_schema() -> dict[str, Any]:
+    """Return the shared public schema for one reliable-plan check decision."""
+    schema = ReliablePlanCheckDecision.model_json_schema()
+    schema.pop("title", None)
+    properties = cast(dict[str, dict[str, Any]], schema["properties"])
+    for field_name in ("command_binding", "command_definition"):
+        property_schema = properties[field_name]
+        alternatives = cast(list[dict[str, Any]], property_schema.pop("anyOf"))
+        non_null = [
+            alternative for alternative in alternatives if alternative.get("type") != "null"
+        ]
+        if len(non_null) != 1:
+            raise RuntimeError(f"unexpected nullable schema for {field_name}")
+        properties[field_name] = {
+            **non_null[0],
+            "title": property_schema["title"],
+        }
+    schema["oneOf"] = [
+        {"required": ["command_binding"]},
+        {"required": ["command_definition"]},
+    ]
+    return schema
+
+
 _MACRO_SPECS = {
     "create_work_region": CreateWorkRegionArgs,
     "create_corrective_region": CreateCorrectiveRegionArgs,
@@ -207,6 +387,7 @@ _MACRO_SPECS = {
     "create_plan_verification": CreatePlanVerificationArgs,
     "create_successor_planner": CreateSuccessorPlannerArgs,
     "create_effectful_batch": CreateEffectfulBatchArgs,
+    "construct_reliable_plan_region": ConstructReliablePlanRegionArgs,
 }
 
 RELIABLE_PLAN_MAX_ATTEMPTS = 3
@@ -216,13 +397,38 @@ def expand_patch_macros(
     ops: list[dict[str, Any]],
     invocations: list[MacroInvocation],
     proposed_by_node_id: str,
+    *,
+    projection: GraphProjection | None = None,
+    patch_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Expand validated macro invocations into patch operations."""
 
     macro_ops: list[dict[str, Any]] = []
-    for invocation in invocations:
-        invocation = _validate_invocation(invocation)
-        macro_ops.extend(_expand_macro(invocation.macro, invocation.args, proposed_by_node_id))
+    for index, invocation in enumerate(invocations):
+        try:
+            invocation = _validate_invocation(invocation)
+            macro_ops.extend(
+                _expand_macro(
+                    invocation.macro,
+                    invocation.args,
+                    proposed_by_node_id,
+                    projection=projection,
+                    patch_id=patch_id,
+                )
+            )
+        except MacroInvocationValidationError as exc:
+            raise exc.with_index(index) from exc
+        except CheckCommandBindingError as exc:
+            raise MacroCheckBindingError(str(exc)).with_index(index) from exc
+        except ReliablePlanMacroError as exc:
+            raise exc.with_index(index) from exc
+    macro_ops.extend(
+        _controller_reliable_plan_continuation_ops(
+            [*macro_ops, *ops],
+            projection=projection,
+            proposed_by_node_id=proposed_by_node_id,
+        )
+    )
     # A raw operator edge may intentionally reconnect a replacement created by
     # a macro in the same atomic patch.  Emit every macro-created node before
     # raw operations so reducer relationship checks never observe a transient
@@ -232,10 +438,125 @@ def expand_patch_macros(
     return [*macro_nodes, *ops, *macro_remainder]
 
 
+def _controller_reliable_plan_continuation_ops(
+    operations: list[dict[str, Any]],
+    *,
+    projection: GraphProjection | None,
+    proposed_by_node_id: str,
+) -> list[dict[str, Any]]:
+    """Complete mandatory failure branches for semantic, legacy-macro, and raw patches."""
+    if projection is None:
+        return []
+    parent = node_payload_view(projection, proposed_by_node_id) or {}
+    if not isinstance(parent.get("reliable_plan_skeleton_id"), str):
+        return []
+    created = {
+        cast(dict[str, Any], operation["node"]).get("node_id"): cast(
+            dict[str, Any], operation["node"]
+        )
+        for operation in operations
+        if operation.get("op") == "create_node" and isinstance(operation.get("node"), dict)
+    }
+    final_nodes = [
+        node
+        for node in created.values()
+        if node.get("semantic_stage") in {"final_acceptance", "final_audit", "final_gate"}
+        or node.get("kind") == "final_gate"
+    ]
+    if final_nodes:
+        accepted_plans = [
+            record
+            for record in output_record_payloads_view(projection).values()
+            if isinstance(record, SemanticArtifactRecord)
+            and record.value.authority_status == "accepted"
+            and record.value.semantic_role == "implementation_plan"
+        ]
+        if len(accepted_plans) == 1:
+            declared_batch_ids = _declared_batch_ids_from_plan(accepted_plans[0])
+            for node in final_nodes:
+                node.setdefault("declared_batch_ids", declared_batch_ids)
+    existing_failure_sources: set[Any] = set()
+    for operation in operations:
+        raw_selector = operation.get("accepted_record_selector")
+        if operation.get("op") != "create_edge" or not isinstance(raw_selector, dict):
+            continue
+        selector = cast(dict[str, Any], raw_selector)
+        raw_options = selector.get("selectors", [selector])
+        options = cast(list[Any], raw_options) if isinstance(raw_options, list) else []
+        failure_gated = False
+        for raw_option in options:
+            if not isinstance(raw_option, dict):
+                continue
+            option = cast(dict[str, Any], raw_option)
+            if option.get("outcome") == "failed" or option.get("status") == "failed":
+                failure_gated = True
+                break
+        if failure_gated and created.get(operation.get("to_node_id"), {}).get("role") == (
+            "gap_planner"
+        ):
+            existing_failure_sources.add(operation.get("from_node_id"))
+    required_sources: list[tuple[str, str, str]] = []
+    plan_verifiers = [
+        node_id
+        for node_id, node in created.items()
+        if isinstance(node_id, str) and node.get("semantic_stage") == "plan_verification"
+    ]
+    required_sources.extend((node_id, "verification_report", "plan") for node_id in plan_verifiers)
+    final_acceptance = [
+        node_id
+        for node_id, node in created.items()
+        if isinstance(node_id, str) and node.get("semantic_stage") == "final_acceptance"
+    ]
+    final_audits = [
+        node_id
+        for node_id, node in created.items()
+        if isinstance(node_id, str) and node.get("semantic_stage") == "final_audit"
+    ]
+    batch_verifiers = [
+        node_id
+        for node_id, node in created.items()
+        if isinstance(node_id, str)
+        and node.get("kind") == "verifier"
+        and node.get("semantic_stage") in {"effectful_batch", "corrective_work"}
+    ]
+    if final_acceptance or final_audits:
+        required_sources.extend(
+            (node_id, "verification_report", "batch") for node_id in batch_verifiers
+        )
+        required_sources.extend(
+            (node_id, "check_result", "acceptance") for node_id in final_acceptance
+        )
+        required_sources.extend(
+            (node_id, "verification_report", "audit") for node_id in final_audits
+        )
+    else:
+        required_sources.extend(
+            (node_id, "verification_report", "batch") for node_id in batch_verifiers
+        )
+    additions: list[dict[str, Any]] = []
+    for source_id, source_port, label in required_sources:
+        if source_id in existing_failure_sources:
+            continue
+        additions.extend(
+            _create_gap_planner(
+                {
+                    "region_id": f"recovery-{label}-{source_id}",
+                    "node_id": f"planner-gap-{label}-{source_id}",
+                    "evidence_source_node_id": source_id,
+                    "evidence_source_port": source_port,
+                }
+            )
+        )
+    return additions
+
+
 def _expand_macro(
     macro_name: str,
     args: dict[str, Any],
     proposed_by_node_id: str,
+    *,
+    projection: GraphProjection | None,
+    patch_id: str | None,
 ) -> list[dict[str, Any]]:
     if macro_name == "create_work_region":
         return _create_work_region(args, corrective=False, proposed_by_node_id=proposed_by_node_id)
@@ -261,6 +582,17 @@ def _expand_macro(
         return _create_successor_planner(args)
     if macro_name == "create_effectful_batch":
         return _create_effectful_batch(args)
+    if macro_name == "construct_reliable_plan_region":
+        if projection is None or patch_id is None:
+            raise ValueError(
+                "construct_reliable_plan_region requires controller projection and patch identity"
+            )
+        return _construct_reliable_plan_region(
+            args,
+            projection=projection,
+            proposed_by_node_id=proposed_by_node_id,
+            patch_id=patch_id,
+        )
     msg = f"unknown graph macro: {macro_name}"
     raise ValueError(msg)
 
@@ -273,13 +605,13 @@ def _validate_invocation(invocation: MacroInvocation) -> MacroInvocation:
     try:
         typed_args = args_model.model_validate(invocation.args)
     except ValidationError as exc:
-        raise ValueError(
-            safe_exception_reason(
-                exc,
-                code="invalid_macro_arguments",
-                message=f"{invocation.macro} args invalid",
-            )
-        ) from exc
+        diagnostics = safe_validation_diagnostics(exc)
+        detail = safe_exception_reason(
+            exc,
+            code="invalid_macro_arguments",
+            message=f"{invocation.macro} args invalid",
+        )
+        raise MacroInvocationValidationError(invocation.macro, diagnostics, detail) from exc
     return invocation.model_copy(update={"args": typed_args.model_dump(exclude_none=True)})
 
 
@@ -805,6 +1137,10 @@ def _create_successor_planner(args: dict[str, Any]) -> list[dict[str, Any]]:
                 "run_baseline" if args["planning_horizon"] == 1 else "latest_accepted"
             ),
             "planning_horizon": args["planning_horizon"],
+            # The controller derives generation from the authorized horizon.
+            # It is therefore stable across ambiguous replies and retries and
+            # cannot be inflated independently by the planner.
+            "generation_index": args["planning_horizon"],
             "max_attempts": RELIABLE_PLAN_MAX_ATTEMPTS,
             "inputs": [
                 {
@@ -1035,6 +1371,985 @@ def _create_effectful_batch(args: dict[str, Any]) -> list[dict[str, Any]]:
             ]
         )
     return ops
+
+
+def _construct_reliable_plan_region(
+    args: dict[str, Any],
+    *,
+    projection: GraphProjection,
+    proposed_by_node_id: str,
+    patch_id: str,
+) -> list[dict[str, Any]]:
+    """Compile semantic planner decisions into one complete authorized region.
+
+    The proposer chooses work; the controller chooses graph identity, evidence
+    wiring, snapshots, assignments (stamped at the command boundary), and the
+    horizon continuation shape.  Expansion is all-or-nothing because the
+    complete operation list is returned only after every dependency resolves.
+    """
+    parent = node_payload_view(projection, proposed_by_node_id) or {}
+    if not isinstance(parent.get("reliable_plan_skeleton_id"), str):
+        raise ReliablePlanMacroError(
+            "reliable_plan_planner_required",
+            "The caller is not an authorized reliable-plan planner.",
+            "construct_reliable_plan_region requires a reliable-plan planner",
+        )
+    operation_key = _required_str(args, "operation_key")
+    scope = _required_str(args, "scope")
+    objective = _required_str(args, "objective")
+    acceptance = cast(list[str], args["acceptance"])
+    rubric = cast(list[str], args["rubric"])
+    dependencies = list(dict.fromkeys(cast(list[str], args.get("dependencies", []))))
+    requirement_ids = list(dict.fromkeys(cast(list[str], args["requirement_ids"])))
+    requirement_bindings = _resolve_requirement_bindings(projection, requirement_ids)
+    token = _reliable_plan_operation_token(
+        parent["reliable_plan_skeleton_id"], proposed_by_node_id, operation_key, patch_id
+    )
+    check_decisions = cast(list[dict[str, Any]], args["checks"])
+    if has_dynamic_feature_context([], projection=projection):
+        for check in check_decisions:
+            check_node = {
+                "node_id": check.get("name") or operation_key,
+                "kind": "check",
+                **check,
+            }
+            validate_check_command_binding(check_node, [], projection=projection)
+    checks = [
+        {
+            "check_id": f"check-{token}-{index}",
+            **{
+                key: value
+                for key, value in check.items()
+                if key in {"command_binding", "command_definition"}
+            },
+        }
+        for index, check in enumerate(check_decisions, start=1)
+    ]
+    requirement_sources = [producer for _record_id, producer in requirement_bindings]
+
+    if parent.get("role") == "gap_planner":
+        if not check_decisions:
+            raise ValueError("corrective reliable-plan construction requires at least one check")
+        return _construct_reliable_plan_batch_correction(
+            args,
+            projection=projection,
+            proposed_by_node_id=proposed_by_node_id,
+            token=token,
+            scope=scope,
+            objective=objective,
+            acceptance=acceptance,
+            rubric=rubric,
+            checks=checks,
+            requirement_ids=requirement_ids,
+            requirement_sources=requirement_sources,
+            requirement_bindings=requirement_bindings,
+        )
+
+    if parent.get("semantic_stage") != "successor_planning":
+        if dependencies:
+            raise ReliablePlanMacroError(
+                "initial_dependencies_forbidden",
+                "Initial reliable-plan construction cannot declare dependencies.",
+                "initial reliable-plan construction cannot declare batch dependencies",
+            )
+        schema_id, schema_version = _implementation_plan_schema(projection)
+        discovery_id = f"worker-discovery-{token}"
+        verifier_id = f"verifier-plan-{token}"
+        successor_id = f"planner-successor-{token}"
+        common = {
+            "semantic_schema_id": schema_id,
+            "semantic_schema_version": schema_version,
+            "objective": objective,
+            "acceptance": acceptance,
+            "requirement_source_node_ids": requirement_sources,
+        }
+        ops = [
+            *_create_discovery_region(
+                {**common, "region_id": f"discovery-{token}", "worker_id": discovery_id}
+            ),
+            *_create_plan_verification(
+                {
+                    **common,
+                    "region_id": f"plan-verification-{token}",
+                    "verifier_id": verifier_id,
+                    "artifact_source_node_id": discovery_id,
+                    "rubric": rubric,
+                }
+            ),
+            *_create_successor_planner(
+                {
+                    "region_id": f"successor-{token}",
+                    "node_id": successor_id,
+                    "evidence_source_node_id": verifier_id,
+                    "evidence_source_port": "verification_report",
+                    "planning_horizon": 1,
+                }
+            ),
+            *_create_gap_planner(
+                {
+                    "region_id": f"recovery-plan-{token}",
+                    "node_id": f"planner-gap-plan-{token}",
+                    "evidence_source_node_id": verifier_id,
+                    "evidence_source_port": "verification_report",
+                }
+            ),
+        ]
+        _stamp_semantic_decisions(
+            ops,
+            scope=scope,
+            objective=objective,
+            requirement_ids=requirement_ids,
+            dependencies=dependencies,
+            acceptance=acceptance,
+            checks=check_decisions,
+            rubric=rubric,
+            operation_key=operation_key,
+        )
+        _bind_exact_requirements(ops, requirement_bindings)
+        return ops
+
+    horizon = parent.get("planning_horizon")
+    remaining = parent.get("reliable_plan_remaining_horizons")
+    if not isinstance(horizon, int) or isinstance(horizon, bool) or horizon < 1:
+        raise ValueError("reliable-plan successor is missing controller-owned planning horizon")
+    if not isinstance(remaining, int) or isinstance(remaining, bool) or remaining < 1:
+        raise ValueError("reliable-plan successor has no remaining horizon authority")
+    if not check_decisions:
+        raise ValueError("effectful reliable-plan construction requires at least one check")
+
+    plan_record, plan_verifier_id = _accepted_plan_and_verifier(projection, scope)
+    declared_batch_ids = _declared_batch_ids_from_plan(plan_record)
+    unknown_dependencies = sorted(set(dependencies) - set(declared_batch_ids))
+    if unknown_dependencies:
+        raise ValueError(
+            "reliable-plan dependencies are not declared batches: "
+            + ", ".join(unknown_dependencies)
+        )
+    if scope in dependencies:
+        raise ValueError("reliable-plan batch cannot depend on itself")
+    existing_batch_verifiers = _batch_verifier_ids(projection)
+    unresolved_dependencies = sorted(set(dependencies) - set(existing_batch_verifiers))
+    if unresolved_dependencies:
+        raise ValueError(
+            "reliable-plan dependencies are not yet materialized: "
+            + ", ".join(unresolved_dependencies)
+        )
+
+    schema_id = plan_record.value.schema_id
+    schema_version = plan_record.value.schema_version
+    worker_id = f"worker-batch-{token}"
+    verifier_id = f"verifier-batch-{token}"
+    region_id = f"batch-{token}"
+    ops = _create_effectful_batch(
+        {
+            "region_id": region_id,
+            "batch_id": scope,
+            "plan_source_node_id": plan_record.producer_node_id,
+            "plan_verification_source_node_id": plan_verifier_id,
+            "semantic_schema_id": schema_id,
+            "semantic_schema_version": schema_version,
+            "objective": objective,
+            "acceptance": acceptance,
+            "checks": checks,
+            "rubric": rubric,
+            "planning_horizon": horizon,
+            "requirement_source_node_ids": requirement_sources,
+            "worker_id": worker_id,
+            "verifier_id": verifier_id,
+        }
+    )
+    _bind_dependency_verifications(
+        ops,
+        worker_id=worker_id,
+        dependencies=dependencies,
+        verifier_ids=existing_batch_verifiers,
+    )
+    if remaining > 1:
+        ops.extend(
+            _create_successor_planner(
+                {
+                    "region_id": f"successor-{token}",
+                    "node_id": f"planner-successor-{token}",
+                    "evidence_source_node_id": verifier_id,
+                    "evidence_source_port": "verification_report",
+                    "planning_horizon": horizon + 1,
+                }
+            )
+        )
+        ops.extend(
+            _create_gap_planner(
+                {
+                    "region_id": f"recovery-{token}",
+                    "node_id": f"planner-gap-batch-{token}",
+                    "evidence_source_node_id": verifier_id,
+                    "evidence_source_port": "verification_report",
+                }
+            )
+        )
+    else:
+        batch_verifiers = {**existing_batch_verifiers, scope: verifier_id}
+        missing_batches = sorted(set(declared_batch_ids) - set(batch_verifiers))
+        if missing_batches:
+            raise ValueError(
+                "final reliable-plan region is missing prior batch verifiers: "
+                + ", ".join(missing_batches)
+            )
+        ops.extend(
+            _reliable_plan_finalization_ops(
+                token=token,
+                region_id=region_id,
+                declared_batch_ids=declared_batch_ids,
+                batch_verifiers=batch_verifiers,
+                rubric=rubric,
+                acceptance=acceptance,
+            )
+        )
+        final_acceptance_id = f"check-final-acceptance-{token}"
+        final_audit_id = f"verifier-final-audit-{token}"
+        for label, source_id, source_port in (
+            ("batch", verifier_id, "verification_report"),
+            ("acceptance", final_acceptance_id, "check_result"),
+            ("audit", final_audit_id, "verification_report"),
+        ):
+            ops.extend(
+                _create_gap_planner(
+                    {
+                        "region_id": f"recovery-{label}-{token}",
+                        "node_id": f"planner-gap-{label}-{token}",
+                        "evidence_source_node_id": source_id,
+                        "evidence_source_port": source_port,
+                    }
+                )
+            )
+    _stamp_semantic_decisions(
+        ops,
+        scope=scope,
+        objective=objective,
+        requirement_ids=requirement_ids,
+        dependencies=dependencies,
+        acceptance=acceptance,
+        checks=check_decisions,
+        rubric=rubric,
+        operation_key=operation_key,
+    )
+    _bind_exact_requirements(ops, requirement_bindings)
+    return ops
+
+
+def _construct_reliable_plan_batch_correction(
+    args: dict[str, Any],
+    *,
+    projection: GraphProjection,
+    proposed_by_node_id: str,
+    token: str,
+    scope: str,
+    objective: str,
+    acceptance: list[str],
+    rubric: list[str],
+    checks: list[dict[str, Any]],
+    requirement_ids: list[str],
+    requirement_sources: list[str],
+    requirement_bindings: list[tuple[str, str]],
+) -> list[dict[str, Any]]:
+    """Construct one exact failed-batch correction from durable evidence."""
+    parent = node_payload_view(projection, proposed_by_node_id) or {}
+    records = output_record_payloads_view(projection)
+    classifications = [
+        record
+        for record in records.values()
+        if isinstance(record, GapClassificationRecord)
+        and record.producer_node_id == proposed_by_node_id
+        and record.value.classification == "corrective_work_required"
+    ]
+    active_leases = [
+        lease
+        for lease in leases_view(projection).values()
+        if lease.node_id == proposed_by_node_id and lease.state == "active"
+    ]
+    if len(classifications) == 1:
+        classification_record_id = classifications[0].record_id
+    elif not classifications and len(active_leases) == 1:
+        classification_record_id = f"classified-gap-{active_leases[0].execution_id}"
+    else:
+        raise ValueError(
+            "reliable-plan correction requires one accepted or execution-promised corrective "
+            "gap classification from the proposing gap planner"
+        )
+
+    recovery_record_id = parent.get("recovery_of_record_id")
+    bound_ids = (
+        {recovery_record_id}
+        if isinstance(recovery_record_id, str)
+        else {
+            record_id
+            for binding in input_bindings_view(projection).get(proposed_by_node_id, {}).values()
+            for record_id in binding.record_ids
+        }
+    )
+    bound_reports = [
+        record
+        for record in records.values()
+        if isinstance(record, VerificationReportRecord) and record.record_id in bound_ids
+    ]
+    bound_checks = [
+        record
+        for record in records.values()
+        if isinstance(record, CheckResultRecord) and record.record_id in bound_ids
+    ]
+    failed_reports = [record for record in bound_reports if record.outcome == "failed"]
+    failed_acceptance = [record for record in bound_checks if record.value.status == "failed"]
+    if len(failed_reports) == 1:
+        failed_report = failed_reports[0]
+        failed_stage = (node_payload_view(projection, failed_report.producer_node_id) or {}).get(
+            "semantic_stage"
+        )
+        correction_trigger = (
+            "failed_final_audit" if failed_stage == "final_audit" else "failed_batch"
+        )
+    elif len(failed_acceptance) == 1:
+        failed_acceptance_record = failed_acceptance[0]
+        acceptance_node = (
+            node_payload_view(projection, failed_acceptance_record.producer_node_id) or {}
+        )
+        if acceptance_node.get("semantic_stage") != "final_acceptance":
+            raise ValueError(
+                "reliable-plan correction requires failed batch verification, final acceptance, "
+                "or final audit evidence"
+            )
+        cited_reports = [
+            record
+            for record in records.values()
+            if isinstance(record, VerificationReportRecord)
+            and record.outcome == "passed"
+            and record.record_id in failed_acceptance_record.evaluated_record_ids
+            and record.candidate_id == failed_acceptance_record.candidate_id
+            and (node_payload_view(projection, record.producer_node_id) or {}).get(
+                "declared_batch_id"
+            )
+            == scope
+        ]
+        if len(cited_reports) != 1:
+            raise ValueError(
+                "failed final acceptance must cite one exact passing report for its final batch"
+            )
+        failed_report = cited_reports[0]
+        correction_trigger = "failed_final_acceptance"
+    else:
+        raise ValueError(
+            "reliable-plan correction requires one exact failed batch verification, final "
+            "acceptance, or final audit result"
+        )
+    failed_verifier = node_payload_view(projection, failed_report.producer_node_id) or {}
+    plan_record, _plan_verifier_id = _accepted_plan_and_verifier(projection, scope)
+    declared_batch_ids = _declared_batch_ids_from_plan(plan_record)
+    if correction_trigger == "failed_final_audit":
+        batch_id = declared_batch_ids[-1]
+        horizon = len(declared_batch_ids)
+    else:
+        batch_id = failed_verifier.get("declared_batch_id")
+        horizon = failed_verifier.get("planning_horizon")
+    if batch_id != scope:
+        raise ValueError("correction scope must equal the failed declared batch identity")
+    if not isinstance(horizon, int) or isinstance(horizon, bool) or horizon < 1:
+        raise ValueError("failed reliable-plan batch is missing its planning horizon")
+
+    evaluated_ids = set(failed_report.evaluated_record_ids)
+    if correction_trigger == "failed_final_acceptance":
+        evaluated_ids.update(record.record_id for record in failed_acceptance)
+    evidence_checks = [
+        record
+        for record_id, record in records.items()
+        if record_id in evaluated_ids
+        and isinstance(record, CheckResultRecord)
+        and (
+            (correction_trigger == "failed_final_audit" and record.value.status == "passed")
+            or (correction_trigger != "failed_final_audit" and record.value.status == "failed")
+        )
+    ]
+    if not evidence_checks:
+        raise ValueError(
+            "reliable-plan correction requires exact acceptance/check evidence in its closure"
+        )
+
+    correction_worker_id = f"worker-corrective-{token}"
+    correction_verifier_id = f"verifier-corrective-{token}"
+    # Gap-planner authority is deliberately confined to this controller-owned
+    # region identity by the patch validator.
+    region_id = "corrective_work_region"
+    ops = _create_work_region(
+        {
+            "region_id": region_id,
+            "candidate_id": f"candidate-corrective-{token}",
+            "worker_id": correction_worker_id,
+            "verifier_id": correction_verifier_id,
+            "objective": objective,
+            "access_mode": "write",
+            "acceptance": acceptance,
+            "checks": checks,
+            "rubric": rubric,
+            "classified_gap_source_node_id": proposed_by_node_id,
+            "failed_verification_source_node_id": failed_report.producer_node_id,
+            "failed_check_source_node_ids": [record.producer_node_id for record in evidence_checks],
+            "failed_verification_record_id": failed_report.record_id,
+            "failed_check_record_ids": [record.record_id for record in evidence_checks],
+            "classified_gap_record_id": classification_record_id,
+            "declared_batch_id": scope,
+            "planning_horizon": horizon,
+            "base_snapshot_selection": "rejected_candidate",
+            "base_snapshot_candidate_id": failed_report.candidate_id,
+            "requirement_source_node_ids": requirement_sources,
+        },
+        corrective=True,
+        proposed_by_node_id=proposed_by_node_id,
+    )
+    correction_worker = next(
+        cast(dict[str, Any], op["node"])
+        for op in ops
+        if op.get("op") == "create_node"
+        and isinstance(op.get("node"), dict)
+        and cast(dict[str, Any], op["node"]).get("node_id") == correction_worker_id
+    )
+    correction_worker["correction_trigger"] = correction_trigger
+    correction_worker["inputs"] = [
+        {
+            "port": "classified_gap",
+            "direction": "input",
+            "schema": "GapClassification",
+            "required": True,
+        },
+        {
+            "port": "verification_report",
+            "direction": "input",
+            "schema": "VerificationReport",
+            "required": True,
+        },
+        {
+            "port": "check_result",
+            "direction": "input",
+            "schema": "CheckResult",
+            "required": True,
+        },
+        *_requirement_input_ports({"requirement_source_node_ids": requirement_sources}),
+    ]
+    correction_verifier = next(
+        cast(dict[str, Any], op["node"])
+        for op in ops
+        if op.get("op") == "create_node"
+        and isinstance(op.get("node"), dict)
+        and cast(dict[str, Any], op["node"]).get("node_id") == correction_verifier_id
+    )
+    correction_verifier["correction_trigger"] = correction_trigger
+    correction_verifier["inputs"] = [
+        {
+            "port": "candidate_under_test",
+            "direction": "input",
+            "schema": "ImplementationCandidate",
+            "required": True,
+        },
+        *[
+            {
+                "port": f"check_result_{index}",
+                "direction": "input",
+                "schema": "CheckResult",
+                "required": True,
+            }
+            for index, _check in enumerate(checks, start=1)
+        ],
+        *_requirement_input_ports({"requirement_source_node_ids": requirement_sources}),
+    ]
+    expected_check_status = "passed" if correction_trigger == "failed_final_audit" else "failed"
+    expected_report_outcome = (
+        "passed" if correction_trigger == "failed_final_acceptance" else "failed"
+    )
+    for op in ops:
+        if (
+            op.get("op") == "create_edge"
+            and op.get("to_node_id") == correction_worker_id
+            and op.get("to_port") == "check_result"
+            and isinstance(op.get("accepted_record_selector"), dict)
+        ):
+            cast(dict[str, Any], op["accepted_record_selector"])["status"] = expected_check_status
+        if (
+            op.get("op") == "create_edge"
+            and op.get("to_node_id") == correction_worker_id
+            and op.get("to_port") == "verification_report"
+            and isinstance(op.get("accepted_record_selector"), dict)
+        ):
+            cast(dict[str, Any], op["accepted_record_selector"])["outcome"] = (
+                expected_report_outcome
+            )
+    requirement_args = {"requirement_source_node_ids": requirement_sources}
+    ops.extend(_requirement_edges(requirement_args, correction_worker_id))
+    ops.extend(_requirement_edges(requirement_args, correction_verifier_id))
+    # The old passed-only successor is permanently blocked by the failed
+    # report. Retire it in the same patch before installing its correction-
+    # gated replacement.
+    for node_id in sorted(node_kinds_view(projection)):
+        node = node_payload_view(projection, node_id) or {}
+        stale_successor = (
+            node.get("kind") == "planner"
+            and node.get("role") == "planner"
+            and node.get("semantic_stage") == "successor_planning"
+            and node.get("planning_horizon") == horizon + 1
+        )
+        stale_finalization = (
+            node.get("semantic_stage")
+            in {
+                "final_acceptance",
+                "final_audit",
+                "final_gate",
+            }
+            or node.get("kind") == "final_gate"
+        )
+        stale_final_recovery = (
+            horizon >= len(declared_batch_ids)
+            and node.get("kind") == "planner"
+            and node.get("role") == "gap_planner"
+        )
+        if (
+            node_id in effective_active_node_ids_view(projection)
+            and node_id != proposed_by_node_id
+            and (stale_successor or stale_finalization or stale_final_recovery)
+        ):
+            ops.append({"op": "retire_node", "node_id": node_id})
+    if horizon < len(declared_batch_ids):
+        ops.extend(
+            _create_successor_planner(
+                {
+                    "region_id": f"successor-corrective-{token}",
+                    "node_id": f"planner-successor-corrective-{token}",
+                    "evidence_source_node_id": correction_verifier_id,
+                    "evidence_source_port": "verification_report",
+                    "planning_horizon": horizon + 1,
+                }
+            )
+        )
+        ops.extend(
+            _create_gap_planner(
+                {
+                    "region_id": f"recovery-corrective-{token}",
+                    "node_id": f"planner-gap-corrective-{token}",
+                    "evidence_source_node_id": correction_verifier_id,
+                    "evidence_source_port": "verification_report",
+                }
+            )
+        )
+    else:
+        batch_verifiers = {**_batch_verifier_ids(projection), scope: correction_verifier_id}
+        missing_batches = sorted(set(declared_batch_ids) - set(batch_verifiers))
+        if missing_batches:
+            raise ValueError(
+                "final reliable-plan correction is missing prior batch verifiers: "
+                + ", ".join(missing_batches)
+            )
+        ops.extend(
+            _reliable_plan_finalization_ops(
+                token=f"corrective-{token}",
+                region_id=region_id,
+                declared_batch_ids=declared_batch_ids,
+                batch_verifiers=batch_verifiers,
+                rubric=rubric,
+                acceptance=acceptance,
+            )
+        )
+        for label, source_id, source_port in (
+            ("batch", correction_verifier_id, "verification_report"),
+            ("acceptance", f"check-final-acceptance-corrective-{token}", "check_result"),
+            ("audit", f"verifier-final-audit-corrective-{token}", "verification_report"),
+        ):
+            ops.extend(
+                _create_gap_planner(
+                    {
+                        "region_id": f"recovery-corrective-{label}-{token}",
+                        "node_id": f"planner-gap-corrective-{label}-{token}",
+                        "evidence_source_node_id": source_id,
+                        "evidence_source_port": source_port,
+                    }
+                )
+            )
+    _stamp_semantic_decisions(
+        ops,
+        scope=scope,
+        objective=objective,
+        requirement_ids=requirement_ids,
+        dependencies=list(cast(list[str], args.get("dependencies", []))),
+        acceptance=acceptance,
+        checks=cast(list[dict[str, Any]], args["checks"]),
+        rubric=rubric,
+        operation_key=_required_str(args, "operation_key"),
+    )
+    _bind_exact_requirements(ops, requirement_bindings)
+    return ops
+
+
+def _reliable_plan_operation_token(
+    skeleton_id: str, proposer_id: str, operation_key: str, patch_id: str
+) -> str:
+    del patch_id  # transport envelopes do not participate in controller-owned identity
+    digest = hashlib.sha256(
+        "\x00".join((skeleton_id, proposer_id, operation_key)).encode()
+    ).hexdigest()[:16]
+    stem = re.sub(r"[^a-z0-9]+", "-", operation_key.lower()).strip("-")[:24] or "region"
+    return f"{stem}-{digest}"
+
+
+def _resolve_requirement_bindings(
+    projection: GraphProjection, requirement_ids: list[str]
+) -> list[tuple[str, str]]:
+    by_identity: dict[str, tuple[str, str]] = {}
+    for record_id, record in output_record_payloads_view(projection).items():
+        if not isinstance(record, RequirementRecord):
+            continue
+        by_identity[record.value.id] = (record_id, record.producer_node_id)
+    bindings: list[tuple[str, str]] = []
+    for requirement_id in requirement_ids:
+        binding = by_identity.get(requirement_id)
+        if binding is None and node_kinds_view(projection).get(requirement_id) == "requirement":
+            binding = (requirement_id, requirement_id)
+        if binding is None:
+            raise ReliablePlanMacroError(
+                "unknown_requirement_identity",
+                "The requested reliable-plan requirement is unavailable.",
+                f"unknown reliable-plan requirement identity: {requirement_id}",
+            )
+        bindings.append(binding)
+    return bindings
+
+
+def _implementation_plan_schema(projection: GraphProjection) -> tuple[str, int]:
+    candidates = [
+        key
+        for key, declaration in semantic_schema_declarations_view(projection).items()
+        if declaration.value.semantic_role == "implementation_plan"
+    ]
+    if len(candidates) != 1:
+        raise ReliablePlanMacroError(
+            "implementation_plan_schema_unavailable",
+            "Exactly one implementation-plan schema is required.",
+            "reliable-plan construction requires exactly one implementation-plan schema",
+        )
+    return candidates[0]
+
+
+def _declared_batch_ids_from_plan(plan_record: SemanticArtifactRecord) -> list[str]:
+    content = plan_record.value.content
+    raw_batches: Any = content.get("batches") if content is not None else None
+    if not isinstance(raw_batches, list):
+        raise ValueError("accepted reliable plan does not declare ordered batches")
+    batch_ids: list[str] = []
+    for raw_batch in cast(list[Any], raw_batches):
+        batch_id: object | None = None
+        if isinstance(raw_batch, str):
+            batch_id = raw_batch
+        elif isinstance(raw_batch, dict):
+            batch = cast(dict[str, Any], raw_batch)
+            batch_id = batch.get("batch_id", batch.get("id"))
+        if not isinstance(batch_id, str) or not batch_id:
+            raise ValueError("accepted reliable plan contains an invalid batch identity")
+        batch_ids.append(batch_id)
+    return list(dict.fromkeys(batch_ids))
+
+
+def _accepted_plan_and_verifier(
+    projection: GraphProjection, scope: str
+) -> tuple[SemanticArtifactRecord, str]:
+    records = output_record_payloads_view(projection)
+    plans: list[SemanticArtifactRecord] = [
+        record
+        for record in records.values()
+        if isinstance(record, SemanticArtifactRecord)
+        and record.value.authority_status == "accepted"
+        and scope in _declared_batch_ids_from_plan(record)
+    ]
+    if len(plans) != 1:
+        raise ValueError(f"scope {scope!r} must identify exactly one accepted plan batch")
+    plan = plans[0]
+    verifiers = [
+        record.producer_node_id
+        for record in records.values()
+        if isinstance(record, VerificationReportRecord)
+        and record.outcome == "passed"
+        and plan.record_id in record.evaluated_record_ids
+        and (node_payload_view(projection, record.producer_node_id) or {}).get("semantic_stage")
+        == "plan_verification"
+    ]
+    if len(set(verifiers)) != 1:
+        raise ValueError("accepted reliable plan requires one exact passing independent verifier")
+    return plan, verifiers[0]
+
+
+def _batch_verifier_ids(projection: GraphProjection) -> dict[str, str]:
+    result: dict[str, str] = {}
+    active = effective_active_node_ids_view(projection)
+    for node_id in node_kinds_view(projection):
+        payload = node_payload_view(projection, node_id) or {}
+        batch_id = payload.get("declared_batch_id")
+        if (
+            payload.get("kind") == "verifier"
+            and payload.get("semantic_stage") in {"effectful_batch", "corrective_work"}
+            and isinstance(batch_id, str)
+            and node_id in active
+        ):
+            result[batch_id] = node_id
+    return result
+
+
+def _bind_dependency_verifications(
+    ops: list[dict[str, Any]],
+    *,
+    worker_id: str,
+    dependencies: list[str],
+    verifier_ids: dict[str, str],
+) -> None:
+    worker = next(
+        cast(dict[str, Any], op["node"])
+        for op in ops
+        if op.get("op") == "create_node"
+        and isinstance(op.get("node"), dict)
+        and cast(dict[str, Any], op["node"]).get("node_id") == worker_id
+    )
+    inputs = cast(list[dict[str, Any]], worker.setdefault("inputs", []))
+    for index, dependency in enumerate(dependencies, start=1):
+        port = f"dependency_verification_{index}"
+        inputs.append(
+            {
+                "port": port,
+                "direction": "input",
+                "schema": "VerificationReport",
+                "required": True,
+            }
+        )
+        ops.append(
+            _edge(
+                f"edge-{verifier_ids[dependency]}-dependency-to-{worker_id}-{index}",
+                verifier_ids[dependency],
+                "verification_report",
+                worker_id,
+                port,
+                ("verification_report",),
+                selector={
+                    "record_type": "verification_report",
+                    "schema": "VerificationReport",
+                    "outcome": "passed",
+                },
+                prompt_hydration_policy="structured_json",
+            )
+        )
+
+
+def _reliable_plan_finalization_ops(
+    *,
+    token: str,
+    region_id: str,
+    declared_batch_ids: list[str],
+    batch_verifiers: dict[str, str],
+    rubric: list[str],
+    acceptance: list[str],
+) -> list[dict[str, Any]]:
+    acceptance_id = f"check-final-acceptance-{token}"
+    audit_id = f"verifier-final-audit-{token}"
+    gate_id = f"final-gate-{token}"
+    batch_inputs = [
+        {
+            "port": f"verification_report_batch_{index}",
+            "direction": "input",
+            "schema": "VerificationReport",
+            "required": True,
+        }
+        for index, _batch_id in enumerate(declared_batch_ids, start=1)
+    ]
+    ops: list[dict[str, Any]] = [
+        {
+            "op": "create_node",
+            "node": {
+                "node_id": acceptance_id,
+                "kind": "check",
+                "role": "acceptance_gate",
+                "state": "planned",
+                "semantic_stage": "final_acceptance",
+                "task_region_id": region_id,
+                "declared_batch_ids": declared_batch_ids,
+                "command_binding": "dynamic_feature_acceptance",
+                "acceptance": acceptance,
+                "inputs": batch_inputs,
+                "outputs": [
+                    {
+                        "port": "check_result",
+                        "direction": "output",
+                        "schema": "CheckResult",
+                        "required": True,
+                    }
+                ],
+                "max_attempts": RELIABLE_PLAN_MAX_ATTEMPTS,
+            },
+        },
+        {
+            "op": "create_node",
+            "node": {
+                "node_id": audit_id,
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "planned",
+                "semantic_stage": "final_audit",
+                "task_region_id": region_id,
+                "declared_batch_ids": declared_batch_ids,
+                "rubric": rubric,
+                "inputs": [
+                    *batch_inputs,
+                    {
+                        "port": "dynamic_feature_acceptance",
+                        "direction": "input",
+                        "schema": "CheckResult",
+                        "required": True,
+                    },
+                ],
+                "outputs": [
+                    {
+                        "port": "verification_report",
+                        "direction": "output",
+                        "schema": "VerificationReport",
+                        "required": True,
+                    }
+                ],
+                "max_attempts": RELIABLE_PLAN_MAX_ATTEMPTS,
+            },
+        },
+        {
+            "op": "create_node",
+            "node": {
+                "node_id": gate_id,
+                "kind": "final_gate",
+                "role": "final_gate",
+                "state": "planned",
+                "task_region_id": region_id,
+                "declared_batch_ids": declared_batch_ids,
+                "inputs": [
+                    *batch_inputs,
+                    {
+                        "port": "dynamic_feature_acceptance",
+                        "direction": "input",
+                        "schema": "CheckResult",
+                        "required": True,
+                    },
+                    {
+                        "port": "verification_report_final_audit",
+                        "direction": "input",
+                        "schema": "VerificationReport",
+                        "required": True,
+                    },
+                ],
+            },
+        },
+    ]
+    for index, batch_id in enumerate(declared_batch_ids, start=1):
+        source = batch_verifiers[batch_id]
+        port = f"verification_report_batch_{index}"
+        for target in (acceptance_id, audit_id, gate_id):
+            ops.append(
+                _edge(
+                    f"edge-{source}-passed-to-{target}-{index}",
+                    source,
+                    "verification_report",
+                    target,
+                    port,
+                    ("verification_report",),
+                    selector={
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                        "outcome": "passed",
+                    },
+                )
+            )
+    ops.extend(
+        [
+            _edge(
+                f"edge-{acceptance_id}-passed-to-{audit_id}",
+                acceptance_id,
+                "check_result",
+                audit_id,
+                "dynamic_feature_acceptance",
+                ("check_result",),
+                selector={
+                    "record_type": "check_result",
+                    "schema": "CheckResult",
+                    "status": "passed",
+                },
+            ),
+            _edge(
+                f"edge-{acceptance_id}-passed-to-{gate_id}",
+                acceptance_id,
+                "check_result",
+                gate_id,
+                "dynamic_feature_acceptance",
+                ("check_result",),
+                selector={
+                    "record_type": "check_result",
+                    "schema": "CheckResult",
+                    "status": "passed",
+                },
+            ),
+            _edge(
+                f"edge-{audit_id}-passed-to-{gate_id}",
+                audit_id,
+                "verification_report",
+                gate_id,
+                "verification_report_final_audit",
+                ("verification_report",),
+                selector={
+                    "record_type": "verification_report",
+                    "schema": "VerificationReport",
+                    "outcome": "passed",
+                },
+            ),
+        ]
+    )
+    return ops
+
+
+def _stamp_semantic_decisions(
+    ops: list[dict[str, Any]],
+    *,
+    scope: str,
+    objective: str,
+    requirement_ids: list[str],
+    dependencies: list[str],
+    acceptance: list[str],
+    checks: list[dict[str, Any]],
+    rubric: list[str],
+    operation_key: str,
+) -> None:
+    for op in ops:
+        raw_node = op.get("node")
+        if op.get("op") != "create_node" or not isinstance(raw_node, dict):
+            continue
+        node = cast(dict[str, Any], raw_node)
+        node["scope"] = scope
+        node.setdefault("objective", objective)
+        node.setdefault("acceptance", acceptance)
+        if dependencies:
+            node["preconditions"] = [f"declared batch {item} passed" for item in dependencies]
+        if node.get("kind") in {"worker", "verifier"}:
+            node["bound_requirement_ids"] = requirement_ids
+
+
+def _bind_exact_requirements(ops: list[dict[str, Any]], bindings: list[tuple[str, str]]) -> None:
+    by_index = {index: record_id for index, (record_id, _producer) in enumerate(bindings, start=1)}
+    for op in ops:
+        to_port = op.get("to_port")
+        if op.get("op") != "create_edge" or not isinstance(to_port, str):
+            continue
+        if not to_port.startswith("requirement_"):
+            continue
+        try:
+            index = int(to_port.removeprefix("requirement_"))
+        except ValueError:
+            continue
+        record_id = by_index.get(index)
+        if record_id is not None:
+            op["accepted_record_selector"] = {
+                "record_id": record_id,
+                "record_type": "requirement_record",
+            }
 
 
 def _semantic_artifact_selector(

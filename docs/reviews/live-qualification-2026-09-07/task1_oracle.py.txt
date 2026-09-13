@@ -1,0 +1,55 @@
+"""Operator-owned acceptance checks; run from the candidate checkout."""
+
+import importlib.util
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+module_path = Path.cwd() / "examples/qualification/jsonl_validator.py"
+spec = importlib.util.spec_from_file_location("qualification_jsonl_validator", module_path)
+assert spec is not None and spec.loader is not None
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+
+def issues(text):
+    return [(item.line_number, item.reason) for item in module.validate_jsonl(text)]
+
+
+assert issues("") == []
+assert issues('  \n{"city":"Montréal"}\n\t\n{"x":1}\n') == []
+assert issues('{}\n\nBAD\n[]\nnull\n42\n"text"\ntrue\n') == [
+    (3, "invalid_json"), (4, "non_object"), (5, "non_object"),
+    (6, "non_object"), (7, "non_object"), (8, "non_object"),
+]
+assert issues('{"x":}\r\n{}\r\n[1]\r\n') == [(1, "invalid_json"), (3, "non_object")]
+assert issues('{"x": NaN}\n{"x": Infinity}\n') == [(1, "invalid_json"), (2, "invalid_json")]
+
+with tempfile.TemporaryDirectory(prefix="qualification-jsonl-") as directory:
+    root = Path(directory)
+    source = root / "input with spaces.jsonl"
+    for content, expected_exit, expected_issues in (
+        ('{"ok":true}\n', 0, []),
+        ('{}\nBAD\n[]\n', 1, [
+            {"line_number": 2, "reason": "invalid_json"},
+            {"line_number": 3, "reason": "non_object"},
+        ]),
+    ):
+        source.write_text(content, encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(module_path), str(source)],
+            capture_output=True, text=True, timeout=15,
+        )
+        assert result.returncode == expected_exit, (result.returncode, result.stderr)
+        assert json.loads(result.stdout) == {"valid": expected_exit == 0, "issues": expected_issues}
+    missing = subprocess.run(
+        [sys.executable, str(module_path), str(root / "missing.jsonl")],
+        capture_output=True, text=True, timeout=15,
+    )
+    assert missing.returncode == 2 and missing.stderr.strip(), missing
+    assert "Traceback" not in missing.stderr, missing.stderr
+print("PASS: operator-owned JSONL acceptance checks")

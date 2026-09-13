@@ -19,9 +19,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.api.app import create_app
-from orchestrator.config import AgentRunnerType, RoutineSource, RunStatus
+from orchestrator.config import (
+    AgentRunnerType,
+    AutoVerifyConfig,
+    AutoVerifyItemConfig,
+    ContextSource,
+    RoutineSource,
+    RunStatus,
+    TaskStatus,
+)
 from orchestrator.db import EventV2Model, init_db
 from orchestrator.db import RunRepository
+from orchestrator.state import Attempt, create_run_from_routine
 from orchestrator.workflow.service import WorkflowService
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
@@ -436,6 +445,74 @@ async def test_executor_persists_builder_prompt_before_execution(
         assert "builder phase" in attempt.builder_prompt.lower()
         assert "## Task" in attempt.builder_prompt
         assert attempt.verifier_prompt is None
+
+
+async def test_executor_persists_resolved_verifier_prompt_before_execution(
+    app: FastAPI, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    """Verifier execution receives the same resolved artifact contract as the API prompt."""
+    from orchestrator.config import discover_routines
+
+    executor = AgentRunnerExecutor(
+        session_factory=session_factory,
+        service_factory=app.state.service_factory,
+        spawn_agents=True,
+    )
+    routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
+    routine = next(r for r in routines if r.config.id == "complete-routine")
+    task_config = routine.config.steps[0].tasks[0]
+    task_config.task_context = "Default {{feature_name}}"
+    task_config.model_overrides = {
+        "verifier-model": {"task_context": "Override {{feature_name}} {{context.foo}}"}
+    }
+    task_config.context_from = [
+        ContextSource.model_validate({"artifact": "context.md", "as": "foo"})
+    ]
+    task_config.auto_verify = AutoVerifyConfig(
+        items=[AutoVerifyItemConfig(id="context_check", cmd="test -f context.md")]
+    )
+    routine.config.steps[0].step_context = "Plan {{feature_name}}"
+
+    run = create_run_from_routine(
+        routine=routine.config,
+        repo_name="test-project",
+        source_branch="main",
+        config={"feature_name": "auth"},
+        routine_source=RoutineSource.LOCAL,
+    )
+    run.routine_embedded = routine.config.model_dump(mode="json", by_alias=True)
+    run.worktree_path = str(tmp_path)
+    run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+    run.agent_runner_config = {"command": "false"}
+    run.verifier_model = "verifier-model"
+    task = run.steps[0].tasks[0]
+    task.status = TaskStatus.VERIFYING
+    task.current_attempt = 1
+    task.attempts = [Attempt(attempt_num=1)]
+    (tmp_path / "context.md").write_text("EXECUTOR_ARTIFACT_MARKER")
+
+    async with session_factory() as session:
+        service = WorkflowService(**_make_service_args(session))
+        await service.create_run(run)
+        persisted = await RunRepository(session).get(run.id)
+        persisted_task = persisted.steps[0].tasks[0]
+        await executor._execute_task(
+            persisted,
+            persisted_task,
+            service,
+            AgentRunnerType.CLI_SUBPROCESS,
+            {"command": "false"},
+            session=session,
+        )
+
+    async with session_factory() as session:
+        persisted = await RunRepository(session).get(run.id)
+        attempt = persisted.steps[0].tasks[0].attempts[0]
+        assert attempt.verifier_prompt is not None
+        assert "Override auth" in attempt.verifier_prompt
+        assert "Plan auth" in attempt.verifier_prompt
+        assert "EXECUTOR_ARTIFACT_MARKER" in attempt.verifier_prompt
+        assert "test -f context.md" in attempt.verifier_prompt
 
 
 async def test_agent_metadata_persisted_immediately(

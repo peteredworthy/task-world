@@ -1,0 +1,90 @@
+{
+  "qualification_passed": false,
+  "completed_trials": 0,
+  "attempted_trials": 1,
+  "planned_trials": 5,
+  "run_id": "c15e02ab-052c-45af-ab65-b3334b2c9ffb",
+  "status": "paused",
+  "pause_reason": "graph_blocked",
+  "source_commit": "13b6ebd07678ed404ebf8024013af2374699700d",
+  "worktree_path": "/Users/peter/code/task-world/worktrees/r199",
+  "started_at": "2026-09-07T14:53:45.116143Z",
+  "paused_at": "2026-09-07T15:07:57.246558Z",
+  "wall_seconds": 852.130415,
+  "input_tokens": 1968703,
+  "output_tokens": 32569,
+  "cached_input_tokens": 1737728,
+  "total_actions": 54,
+  "model_latency_ms": 831195,
+  "cost_usd": null,
+  "cost_unavailable_reason": "Per-model rate_missing=true; cost-rollup API returned HTTP 500 (duplicate run_id keyword).",
+  "active_leases": 0,
+  "graph_events": 208,
+  "graph_rejections": 8,
+  "malformed_command_rejections": 1,
+  "accepted_patches": 2,
+  "implementation_candidate_accepted": false,
+  "implementation_correction_proven": false,
+  "restart_performed": false,
+  "manual_graph_edits": 0,
+  "manual_state_repairs": 0,
+  "failure": "Accepted semantic-plan revision nodes lacked sealed assignment carrier; dispatch failed before model execution.",
+  "usage_by_model": [
+    {
+      "model": "gpt-5.6-sol",
+      "gen_ai_usage_cache_read_input_tokens": 435584,
+      "gen_ai_usage_cache_creation_input_tokens": 0,
+      "gen_ai_usage_input_tokens": 488626,
+      "gen_ai_usage_output_tokens": 5721,
+      "gen_ai_usage_reasoning_output_tokens": 1304,
+      "gen_ai_response_finish_reasons": [
+        "stop"
+      ],
+      "cost_usd": 0.0,
+      "latency_ms": 168081,
+      "rate_missing": true
+    },
+    {
+      "model": "gpt-5.6-luna",
+      "gen_ai_usage_cache_read_input_tokens": 331776,
+      "gen_ai_usage_cache_creation_input_tokens": 0,
+      "gen_ai_usage_input_tokens": 406266,
+      "gen_ai_usage_output_tokens": 8748,
+      "gen_ai_usage_reasoning_output_tokens": 2490,
+      "gen_ai_response_finish_reasons": [
+        "stop"
+      ],
+      "cost_usd": 0.0,
+      "latency_ms": 129173,
+      "rate_missing": true
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "gen_ai_usage_cache_read_input_tokens": 49280,
+      "gen_ai_usage_cache_creation_input_tokens": 0,
+      "gen_ai_usage_input_tokens": 75360,
+      "gen_ai_usage_output_tokens": 1623,
+      "gen_ai_usage_reasoning_output_tokens": 434,
+      "gen_ai_response_finish_reasons": [
+        "stop"
+      ],
+      "cost_usd": 0.0,
+      "latency_ms": 47467,
+      "rate_missing": true
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "gen_ai_usage_cache_read_input_tokens": 921088,
+      "gen_ai_usage_cache_creation_input_tokens": 0,
+      "gen_ai_usage_input_tokens": 998451,
+      "gen_ai_usage_output_tokens": 16477,
+      "gen_ai_usage_reasoning_output_tokens": 2420,
+      "gen_ai_response_finish_reasons": [
+        "stop"
+      ],
+      "cost_usd": 0.0,
+      "latency_ms": 486474,
+      "rate_missing": true
+    }
+  ]
+}

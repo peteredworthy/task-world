@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 # Agent interface and types
 from orchestrator.runners.interface import AgentRunner
 from orchestrator.runners.errors import (
+    AgentConfigError as AgentConfigError,
     AgentNotAvailableError,
     SubmissionRejectedError,
     SubmissionRepairExhaustedError,
@@ -195,7 +196,7 @@ from orchestrator.runners.runtime import (
 )
 
 if TYPE_CHECKING:
-    from orchestrator.runners.executor import AgentRunnerExecutor
+    from orchestrator.runners.executor import AgentRunnerExecutor, resolve_verifier_config
     from orchestrator.runners.agents.openhands.agent import OpenHandsAgent
     from orchestrator.runners.agents.openhands.docker_agent import DockerOpenHandsAgent
     from orchestrator.runners.agents.openhands.parser import OpenHandsEventParser
@@ -214,6 +215,10 @@ def __getattr__(name: str):  # type: ignore[misc]
         from orchestrator.runners.executor import AgentRunnerExecutor  # noqa: PLC0415
 
         return AgentRunnerExecutor
+    if name == "resolve_verifier_config":
+        from orchestrator.runners.executor import resolve_verifier_config
+
+        return resolve_verifier_config
     if name == "OpenHandsEventParser":
         from orchestrator.runners.agents.openhands.parser import OpenHandsEventParser
 
@@ -374,6 +379,7 @@ __all__ = [
     "resolve_model_costs",
     # Execution
     "AgentRunnerExecutor",
+    "resolve_verifier_config",
     "AttemptStore",
     "DEFAULT_HEALTH_CHECK_COMMAND",
     "EventBroadcaster",
