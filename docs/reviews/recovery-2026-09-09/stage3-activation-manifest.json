@@ -1,0 +1,40 @@
+{
+  "at": "2026-09-09T19:31:47Z",
+  "prior_live_overlay_commit": "98ca9f6cb74cebd527540dc9a9207c661eaa89cc",
+  "source_change_commit": "a2a6e02805e72a64c860c93d55fa613d76508c16",
+  "validated_source_commit": "2085edfaf8b8c0434a425d6bd27104f59666aa16",
+  "files": [
+    {
+      "path": "src/orchestrator/graph/__init__.py",
+      "before_sha256": "b6c45a843ac6e757b891fe13d8e5397deffdee2dc19160f9eaa6cc9179c66f09",
+      "after_sha256": "3078e6d0987932be7eb689686bef4429373ec2ce0fe73e829576e9a242eded0d"
+    },
+    {
+      "path": "src/orchestrator/graph/macros.py",
+      "before_sha256": "d3c4833dd3e76950b223c21e62aa1e3413bcc261c6fed006d9797eb6c0776893",
+      "after_sha256": "2260af864cdf2ab9499b5ebe4ee2ad3c5bd87e27b0663faeb9cf829b893f6833"
+    },
+    {
+      "path": "src/orchestrator/graph_runtime/graph_mcp_tools.py",
+      "before_sha256": "8bfd0dd7030f58ae3a4a2fbe21e3bf2d4b4e58aaa01278b705f17906fe9a08d4",
+      "after_sha256": "00f2445b8c8ebff312fb6b21837fb9825e0f3919ee554698dae2c703d4077159"
+    },
+    {
+      "path": "src/orchestrator/runners/agents/codex/common.py",
+      "before_sha256": "23d56a4fb4217e998842783c8a60ce40705d555c447b477217ad51e29556af62",
+      "after_sha256": "79dcb5d4a4def30b3333b2384dd3511056e8b89deac2f70028911caf79242bd9"
+    },
+    {
+      "path": "src/orchestrator/runners/planner_tools.py",
+      "before_sha256": "d0a3b54a7f53d2ab05f6ad150a8e83f4125d7d5bd40117bbefdebf5885c4c3ba",
+      "after_sha256": "bcf19e4366e91b6878fc0684cb69ee737ccbc94c5b2b331e5c66fea9103bbd74"
+    }
+  ],
+  "applied": true,
+  "hashes_match_validated_worktree": true,
+  "pre_activation_active_runs": 0,
+  "reloaded_server_child_pid": 81602,
+  "server_ready_at": "2026-09-09T19:30:14Z",
+  "post_activation_health": "ok",
+  "post_activation_active_runs": 0
+}

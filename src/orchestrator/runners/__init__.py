@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from orchestrator.runners.interface import AgentRunner
 from orchestrator.runners.errors import (
     AgentConfigError as AgentConfigError,
+    AgentExecutionError,
     AgentNotAvailableError,
     SubmissionRejectedError,
     SubmissionRepairExhaustedError,
@@ -22,6 +23,7 @@ from orchestrator.runners.types import (
     ExecutionMetrics,
     ExecutionResult,
     GradeCallback,
+    GraphPatchCallback,
     LogLineCallback,
     RunnerRuntimeObservationCapability,
     SubmissionContract,
@@ -29,11 +31,14 @@ from orchestrator.runners.types import (
     SubmissionRejectionCategory,
     SubmissionRejectionEvidence,
     SubmissionOutputContract,
+    SubmissionInvocation,
     SubmitCallback,
 )
 from orchestrator.runners.submission import (
+    is_decision_submission,
     submission_prompt_instruction,
     submission_tool_input_schema,
+    validate_submission_arguments,
 )
 from orchestrator.runners.planner_tools import (
     GRAPH_PLANNER_TOOL_ORDER as GRAPH_PLANNER_TOOL_ORDER,
@@ -46,6 +51,9 @@ from orchestrator.runners.planner_tools import (
     validate_reliable_plan_tool_names as validate_reliable_plan_tool_names,
     validate_reliable_plan_tool_specs as validate_reliable_plan_tool_specs,
 )
+from orchestrator.runners.graph_tool_routing import (
+    route_tool_call as route_graph_tool_call,
+)
 from orchestrator.runners.agent_factory import (
     create as create_agent_runner,
     get_graph_capable_agent_runner_types,
@@ -56,7 +64,11 @@ from orchestrator.runners.agent_factory import (
 from orchestrator.runners.agents import discover as discover_agents
 
 # Concrete agent implementations
-from orchestrator.runners.agents.claude_cli.agent import CLIAgent, ClaudeCliQuotaAgent
+from orchestrator.runners.agents.claude_cli.agent import (
+    CLIAgent,
+    ClaudeCliQuotaAgent,
+    is_owned_terminal_answer_stop,
+)
 from orchestrator.runners.agents.claude_cli.factory import create_cli_agent
 from orchestrator.runners.agents.claude_cli.config import cli_config_for_command
 from orchestrator.runners.agents.mock.agent import MockAgent, MockBehavior
@@ -89,6 +101,8 @@ from orchestrator.runners.agents.openhands.common import (
 
 # Codex agent and helpers
 from orchestrator.runners.agents.codex.agent import (
+    CodexCommandExecutionReceipt,
+    CodexDynamicToolReceipt,
     CodexServerAgent,
     RealStdioTransport,
     build_codex_app_server_launch,
@@ -272,6 +286,7 @@ __all__ = [
     "AgentRunner",
     "SubmissionRepairExhaustedError",
     "SubmissionRejectedError",
+    "AgentExecutionError",
     "AgentNotAvailableError",
     "AgentMetadataCallback",
     "AgentRunnerInfo",
@@ -284,11 +299,16 @@ __all__ = [
     "SubmissionRejectionCategory",
     "SubmissionRejectionEvidence",
     "SubmissionOutputContract",
+    "SubmissionInvocation",
+    "is_decision_submission",
     "submission_prompt_instruction",
     "submission_tool_input_schema",
+    "validate_submission_arguments",
+    "route_graph_tool_call",
     "ExecutionMetrics",
     "ExecutionResult",
     "GradeCallback",
+    "GraphPatchCallback",
     "LogLineCallback",
     "RunnerRuntimeObservationCapability",
     "SubmitCallback",
@@ -300,9 +320,12 @@ __all__ = [
     # Agent classes
     "CLIAgent",
     "ClaudeCliQuotaAgent",
+    "is_owned_terminal_answer_stop",
     "create_cli_agent",
     "cli_config_for_command",
     "CodexServerAgent",
+    "CodexCommandExecutionReceipt",
+    "CodexDynamicToolReceipt",
     "build_codex_app_server_launch",
     "DockerOpenHandsAgent",
     "MockAgent",

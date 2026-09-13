@@ -752,6 +752,139 @@ def test_submission_repair_exhaustion_restores_then_fails_without_retry() -> Non
     assert terminal.payload["trigger"] == "submission_repair_exhausted"
 
 
+@pytest.mark.parametrize(
+    ("attempt_number", "expected_state", "expected_trigger"),
+    [
+        (1, "ready", "runner_recovery_completed_retry_scheduled"),
+        (2, "failed", "invalid_planner_execution_limit_exhausted"),
+    ],
+)
+def test_invalid_planner_proposal_recovery_obeys_persisted_execution_limit(
+    attempt_number: int,
+    expected_state: str,
+    expected_trigger: str,
+) -> None:
+    projection = _staged_projection(attempt_number=attempt_number, max_attempts=2)
+    requested = _apply(
+        projection,
+        "request_runner_recovery",
+        {
+            "execution_id": "exec",
+            "node_id": "node",
+            "lease_id": "lease",
+            "lease_generation": 1,
+            "reason": "invalid_planner_proposal",
+            "error_detail": "invalid_planner_proposal",
+            "max_attempts": 2,
+            "retry_after_recovery": True,
+            "final_tree_sha": OID,
+            "boundary_hash": boundary_manifest_hash(OID, []),
+            "boundary_entries": [],
+        },
+    )
+    projection = reduce_event(projection, requested[0])
+    request = requested[0].payload
+    proof = recovery_proof_hash(
+        execution_id="exec",
+        recovery_id=request["recovery_id"],
+        node_id="node",
+        lease_id="lease",
+        lease_generation=1,
+        baseline_snapshot_id=request["baseline_snapshot_id"],
+        baseline_tree_sha=request["baseline_tree_sha"],
+        requested_paths=tuple(request["paths"]),
+        restored_paths=tuple(request["paths"]),
+        removed_paths=(),
+    )
+    completed = _apply(
+        projection,
+        "complete_runner_recovery",
+        {
+            "execution_id": "exec",
+            "recovery_id": request["recovery_id"],
+            "node_id": "node",
+            "lease_id": "lease",
+            "lease_generation": 1,
+            "baseline_snapshot_id": request["baseline_snapshot_id"],
+            "baseline_tree_sha": request["baseline_tree_sha"],
+            "requested_paths": request["paths"],
+            "proof_hash": proof,
+            "restored_paths": request["paths"],
+            "removed_paths": [],
+        },
+    )
+
+    terminal = next(event for event in completed if event.event_type == "node_state_changed")
+    assert terminal.payload["new_state"] == expected_state
+    assert terminal.payload["trigger"] == expected_trigger
+    if expected_state == "ready":
+        assert any(event.event_type == "runtime_retry_scheduled" for event in completed)
+        assert not any(event.event_type == "output_record_accepted" for event in completed)
+    else:
+        assert not any(event.event_type == "runtime_retry_scheduled" for event in completed)
+        failure = next(event for event in completed if event.event_type == "output_record_accepted")
+        assert failure.payload["value"]["failure_class"] == "invalid_plan_failure"
+        assert failure.payload["value"]["error_class"] == "invalid_planner_proposal"
+
+
+def test_proposal_rejection_limit_restores_then_fails_without_retry() -> None:
+    projection = _staged_projection(attempt_number=1, max_attempts=3)
+    requested = _apply(
+        projection,
+        "request_runner_recovery",
+        {
+            "execution_id": "exec",
+            "node_id": "node",
+            "lease_id": "lease",
+            "lease_generation": 1,
+            "reason": "invalid_planner_proposal",
+            "error_detail": "proposal_rejection_limit_exhausted",
+            "max_attempts": 3,
+            "retry_after_recovery": False,
+            "final_tree_sha": OID,
+            "boundary_hash": boundary_manifest_hash(OID, []),
+            "boundary_entries": [],
+        },
+    )
+    projection = reduce_event(projection, requested[0])
+    request = requested[0].payload
+    proof = recovery_proof_hash(
+        execution_id="exec",
+        recovery_id=request["recovery_id"],
+        node_id="node",
+        lease_id="lease",
+        lease_generation=1,
+        baseline_snapshot_id=request["baseline_snapshot_id"],
+        baseline_tree_sha=request["baseline_tree_sha"],
+        requested_paths=tuple(request["paths"]),
+        restored_paths=tuple(request["paths"]),
+        removed_paths=(),
+    )
+    completed = _apply(
+        projection,
+        "complete_runner_recovery",
+        {
+            "execution_id": "exec",
+            "recovery_id": request["recovery_id"],
+            "node_id": "node",
+            "lease_id": "lease",
+            "lease_generation": 1,
+            "baseline_snapshot_id": request["baseline_snapshot_id"],
+            "baseline_tree_sha": request["baseline_tree_sha"],
+            "requested_paths": request["paths"],
+            "proof_hash": proof,
+            "restored_paths": request["paths"],
+            "removed_paths": [],
+        },
+    )
+    assert not any(event.event_type == "runtime_retry_scheduled" for event in completed)
+    failure = next(event for event in completed if event.event_type == "output_record_accepted")
+    assert failure.payload["value"]["error_class"] == "invalid_planner_proposal"
+    terminal = next(event for event in completed if event.event_type == "node_state_changed")
+    assert terminal.payload["new_state"] == "failed"
+    assert terminal.payload["trigger"] == "invalid_planner_proposal"
+
+
 def test_validation_environment_blockage_releases_lease_without_retry() -> None:
     projection = _staged_projection(attempt_number=1)
     requested = _apply(

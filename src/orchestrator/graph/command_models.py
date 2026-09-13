@@ -72,6 +72,7 @@ class GraphCommandContext(BaseModel):
 class PatchCommandContext(GraphCommandContext):
     proposed_by_node_id: CommandIdentifier
     actor_role: str
+    reliable_plan_rejection_count: int = Field(default=0, ge=0)
 
 
 class Clock(Protocol):
@@ -410,6 +411,12 @@ class FinalizeRunnerExecutionCommand(StrictCommandPayload):
     # Effectful runtime resolution supplies this transient body. It is used by
     # the pure command kernel but removed from the finalized event payload.
     callback_payload: dict[str, Any] | None = None
+    # Transient nested patch-read base for decision finalization. The controller
+    # loads the complete tail from this position and handlers exclude it from events.
+    decision_base_graph_position: int | None = Field(default=None, ge=0)
+    # Runtime-resolved CAS bytes for the protected decision question.  This is
+    # transient command authority and is never persisted in the final event.
+    decision_question_context: dict[str, Any] | None = None
 
     @field_validator("boundary_hash")
     @classmethod
@@ -463,7 +470,7 @@ class WitnessRunnerCompletionCommand(FinalizeRunnerExecutionCommand):
     staged_commit_sha: CommandIdentifier
     staged_tree_sha: CommandIdentifier
     staged_boundary_hash: CommandIdentifier
-    runner_return_kind: Literal["successful_return"]
+    runner_return_kind: Literal["successful_return", "terminal_answer_completed"]
 
     @field_validator("staged_payload_hash", "staged_boundary_hash")
     @classmethod
@@ -479,6 +486,10 @@ class WitnessRunnerCompletionCommand(FinalizeRunnerExecutionCommand):
     def staged_snapshot_is_well_formed(self) -> "WitnessRunnerCompletionCommand":
         if self.callback_payload is not None:
             raise ValueError("completion witness must not carry callback_payload")
+        if self.decision_base_graph_position is not None:
+            raise ValueError("completion witness must not carry decision patch context")
+        if self.decision_question_context is not None:
+            raise ValueError("completion witness must not carry decision question context")
         validate_snapshot_ref(self.staged_snapshot_ref, self.staged_snapshot_id)
         validate_git_oid(self.staged_commit_sha)
         return self
@@ -497,6 +508,7 @@ class RequestRunnerRecoveryCommand(StrictCommandPayload):
         "staged_artifact_missing",
         "staged_artifact_corrupt",
         "submission_repair_exhausted",
+        "invalid_planner_proposal",
         "submission_format_rejected",
         "candidate_check_failed",
         "validation_environment_blocked",

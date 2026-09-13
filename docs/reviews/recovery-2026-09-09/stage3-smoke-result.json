@@ -1,0 +1,187 @@
+{
+  "record_kind": "operator-curated bounded Stage 3 smoke result summary",
+  "run_id": "c3a1cf27-f309-4540-b381-02185297b608",
+  "outcome": "failed_and_paused_at_experiment_stop_rule",
+  "terminal_observation": {
+    "status": "paused",
+    "pause_reason": "manual_pause",
+    "last_error": null,
+    "start_accepted_at": "2026-09-09T19:40:18Z",
+    "run_active_at": "2026-09-09T19:40:28.195135Z",
+    "pause_signal_enqueued_at": "2026-09-09T19:45:29.947595Z",
+    "pause_applied_at": "2026-09-09T19:45:32.120859Z",
+    "wall_seconds_from_accepted_start_to_pause": 314.121,
+    "pending_actions": 0,
+    "active_leases": 0,
+    "suspended_leases": 0,
+    "scheduler_ready_nodes": [
+      "planner-successor-stage3-smoke-feature-exe-44d588eb96567525"
+    ],
+    "graph_position": 167
+  },
+  "stop_rule": {
+    "triggered": true,
+    "reasons": [
+      "Sixteen patch commands were rejected, materially exceeding the one in-session corrected-proposal allowance.",
+      "The first successor-planner execution exited without a successful submit and caused runner recovery plus an automatic same-node retry.",
+      "The retry was still issuing rejected patch proposals when the operator pause was requested.",
+      "The worktree contained an unexpected untracked .gitignore and no requested feature file."
+    ],
+    "operator_actions": [
+      "POST /api/runs/c3a1cf27-f309-4540-b381-02185297b608/pause",
+      "No resume, manual graph correction, budget extension, merge, or second smoke was performed."
+    ]
+  },
+  "progress": {
+    "accepted_patch_count": 1,
+    "accepted_patch": {
+      "graph_position": 27,
+      "patch_id": "stage3-smoke-reliable-horizon-1-final",
+      "base_graph_position": 18,
+      "proposed_by_node_id": "planner-s-01"
+    },
+    "completed_nodes": [
+      "planner-s-01",
+      "worker-discovery-stage3-smoke-feature-exe-44d588eb96567525",
+      "verifier-plan-stage3-smoke-feature-exe-44d588eb96567525"
+    ],
+    "plan_verification_passed": true,
+    "implementation_started": false,
+    "candidate_submitted": false,
+    "final_acceptance_ran": false,
+    "final_audit_ran": false,
+    "run_finalized": false
+  },
+  "graph_accounting": {
+    "agent_dispatch_requested": 5,
+    "node_usage_recorded": 4,
+    "callback_accepted": 3,
+    "runner_execution_finalized": 3,
+    "lease_released": 3,
+    "lease_revoked": 2,
+    "runner_recovery_requested": 2,
+    "runner_recovery_completed": 2,
+    "runtime_retry_scheduled": 2,
+    "command_rejected": 16,
+    "rejection_breakdown": {
+      "by_phase": {
+        "root_planner": 2,
+        "successor_planner_generation_2": 10,
+        "successor_planner_generation_3": 4
+      },
+      "by_reason": {
+        "malformed_patch": 10,
+        "invalid_macro_arguments": 4,
+        "initial_dependencies_forbidden": 1,
+        "unavailable_command_binding": 1
+      }
+    },
+    "generic_malformed_patch_positions": [
+      117,
+      120,
+      121,
+      125,
+      126,
+      130,
+      131,
+      152,
+      155,
+      158
+    ]
+  },
+  "model_accounting": {
+    "started_phases": 5,
+    "completed_phases_with_usage": 4,
+    "cancelled_phase_without_recorded_usage": 1,
+    "reported_model_duration_ms": 215885,
+    "input_tokens": 494891,
+    "output_tokens": 10052,
+    "cache_read_input_tokens": 393728,
+    "reasoning_output_tokens": 2182,
+    "actions": 37,
+    "phases": [
+      {
+        "node_id": "planner-s-01",
+        "role": "planner",
+        "latency_ms": 61801,
+        "input_tokens": 119698,
+        "output_tokens": 1976,
+        "cache_read_input_tokens": 103168,
+        "reasoning_output_tokens": 253,
+        "actions": 8
+      },
+      {
+        "node_id": "worker-discovery-stage3-smoke-feature-exe-44d588eb96567525",
+        "role": "worker",
+        "latency_ms": 20960,
+        "input_tokens": 48019,
+        "output_tokens": 997,
+        "cache_read_input_tokens": 15104,
+        "reasoning_output_tokens": 217,
+        "actions": 5
+      },
+      {
+        "node_id": "verifier-plan-stage3-smoke-feature-exe-44d588eb96567525",
+        "role": "verifier",
+        "latency_ms": 21186,
+        "input_tokens": 47848,
+        "output_tokens": 508,
+        "cache_read_input_tokens": 30208,
+        "reasoning_output_tokens": 122,
+        "actions": 4
+      },
+      {
+        "node_id": "planner-successor-stage3-smoke-feature-exe-44d588eb96567525",
+        "role": "planner",
+        "latency_ms": 111938,
+        "input_tokens": 279326,
+        "output_tokens": 6571,
+        "cache_read_input_tokens": 245248,
+        "reasoning_output_tokens": 1590,
+        "actions": 20,
+        "result": "exited_without_successful_submit"
+      },
+      {
+        "node_id": "planner-successor-stage3-smoke-feature-exe-44d588eb96567525",
+        "role": "planner",
+        "result": "cancelled_by_operator_pause_before_usage_record"
+      }
+    ]
+  },
+  "worktree": {
+    "path": "/Users/peter/code/task-world/worktrees/r221",
+    "intended_seed_sha": "db05b2baf813d0e3a73451265b4b94d632d80cba",
+    "head_sha": "db05b2baf813d0e3a73451265b4b94d632d80cba",
+    "committed_diff_from_seed": [],
+    "unstaged_tracked_diff": [],
+    "untracked_paths": [
+      ".gitignore"
+    ],
+    "unexpected_file": {
+      "path": ".gitignore",
+      "size_bytes": 15,
+      "sha256": "d49060551d4453c81a00312d2030c6d9a021f27e2e8a44e4adafedc3b0cf909e",
+      "hex": "2e6f7263686573747261746f722f0a",
+      "text": ".orchestrator/\n"
+    },
+    "requested_file_present": false,
+    "operator_oracle_exit_code": 1
+  },
+  "evidence_provenance": {
+    "primary": [
+      "REST run, pending-action, patch, scheduler, region, and final-blocker views while active and after pause",
+      "REST pause response and final paused run projection"
+    ],
+    "secondary": [
+      "Append-only .orchestrator/state/history.jsonl readback for bounded event counts and typed rejection diagnostics",
+      "Read-only Git and filesystem inspection of the run worktree",
+      "Independent operator oracle execution"
+    ],
+    "limitations": [
+      "The final-blockers read model returned missing_or_stale at graph position 167 after pause.",
+      "Ten malformed-patch rejections retain no argument-level diagnostics or original argument payload.",
+      "The cancelled fifth phase has no recorded token or duration usage."
+    ]
+  },
+  "conclusion": "Stage 3 did not pass. The smallest unresolved transition is successor reliable-plan construction: typed initial-shape mistakes are visible, but ten later successor proposals collapse to generic malformed_patch and the original rejected arguments are not retained. Their exact input and cause are therefore unknown. Return to deterministic Stage 1 contract/diagnostic work; do not rerun this smoke unchanged."
+}

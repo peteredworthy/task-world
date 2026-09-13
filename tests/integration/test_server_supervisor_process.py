@@ -668,13 +668,16 @@ def test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill(
         "--log-dir",
         str(log_root),
     ]
-    first = subprocess.Popen(
-        command,
-        cwd=project_root,
-        env=environment,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.STDOUT,
-    )
+    first_output_path = tmp_path / "first-supervisor-output.log"
+    second_output_path = tmp_path / "second-supervisor-output.log"
+    with first_output_path.open("wb") as output:
+        first = subprocess.Popen(
+            command,
+            cwd=project_root,
+            env=environment,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+        )
     second: subprocess.Popen[bytes] | None = None
     stale_child_pid: int | None = None
     stale_collector_pid: int | None = None
@@ -696,13 +699,14 @@ def test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill(
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1) as response:
             assert response.status == 200
 
-        second = subprocess.Popen(
-            command,
-            cwd=project_root,
-            env=environment,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.STDOUT,
-        )
+        with second_output_path.open("wb") as output:
+            second = subprocess.Popen(
+                command,
+                cwd=project_root,
+                env=environment,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+            )
         second_state = _wait_for_child_state(
             state_path,
             second,
@@ -735,6 +739,19 @@ def test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill(
 
         second.send_signal(signal.SIGTERM)
         assert second.wait(timeout=10) == 0
+    except (AssertionError, OSError, subprocess.TimeoutExpired) as exc:
+        for evidence_path in (
+            first_output_path,
+            second_output_path,
+            state_path,
+            log_root / "latest" / "lifecycle.jsonl",
+        ):
+            if evidence_path.exists():
+                exc.add_note(
+                    f"{evidence_path}:\n"
+                    + evidence_path.read_text(encoding="utf-8", errors="replace")[-16_000:]
+                )
+        raise
     finally:
         if first.poll() is None:
             first.kill()

@@ -7,7 +7,7 @@ from hashlib import sha256
 import json
 from typing import Literal, Self, cast
 
-from pydantic import BaseModel, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, StrictInt, model_validator
 
 from orchestrator.config import ModelProfile
 from orchestrator.graph.projection_models import GraphProjection
@@ -32,6 +32,15 @@ RELIABLE_PLAN_SCENARIO_ID = "reliable-plan-fff4f6b7-v1"
 RELIABLE_PLAN_RUNNER_ID = "sqlite-controller-product-path-v1"
 RELIABLE_PLAN_RUNNER_VERSION = 1
 REQUIRED_REGRESSION_SCENARIOS = frozenset(range(1, 11))
+
+
+class ReliablePlanRuntimeLimits(BaseModel):
+    """Optional hard limits for one reliable-plan planner node."""
+
+    model_config = {"extra": "forbid"}
+
+    max_rejected_plan_proposals_per_planner: StrictInt | None = Field(default=None, ge=1, le=100)
+    max_planner_executions_per_node: StrictInt | None = Field(default=None, ge=1, le=100)
 
 
 def canonical_reliable_plan_scenario_manifest() -> "ReliablePlanScenarioManifest":

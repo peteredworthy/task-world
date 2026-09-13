@@ -1,0 +1,241 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "mode": "deterministic",
+  "run_id": "successor-probe-1fe676cbd002",
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "medium",
+  "timeout_seconds": 180.0,
+  "planner_execution_limit": 1,
+  "rejected_proposal_limit": 2,
+  "source_commit": "a849d24344c6832a4e2e6ac68dd37d5a6f84042e",
+  "source_tree": "ada4957fa369585a6d8c8ac445e611fe1c4e15ab",
+  "source_dirty": true,
+  "harness_sha256": "82bbc9aaf99a6a8b766f6ebd018a78d245128ff6cd3bb7daa23c2b7a07347e50",
+  "lifecycle_helper_sha256": "5eb69b221fc50c8758ba99744cf67272cfcd659abaaa049e150bfeed412b4be6",
+  "routine_sha256": "23dd2b89d3c8f4c022022ee4d620a6bad940556ba12b559c2bd6f212bc4c6c85",
+  "spec_sha256": "b28ca577bbd4f43e6001e5b826a4c9d62ba3b108c6a21289257d8feec625bb36",
+  "oracle_sha256": "02be3c50d757269e85dd9a9b0add39701afa51c8446fc475300f0b52cd86d718",
+  "orchestrator_source_identity": {
+    "head_commit": "a849d24344c6832a4e2e6ac68dd37d5a6f84042e",
+    "status_sha256": "sha256:ecb188077029fb78020dae4017b59b4c6a2d1ba0c725fdb74f60cbd1a674c524",
+    "tracked_diff_sha256": "sha256:41b6ed1b79fa4aa98846fa4ae3ac6829cdd514f9a3613746a2593280d2ff9216",
+    "untracked_content_sha256": "sha256:e7ce02207a45885f95e488b00809ac4aa7a0ed18edb5331343fe5180ab1a7034",
+    "complete": true
+  },
+  "fixture_commit": "fdfb4d3010de2b397cba9f2020c60d495179ddae",
+  "fixture_tree": "206f2bc139186a8a7d8b2857faeb3d15c7893bcc",
+  "successor_node_id": "planner-successor-stage3-discovery-65899afc882cd542",
+  "successor_execution_id": "exec-147",
+  "successor_prompt_sha256": "93b5d2cf6c00b8d64d98d3d27dac2b134399215b72f6c70df4052ee03d82155e",
+  "successor_authority": {
+    "semantic_stage": "successor_planning",
+    "planning_horizon": 1,
+    "reliable_plan_remaining_horizons": 1,
+    "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
+    "reliable_plan_assignment_role": "successor_planner",
+    "reliable_plan_selected_runner_type": "codex_server"
+  },
+  "phase_node_ids": [
+    "planner-s-01",
+    "worker-discovery-stage3-discovery-65899afc882cd542",
+    "verifier-plan-stage3-discovery-65899afc882cd542",
+    "planner-successor-stage3-discovery-65899afc882cd542"
+  ],
+  "phase_event_counts": {
+    "agent_dispatch_requested": 1,
+    "callback_accepted": 1,
+    "cleanup_applied": 2,
+    "cleanup_requested": 2,
+    "command_rejected": 1,
+    "edge_created": 16,
+    "file_state_accepted": 1,
+    "graph_patch_accepted": 1,
+    "heartbeat_recorded": 1,
+    "input_bound": 4,
+    "lease_granted": 1,
+    "lease_released": 1,
+    "lease_renewed": 1,
+    "node_created": 9,
+    "node_ready": 1,
+    "node_state_changed": 4,
+    "node_usage_recorded": 1,
+    "runner_baseline_recorded": 1,
+    "runner_completion_witnessed": 1,
+    "runner_execution_finalized": 1,
+    "runner_submission_staged": 1,
+    "session_state_changed": 2
+  },
+  "accepted_patch_ids": [
+    "successor-probe-accepted"
+  ],
+  "rejected_patch_ids": [
+    "successor-probe-rejected-1"
+  ],
+  "rejection_evidence": [
+    {
+      "artifact_ref": {
+        "artifact_id": "sha256:d9a29bf8716db5ca8fb4ed25e94d13828e51a2a7d01542ce3a79bd560790b7c3",
+        "content_hash": "sha256:d9a29bf8716db5ca8fb4ed25e94d13828e51a2a7d01542ce3a79bd560790b7c3",
+        "size_bytes": 112457,
+        "media_type": "application/vnd.orchestrator.rejection-evidence+json",
+        "encoding": "utf-8",
+        "storage_uri": "artifact://sha256/d9a29bf8716db5ca8fb4ed25e94d13828e51a2a7d01542ce3a79bd560790b7c3"
+      },
+      "content_hash": "sha256:d9a29bf8716db5ca8fb4ed25e94d13828e51a2a7d01542ce3a79bd560790b7c3",
+      "size_bytes": 112457,
+      "classification": "exact_replay",
+      "replayable": true
+    }
+  ],
+  "dynamic_tool_receipts": [
+    {
+      "thread_id": "thread-successor-probe",
+      "turn_id": "turn-successor-probe",
+      "request_id": 10,
+      "request_sha256": "sha256:1ec00b6115846df9f8f36eb142b4622c26a747658285573c899b86cfe9074f0f",
+      "response_sha256": "sha256:c766b1b3a3c1ca2621bf5d6e9744ab011fcbb6fe5a55bf3d03c6352ed27bf320",
+      "request_size_bytes": 731,
+      "response_size_bytes": 519,
+      "request_response_complete": true,
+      "artifact_ref": {
+        "artifact_id": "sha256:205bfc424b741085608fd85723b6ca57e119ca0b42d9ea2ed55472ce6275dd66",
+        "content_hash": "sha256:205bfc424b741085608fd85723b6ca57e119ca0b42d9ea2ed55472ce6275dd66",
+        "size_bytes": 1755,
+        "media_type": "application/vnd.orchestrator.codex-dynamic-tool-receipt+json",
+        "encoding": "utf-8",
+        "storage_uri": "artifact://sha256/205bfc424b741085608fd85723b6ca57e119ca0b42d9ea2ed55472ce6275dd66"
+      }
+    },
+    {
+      "thread_id": "thread-successor-probe",
+      "turn_id": "turn-successor-probe",
+      "request_id": 20,
+      "request_sha256": "sha256:42dced62b5696a25ea6f10290728dc0beb5d213421608c73e3b0b49d3d514d5b",
+      "response_sha256": "sha256:4dfd00d2dde656817a5883c73522376e7546dd2cbd185632e0cf03fea7afc8d9",
+      "request_size_bytes": 711,
+      "response_size_bytes": 173,
+      "request_response_complete": true,
+      "artifact_ref": {
+        "artifact_id": "sha256:a01c047f0d5fc93fb58571f21480f81d39020c82d08204d7c9e39bfad96e3749",
+        "content_hash": "sha256:a01c047f0d5fc93fb58571f21480f81d39020c82d08204d7c9e39bfad96e3749",
+        "size_bytes": 1351,
+        "media_type": "application/vnd.orchestrator.codex-dynamic-tool-receipt+json",
+        "encoding": "utf-8",
+        "storage_uri": "artifact://sha256/a01c047f0d5fc93fb58571f21480f81d39020c82d08204d7c9e39bfad96e3749"
+      }
+    },
+    {
+      "thread_id": "thread-successor-probe",
+      "turn_id": "turn-successor-probe",
+      "request_id": 21,
+      "request_sha256": "sha256:d248cf7fe5f7560d5e1010259c2be007edd1e4964cb0afd9c2edbe3abe2f14a4",
+      "response_sha256": "sha256:0bc77cbd3134304dfeae4f00c10752840347f029cfe78c2009a234084f360cd3",
+      "request_size_bytes": 93,
+      "response_size_bytes": 363,
+      "request_response_complete": true,
+      "artifact_ref": {
+        "artifact_id": "sha256:6c61db2bdd99f2a95393636d6802aab5460934774be4010ade1775c537f2c533",
+        "content_hash": "sha256:6c61db2bdd99f2a95393636d6802aab5460934774be4010ade1775c537f2c533",
+        "size_bytes": 910,
+        "media_type": "application/vnd.orchestrator.codex-dynamic-tool-receipt+json",
+        "encoding": "utf-8",
+        "storage_uri": "artifact://sha256/6c61db2bdd99f2a95393636d6802aab5460934774be4010ade1775c537f2c533"
+      }
+    }
+  ],
+  "protected_context_ref": {
+    "artifact_id": "sha256:a78bd26d1cda03e094b27803c105a6e53280a41882ff3c533a5eb2ee2ce573a0",
+    "content_hash": "sha256:a78bd26d1cda03e094b27803c105a6e53280a41882ff3c533a5eb2ee2ce573a0",
+    "size_bytes": 15950,
+    "media_type": "application/vnd.orchestrator.successor-probe-context+json",
+    "encoding": "utf-8",
+    "storage_uri": "artifact://sha256/a78bd26d1cda03e094b27803c105a6e53280a41882ff3c533a5eb2ee2ce573a0"
+  },
+  "artifact_root": "/Users/peter/code/task-world/worktrees/recovery-stabilization/docs/reviews/recovery-successor-private-2026-09-11/successor-probe-1fe676cbd002",
+  "result_path": "/Users/peter/code/task-world/worktrees/recovery-stabilization/docs/reviews/recovery-successor-private-2026-09-11/successor-probe-1fe676cbd002/probe-result.json",
+  "replayed_rejection_count": 1,
+  "execution_count": 1,
+  "recorded_execution_attempt_count": 1,
+  "downstream_dispatch_count": 0,
+  "downstream_active_lease_count": 0,
+  "pending_outbox_count": 0,
+  "remaining_node_states": {
+    "verifier-batch-stage3-smoke-b51657be70824e2a": "planned",
+    "final-gate-stage3-smoke-b51657be70824e2a": "planned",
+    "planner-gap-plan-stage3-discovery-65899afc882cd542": "retired",
+    "routine-snapshot": "completed",
+    "check-final-acceptance-stage3-smoke-b51657be70824e2a": "planned",
+    "planner-successor-stage3-discovery-65899afc882cd542": "completed",
+    "verifier-final-audit-stage3-smoke-b51657be70824e2a": "planned",
+    "verifier-plan-stage3-discovery-65899afc882cd542": "completed",
+    "planner-gap-audit-stage3-smoke-b51657be70824e2a": "planned",
+    "requirement-dynamic-feature-acceptance": "completed",
+    "worker-discovery-stage3-discovery-65899afc882cd542": "completed",
+    "worker-batch-stage3-smoke-b51657be70824e2a": "planned",
+    "planner-gap-acceptance-stage3-smoke-b51657be70824e2a": "planned",
+    "planner-s-01": "completed",
+    "planner-gap-batch-stage3-smoke-b51657be70824e2a": "planned",
+    "root": "completed",
+    "check-stage3-smoke-b51657be70824e2a-1": "planned"
+  },
+  "completion_contract_satisfied": true,
+  "topology": {
+    "effectful_batches": 1,
+    "final_acceptance_checks": 1,
+    "final_audits": 1,
+    "final_gates": 1,
+    "gap_planners": 3,
+    "child_successors": 0,
+    "batch_ids": [
+      "stage3-smoke"
+    ],
+    "batch_horizons": [
+      1
+    ],
+    "batch_skeleton_ids": [
+      "reliable-plan-fff4f6b7-v1"
+    ],
+    "plan_source_node_ids": [
+      "worker-discovery-stage3-discovery-65899afc882cd542"
+    ],
+    "plan_verification_source_node_ids": [
+      "verifier-plan-stage3-discovery-65899afc882cd542"
+    ]
+  },
+  "model_duration_ms": 1724,
+  "usage": {
+    "duration_ms": 716,
+    "num_actions": 3,
+    "input_tokens": 120,
+    "output_tokens": 35,
+    "cache_read_input_tokens": 0
+  },
+  "cleanup_duration_ms": 0,
+  "total_duration_ms": 7817,
+  "timed_out": false,
+  "cleanup_unbounded_for_ownership": true,
+  "owned_process_count_after": 0,
+  "fixture_unchanged": true,
+  "strict_predicates": {
+    "real_successor_not_initial": true,
+    "successor_authority_bound": true,
+    "successor_scope_prompt_bound": true,
+    "one_execution": true,
+    "one_successful_runner_result": true,
+    "completion_contract": true,
+    "topology_exact": true,
+    "plain_submission_finalized": true,
+    "rejections_with_exact_replay": true,
+    "transport_receipts_complete": true,
+    "deterministic_schema_matches_paid": true,
+    "no_downstream_dispatch": true,
+    "no_downstream_active_lease": true,
+    "pending_outbox_empty": true,
+    "fixture_unchanged": true,
+    "owned_processes_drained": true,
+    "within_model_timeout": true,
+    "no_runtime_recovery_or_retry": true
+  },
+  "incomplete_reason": null
+}

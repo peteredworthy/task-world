@@ -60,6 +60,7 @@ EXPECTED_FLEXIBLE_JSON_FIELDS = frozenset(
         ("CheckResultValue", "command_binding"),
         ("CheckResultValue", "environment_policy"),
         ("CompletionDecisionValue", "blockers"),
+        ("DecisionAnswerValue", "answer"),
         ("DecisionRecordValue", "scope"),
         ("OutputRecord", "value"),
         ("GitRef", "diff_summary"),
@@ -228,7 +229,13 @@ def _record(
         "verification"
         if record_type == "verification_report"
         else "graph_record"
-        if record_type in {"routine_snapshot", "semantic_schema_declaration", "semantic_artifact"}
+        if record_type
+        in {
+            "decision_answer",
+            "routine_snapshot",
+            "semantic_schema_declaration",
+            "semantic_artifact",
+        }
         else "output"
     )
     prerequisites: tuple[EventEnvelope, ...] = ()
@@ -662,6 +669,28 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
             "scope": p,
         },
         container="map-value",
+    )
+    cases[("DecisionAnswerValue", "answer")] = _record_case(
+        "DecisionAnswerValue",
+        "answer",
+        "decision_answer",
+        "decision",
+        "DecisionAnswer",
+        lambda p: {
+            "interaction_contract": "decision-v1",
+            "family": "discovery_brief",
+            "decision_request_id": "decision-request-flex",
+            "answer_schema_id": "orchestrator.discovery-brief@1",
+            "answer_schema_version": 1,
+            "answer_schema_sha256": f"sha256:{'a' * 64}",
+            "compiler_contract_version": 1,
+            "answer_sha256": f"sha256:{'b' * 64}",
+            "answer": p,
+            "consequence_patch_id": "patch-flex",
+            "bound_input_record_ids": ["requirement-flex"],
+        },
+        container="map-value",
+        extra={"schema_version": 1},
     )
     cases[("AuthorityDecisionValue", "scope")] = _record_case(
         "AuthorityDecisionValue",

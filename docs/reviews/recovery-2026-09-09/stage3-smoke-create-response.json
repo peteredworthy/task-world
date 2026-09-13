@@ -1,0 +1,24 @@
+{
+  "record_kind": "operator-curated bounded create response summary",
+  "http_status": 201,
+  "run_id": "c3a1cf27-f309-4540-b381-02185297b608",
+  "repo_name": "fixture",
+  "status": "draft",
+  "execution_mode": "graph",
+  "routine_id": "dynamic-graph-feature",
+  "routine_source": "local",
+  "agent_runner_type": "codex_server",
+  "agent_runner_config": {
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "restrictions": "managed",
+    "local_provider": "openai"
+  },
+  "worktree_path": null,
+  "source_branch": "main",
+  "intended_seed_sha": "db05b2baf813d0e3a73451265b4b94d632d80cba",
+  "merge_strategy": "squash",
+  "qualification_reference": "rpq_CD9aJ8zeC87A-HAJ1seecGfzZjK4xMbMybzd6ngwtWM",
+  "qualification_evidence_hash": "sha256:f77d3a0ba632273d0b24b6d861847dda8325b493e695a86471a57525254ec76a",
+  "created_at": "2026-09-09T19:39:25.594558Z"
+}

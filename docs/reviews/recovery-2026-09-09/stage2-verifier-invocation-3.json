@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "probe_id": "stage2-verifier-ded9406b-69cf-416b-b38b-ad980124e483",
+  "phase": "verifier",
+  "status": "passed",
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "medium",
+  "timeout_seconds": 180.0,
+  "limit_policy": "operator-enforced wall timeout; no native token/action limit",
+  "source_commit": "0e6e5e88c829da679cf09b72d1031f44eb09577b",
+  "source_tree": "9b14064ed07d77c1198b1d2c30d7da7b4e7517cc",
+  "source_dirty": true,
+  "harness_sha256": "1bea679ad83943887c0bdda2164d1fab06a87f26174ee5326e362216297ffde2",
+  "fixture_commit": "dd27fde2869f1e36cbd5213acd458e0ab5bc1d6f",
+  "fixture_tree": "a86e9747a386d1ba271862794d21a4fe6f314926",
+  "fixture_sha256": "d5de2a5e584c9a97b8a4188f2df5c510a11e1f3bb2f70ad3bb5e0bd26cc7b78e",
+  "fixture_unchanged": true,
+  "setup_duration_ms": 493,
+  "model_duration_ms": 21201,
+  "total_duration_ms": 21790,
+  "timed_out": false,
+  "metrics": {
+    "duration_ms": 21201,
+    "num_actions": 13,
+    "input_tokens": 74462,
+    "output_tokens": 870,
+    "cache_read_input_tokens": 42240,
+    "reasoning_output_tokens": 129,
+    "finish_reasons": [
+      "stop"
+    ]
+  },
+  "observations": {
+    "grades": [
+      {
+        "req_id": "R-GOOD",
+        "grade": "A",
+        "reason": "candidate-good correctly reports missing node_states as incomplete/nonzero."
+      },
+      {
+        "req_id": "R-MISSING-NODE-STATES",
+        "grade": "F",
+        "reason": "candidate-bad falsely reports complete/exit 0 for graph {} with missing node_states; the missing node_states defect is present."
+      }
+    ],
+    "submit_count": 1,
+    "execution_result_success": true,
+    "cancellation_requested": false,
+    "execution_task_drained": true,
+    "independent_commands": [
+      {
+        "argv": [
+          "/Users/peter/code/task-world/worktrees/recovery-stabilization/.venv/bin/python3",
+          "oracle.py",
+          "candidate-good.py"
+        ],
+        "command_sha256": "bfbd6809e61046947f437228ad0b2f436d039c3baac725d1f4a4b71db9fe26b5",
+        "returncode": 0,
+        "duration_ms": 50,
+        "stdout_sha256": "e5020d56bbb9499a7b2f9a1bb58195dafdfda61bb18564dbc50bcbebdd1c7698"
+      },
+      {
+        "argv": [
+          "/Users/peter/code/task-world/worktrees/recovery-stabilization/.venv/bin/python3",
+          "oracle.py",
+          "candidate-bad.py"
+        ],
+        "command_sha256": "203c41c5e25bdb8b2c2c25e0189872dd2e82e2e634d2df725b852b4ea0c97249",
+        "returncode": 1,
+        "duration_ms": 50,
+        "stdout_sha256": "01bc921056338a7b6ea0674b9fff28ed3da85cf4a0520022da3091b301c913bf"
+      }
+    ]
+  }
+}

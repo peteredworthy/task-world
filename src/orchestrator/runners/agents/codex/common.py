@@ -23,7 +23,11 @@ from typing import Any, cast
 
 from typing_extensions import Protocol
 
-from orchestrator.graph import RecordSelector, reliable_plan_check_decision_tool_schema
+from orchestrator.graph import (
+    RecordSelector,
+    reliable_plan_check_decision_tool_schema,
+    reliable_plan_dependencies_tool_schema,
+)
 from orchestrator.state.models import ActionLog
 from orchestrator.runners.graph_tool_routing import (
     GRAPH_MACRO_TOOL_NAMES,
@@ -36,6 +40,7 @@ from orchestrator.runners.planner_tools import (
     validate_reliable_plan_tool_specs,
 )
 from orchestrator.runners.submission import (
+    is_decision_submission,
     submission_prompt_instruction,
     submission_tool_input_schema,
 )
@@ -643,10 +648,7 @@ def build_dynamic_tool_specs(
                         "items": {"type": "string"},
                         "minItems": 1,
                     },
-                    "dependencies": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
+                    "dependencies": reliable_plan_dependencies_tool_schema(),
                     "acceptance": {
                         "type": "array",
                         "items": {"type": "string"},
@@ -942,21 +944,26 @@ def build_dynamic_tool_specs(
         },
     }
 
-    specs: list[dict[str, Any]] = (
-        [
+    reliable_plan = bool(context is not None and context.required_tools)
+    decision_submission = is_decision_submission(submission_contract)
+    if decision_submission:
+        specs: list[dict[str, Any]] = [submit_spec]
+    elif is_verifier:
+        specs = [
             submit_spec,
             grade_spec,
             complete_recovery_spec,
         ]
-        if is_verifier
-        else [
+    elif reliable_plan:
+        specs = [submit_spec]
+    else:
+        specs = [
             update_checklist_spec,
             submit_spec,
             request_clarification_spec,
         ]
-    )
 
-    if not is_verifier and context is not None:
+    if not is_verifier and context is not None and not decision_submission:
         graph_tool_specs = {
             **planner_macro_specs,
             "attach_verifier": attach_verifier_spec,
@@ -968,13 +975,14 @@ def build_dynamic_tool_specs(
             node_kind=context.node_kind or "",
             node_role=context.node_role,
             available_tools=context.available_tools,
+            reliable_plan=bool(context.required_tools),
         ):
             spec = graph_tool_specs.get(tool_name)
             if spec is not None:
                 specs.append(spec)
 
     # Add step-level tools from context.available_tools
-    if context and context.available_tools:
+    if context and context.available_tools and not decision_submission:
         existing_names = {s["name"] for s in specs}
         for tool_name in context.available_tools:
             if tool_name in existing_names:
@@ -985,7 +993,7 @@ def build_dynamic_tool_specs(
                 tool_name,
             )
 
-    if context is not None and context.required_tools:
+    if context is not None and context.required_tools and not decision_submission:
         validate_reliable_plan_tool_specs(specs)
     return specs
 
@@ -1401,8 +1409,25 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
         "- Always use `git --no-pager` for git commands.\n"
     )
     submit_instruction = submission_prompt_instruction(context.submission_contract)
+    decision_submission = is_decision_submission(context.submission_contract)
 
-    if is_verifier:
+    if decision_submission:
+        tool_section = (
+            "## Orchestrator Integration (Decision Answer)\n"
+            "Answer the substantive question using only the bounded evidence and choices "
+            "in the task packet. The runtime owns graph construction, check scheduling, "
+            "and completion bookkeeping.\n\n"
+            "### Required Workflow\n"
+            "1. Assess the supplied question and bounded evidence.\n"
+            "2. Call **submit** once with the answer matching the generated schema.\n\n"
+            "### Available Callback Tools\n"
+            f"{submit_instruction}\n"
+            "  Return the answer to the stated question. No separate completion call is required.\n\n"
+            "## Evidence Guidance\n"
+            "- Keep claims grounded in the supplied evidence and available choices.\n"
+            "- Do not invent graph identities or restate runtime-owned bookkeeping.\n"
+        )
+    elif is_verifier:
         verifier_action = (
             "Review the oversight artifacts, orchestrator state updates, and evidence decisions "
             "made by the builder."
@@ -1430,62 +1455,101 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
         )
     else:
         planner_tool_section = ""
-        if context.node_kind == "planner" and context.node_role in {"planner", "gap_planner"}:
-            planner_tool_section = (
-                "\n### Planner Graph-Mutation Tool\n"
-                "- Reliable-plan planners use **construct_reliable_plan_region** for one "
-                "semantic, atomic region; the controller derives IDs, evidence, snapshots, "
-                "assignments, verification, and continuations.\n"
-                "- Prefer graph macros: **create_work_region**, **attach_verifier**, "
-                "**attach_check**, **create_gap_planner**, **create_join**, "
-                "**request_gate**, and **retire_or_supersede**. Gap planners use "
-                "**create_corrective_region**, **attach_verifier**, **attach_check**, "
-                "and **request_gate**.\n"
-                "  Macro tools submit macro-backed patch envelopes and return accepted or rejected feedback.\n"
-                "- **submit_graph_patch**(patch) or **submit_graph_patch**(patch_id, base_graph_position, ops, rationale_record_id?)\n"
-                "  Submit an explicit graph patch envelope only when a macro cannot express the mutation.\n"
-                "  - patch_id: Stable id for this attempt.\n"
-                "  - base_graph_position: Use current_graph_position from the planner packet.\n"
-                "  - ops: Validated raw fallback list using only allowed_patch_operations; gap planners may use [] for an explicit no-op decision.\n"
-                "  - rationale_record_id: Optional accepted evidence record supporting the patch.\n"
-                "  If feedback says stale, malformed, or rejected, submit a corrected macro or patch instead of editing graph events directly.\n"
-                "  Plain submit is only for finishing after at least one submit_graph_patch attempt."
-            )
+        if context.node_kind == "planner" and context.node_role in {None, "planner", "gap_planner"}:
+            if context.required_tools:
+                planner_tool_section = (
+                    "\n### Reliable-plan Semantic Tool\n"
+                    "- Supply one semantic decision for the current operation through "
+                    "**construct_reliable_plan_region**. The controller derives all graph "
+                    "identities, evidence wiring, snapshots, assignments, checks, and "
+                    "continuations.\n"
+                    "- Call the constructor once with operation_key, scope, objective, "
+                    "requirement_ids, dependencies, acceptance, checks, and rubric.\n"
+                    "- Use only dependencies and check bindings exposed by the current "
+                    "planner packet. If no check binding is available, provide a concrete "
+                    "command_definition from the task contract; do not invent a command.\n"
+                    "- After accepted construction feedback, call plain **submit**.\n"
+                )
+            else:
+                planner_tool_section = (
+                    "\n### Planner Graph-Mutation Tool\n"
+                    "- Reliable-plan planners use **construct_reliable_plan_region** for one "
+                    "semantic, atomic region; the controller derives IDs, evidence, snapshots, "
+                    "assignments, verification, and continuations.\n"
+                    "- Prefer graph macros: **create_work_region**, **attach_verifier**, "
+                    "**attach_check**, **create_gap_planner**, **create_join**, "
+                    "**request_gate**, and **retire_or_supersede**. Gap planners use "
+                    "**create_corrective_region**, **attach_verifier**, **attach_check**, "
+                    "and **request_gate**.\n"
+                    "  Macro tools submit macro-backed patch envelopes and return accepted or rejected feedback.\n"
+                    "- **submit_graph_patch**(patch) or **submit_graph_patch**(patch_id, base_graph_position, ops, rationale_record_id?)\n"
+                    "  Submit an explicit graph patch envelope only when a macro cannot express the mutation.\n"
+                    "  - patch_id: Stable id for this attempt.\n"
+                    "  - base_graph_position: Use current_graph_position from the planner packet.\n"
+                    "  - ops: Validated raw fallback list using only allowed_patch_operations; gap planners may use [] for an explicit no-op decision.\n"
+                    "  - rationale_record_id: Optional accepted evidence record supporting the patch.\n"
+                    "  If feedback says stale, malformed, or rejected, submit a corrected macro or patch instead of editing graph events directly.\n"
+                    "  Plain submit is only for finishing after at least one submit_graph_patch attempt."
+                )
 
-        tool_section = (
-            "## Orchestrator Integration\n"
-            "You are connected to an orchestrator that tracks your progress. "
-            "Use the callback tools below to report your work.\n\n"
-            "### Required Workflow\n"
-            "1. Read the requirements above carefully.\n"
-            f"2. {workflow_action}\n"
-            "3. After completing each requirement, call **update_checklist** "
-            "to mark it 'done'.\n"
-            "4. Once ALL requirements are addressed, call **submit** to submit.\n"
-            "5. All CRITICAL requirements must be 'done' before submission succeeds.\n\n"
-            "### Available Callback Tools\n"
-            "- **update_checklist**(req_id, status, note?)\n"
-            "  Mark a requirement as done, blocked, or not_applicable.\n"
-            "  - req_id: The requirement ID (e.g. 'R-01', 'R-02')\n"
-            "  - status: 'done', 'blocked', or 'not_applicable'\n"
-            "  - note: Optional explanation\n"
-            "  Example: update_checklist('R-01', 'done')\n\n"
-            f"{submit_instruction}\n"
-            "  Submit your work for verification by a reviewer.\n"
-            "  Only call this after addressing all requirements.\n"
-            "  Submission will fail if any CRITICAL requirement is not 'done'.\n\n"
-            "- **request_clarification**(question)\n"
-            "  Request clarification on ambiguous requirements.\n\n"
-            f"{planner_tool_section}\n"
-            f"{git_section}\n"
-            "## Sandbox Constraints\n"
-            "- You run in a workspace-write sandbox with network access disabled.\n"
-            "- File operations are restricted to the working directory.\n"
-            "- Do not attempt to install packages or fetch resources from the internet.\n\n"
-            "## Response Style\n"
-            "- Keep responses concise. Focus on actions, not verbose explanations.\n"
-            "- Prefer targeted, focused changes over large sweeping edits.\n"
-        )
+        if context.required_tools:
+            tool_section = (
+                "## Orchestrator Integration (Reliable Plan)\n"
+                "You are connected to an orchestrator. Supply the current semantic planning "
+                "decision and let the controller construct the graph.\n\n"
+                "### Required Workflow\n"
+                "1. Read the current planner packet and its reliable-plan options.\n"
+                "2. Call **construct_reliable_plan_region** exactly once with the current "
+                "operation_key, scope, objective, requirement_ids, dependencies, acceptance, "
+                "checks, and rubric.\n"
+                "3. After construction is accepted, call **submit**.\n\n"
+                "### Available Callback Tools\n"
+                f"{planner_tool_section}"
+                f"{submit_instruction}\n"
+                "  Complete this planner execution after accepted construction feedback.\n\n"
+                f"{git_section}"
+                "## Sandbox Constraints\n"
+                "- You run in a workspace-write sandbox with network access disabled.\n"
+                "- File operations are restricted to the working directory.\n"
+                "- Do not attempt to install packages or fetch resources from the internet.\n\n"
+                "## Response Style\n"
+                "- Keep responses concise. Focus on the semantic decision and accepted feedback.\n"
+            )
+        else:
+            tool_section = (
+                "## Orchestrator Integration\n"
+                "You are connected to an orchestrator that tracks your progress. "
+                "Use the callback tools below to report your work.\n\n"
+                "### Required Workflow\n"
+                "1. Read the requirements above carefully.\n"
+                f"2. {workflow_action}\n"
+                "3. After completing each requirement, call **update_checklist** "
+                "to mark it 'done'.\n"
+                "4. Once ALL requirements are addressed, call **submit** to submit.\n"
+                "5. All CRITICAL requirements must be 'done' before submission succeeds.\n\n"
+                "### Available Callback Tools\n"
+                "- **update_checklist**(req_id, status, note?)\n"
+                "  Mark a requirement as done, blocked, or not_applicable.\n"
+                "  - req_id: The requirement ID (e.g. 'R-01', 'R-02')\n"
+                "  - status: 'done', 'blocked', or 'not_applicable'\n"
+                "  - note: Optional explanation\n"
+                "  Example: update_checklist('R-01', 'done')\n\n"
+                f"{submit_instruction}\n"
+                "  Submit your work for verification by a reviewer.\n"
+                "  Only call this after addressing all requirements.\n"
+                "  Submission will fail if any CRITICAL requirement is not 'done'.\n\n"
+                "- **request_clarification**(question)\n"
+                "  Request clarification on ambiguous requirements.\n\n"
+                f"{planner_tool_section}\n"
+                f"{git_section}"
+                "## Sandbox Constraints\n"
+                "- You run in a workspace-write sandbox with network access disabled.\n"
+                "- File operations are restricted to the working directory.\n"
+                "- Do not attempt to install packages or fetch resources from the internet.\n\n"
+                "## Response Style\n"
+                "- Keep responses concise. Focus on actions, not verbose explanations.\n"
+                "- Prefer targeted, focused changes over large sweeping edits.\n"
+            )
 
     channel_hint = ""
     if context.api_base_url:

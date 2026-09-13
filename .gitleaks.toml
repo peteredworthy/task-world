@@ -2,8 +2,11 @@
 useDefault = true
 
 [allowlist]
-description = "Canonical UI foundation demand and derivation identifiers"
+description = "Canonical identifiers and verified source checksums"
 regexTarget = "line"
 regexes = [
   '''^\s*(?:provisional_key|scope_demand_key): (?:jobs\.J\d+|design\.|journeys\.|decisions\.|honesty\.|feedback\.|ia\.|rubric\.|derivation-)\S+$''',
+  # SHA-256 of this source file, verified against its bytes. The generic API-key
+  # rule mistakes the filename plus this exact digest for credential material.
+  '''^\s*"tests/unit/test_api_runs_validation\.py": "600b8b878da616b3cf5685ea75ca28fc36c5d6b57dc5fb7aafe7b972730d7af4",?\s*$''',
 ]

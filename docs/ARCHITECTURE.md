@@ -231,6 +231,7 @@ task-world/
 │   │   ├── commands.py        # Command applier and graph event generation
 │   │   ├── compiler.py        # Routine-to-graph compiler
 │   │   ├── contracts.py       # Typed node/port contract registry
+│   │   ├── decisions.py       # Canonical decision-v1 authored contracts and authority resolution
 │   │   ├── macros.py          # Planner-facing macro expansion to low-level patch ops
 │   │   ├── patch_validator.py # Pure graph patch validation
 │   │   ├── semantic_applicability.py # Fact-backed write-worker semantic classification
@@ -245,6 +246,7 @@ task-world/
 │   │   ├── controller.py      # Applies graph commands and appends events/outbox rows
 │   │   ├── dispatch.py        # Outbox-to-runner/controller execution bridge
 │   │   ├── prompts.py         # Bounded prompt packets and explicit artifact excerpts
+│   │   ├── rejection_evidence.py # Private bounded rejected-plan capture and isolated replay
 │   │   ├── outbox.py          # Durable side-effect outbox mapping/dispatcher
 │   │   ├── reliable_plan_qualification.py # Grant issuance, consumption, runtime binding
 │   │   ├── reliable_plan_scenarios.py # Canonical ten-scenario product-path qualification
@@ -389,6 +391,7 @@ task-world/
 │
 ├── routines/                  # Production routine definitions (YAML)
 ├── examples/routines/         # Example routine templates
+├── examples/recovery/         # No-model lifecycle/successor preparation, bounded diagnostics and opt-in isolated model probes
 ├── docs/                      # Documentation
 │   ├── ARCHITECTURE.md        # This file
 │   ├── intent/                # Design documents (PRD, slices)

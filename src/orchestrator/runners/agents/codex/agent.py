@@ -18,6 +18,7 @@ Protocol summary (see docs/codex-server-transport/api-contract.md):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -26,8 +27,12 @@ import select
 import shutil
 import tempfile
 import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from orchestrator.git import (
     WorktreeCommitError,
@@ -69,6 +74,10 @@ from orchestrator.runners.mcp_scope import (
     resolve_mcp_server_cwd,
     scope_mcp_servers_to_available_tools,
 )
+from orchestrator.runners.submission import (
+    is_decision_submission,
+    validate_submission_arguments,
+)
 from orchestrator.workflow import GateBlockedError, InvalidTransitionError
 from orchestrator.runners.types import (
     AgentRunnerInfo,
@@ -84,10 +93,166 @@ from orchestrator.runners.types import (
     RunnerRuntimeObservationCapability,
     QuotaBucket,
     SubmitCallback,
+    SubmissionInvocation,
 )
 from orchestrator.config.enums import AgentRunnerType
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CodexCommandExecutionReceipt:
+    """Completed shell command observed on one active Codex turn."""
+
+    thread_id: str
+    turn_id: str
+    item_id: str
+    command: str
+    cwd: str
+    exit_code: int
+    status: str
+    output_sha256: str
+    output_bytes: int
+
+
+CommandCompletionObserver = Callable[[CodexCommandExecutionReceipt], Awaitable[None]]
+
+
+_MAX_DYNAMIC_TOOL_RECEIPT_PAYLOAD_BYTES = 96 * 1024
+
+
+class CodexDynamicToolReceipt(BaseModel):
+    """Bounded, immutable evidence for one dynamic-tool request/response pair.
+
+    ``request`` and ``response`` contain canonical JSON strings when their
+    individual UTF-8 payload is at most 96 KiB.  Once a payload exceeds that
+    boundary, the corresponding string is omitted while its size and SHA-256
+    remain available and ``request_response_complete`` is false.  The
+    app-server transport exposes parsed JSON objects, so the canonical JSON
+    preserves the received data but cannot preserve wire-level whitespace. If
+    upstream delivers a non-JSON value or a non-integer request id, no receipt
+    is synthesized because the wire arguments cannot be recovered safely.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    thread_id: str
+    turn_id: str
+    request_id: int
+    request_sha256: str
+    response_sha256: str
+    request_size_bytes: int = Field(ge=0)
+    response_size_bytes: int = Field(ge=0)
+    request_response_complete: bool
+    request: str | None = None
+    response: str | None = None
+
+    @property
+    def incomplete(self) -> bool:
+        """Whether either payload was omitted because it exceeded the bound."""
+        return not self.request_response_complete
+
+
+DynamicToolReceiptObserver = Callable[[CodexDynamicToolReceipt], Awaitable[None]]
+
+
+class _DynamicToolReceiptObserverError(RuntimeError):
+    """Internal boundary preserving fail-closed observer errors."""
+
+
+def _canonical_json_bytes(value: object) -> bytes:
+    """Serialize parsed transport JSON deterministically for receipt hashing."""
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+
+def _dynamic_tool_receipt(
+    request_bytes: bytes,
+    response: dict[str, Any],
+    *,
+    thread_id: str,
+    turn_id: str,
+    request_id: int,
+) -> CodexDynamicToolReceipt:
+    """Build a truthful bounded receipt without truncating either payload."""
+    response_bytes = _canonical_json_bytes(response)
+    request_complete = len(request_bytes) <= _MAX_DYNAMIC_TOOL_RECEIPT_PAYLOAD_BYTES
+    response_complete = len(response_bytes) <= _MAX_DYNAMIC_TOOL_RECEIPT_PAYLOAD_BYTES
+    return CodexDynamicToolReceipt(
+        thread_id=thread_id,
+        turn_id=turn_id,
+        request_id=request_id,
+        request_sha256=f"sha256:{hashlib.sha256(request_bytes).hexdigest()}",
+        response_sha256=f"sha256:{hashlib.sha256(response_bytes).hexdigest()}",
+        request_size_bytes=len(request_bytes),
+        response_size_bytes=len(response_bytes),
+        request_response_complete=request_complete and response_complete,
+        request=(request_bytes.decode("utf-8") if request_complete else None),
+        response=(response_bytes.decode("utf-8") if response_complete else None),
+    )
+
+
+def _command_execution_receipt(
+    message: dict[str, Any],
+    *,
+    thread_id: str,
+    turn_id: str,
+) -> CodexCommandExecutionReceipt | None:
+    """Extract a command receipt only when the notification binds to this turn."""
+
+    if message.get("method") != "item/completed":
+        return None
+    params_raw = message.get("params")
+    if not isinstance(params_raw, dict):
+        return None
+    params = cast(dict[str, Any], params_raw)
+    if params.get("threadId") != thread_id or params.get("turnId") != turn_id:
+        return None
+    item_raw = params.get("item")
+    if not isinstance(item_raw, dict):
+        return None
+    item = cast(dict[str, Any], item_raw)
+    item_type = str(item.get("type", "")).replace("_", "").lower()
+    if item_type != "commandexecution":
+        return None
+    item_id = item.get("id")
+    command = item.get("command")
+    cwd = item.get("cwd")
+    exit_code = item.get("exitCode", item.get("exit_code"))
+    status = item.get("status")
+    output = item.get("aggregatedOutput", item.get("aggregated_output"))
+    if not (
+        isinstance(item_id, str)
+        and item_id
+        and isinstance(command, str)
+        and command
+        and len(command) <= 4096
+        and isinstance(cwd, str)
+        and cwd
+        and len(cwd) <= 4096
+        and isinstance(exit_code, int)
+        and not isinstance(exit_code, bool)
+        and isinstance(status, str)
+        and status in {"completed", "failed"}
+        and isinstance(output, str)
+    ):
+        return None
+    return CodexCommandExecutionReceipt(
+        thread_id=thread_id,
+        turn_id=turn_id,
+        item_id=item_id,
+        command=command,
+        cwd=cwd,
+        exit_code=exit_code,
+        status=status,
+        output_sha256=hashlib.sha256(output.encode()).hexdigest(),
+        output_bytes=len(output.encode()),
+    )
+
 
 _RECV_CHUNK_SIZE = 64 * 1024  # 64KB per read from process stdout.
 _MAX_JSON_RPC_LINE_BYTES = 16 * 1024 * 1024  # 16MB soft cap before dropping an oversized line.
@@ -357,6 +522,8 @@ class CodexServerAgent:
         *,
         _transport: JsonRpcTransport | None = None,
         _environ: dict[str, str] | None = None,
+        command_completion_observer: CommandCompletionObserver | None = None,
+        dynamic_tool_receipt_observer: DynamicToolReceiptObserver | None = None,
     ) -> None:
         self._model = model
         # Reasoning effort for Codex model turns. Falls back to "medium" for any
@@ -382,8 +549,14 @@ class CodexServerAgent:
         self._api_key: str | None = api_key or env.get("OPENAI_API_KEY")
         self._cancelled = False
         self._transport = _transport
+        self._command_completion_observer = command_completion_observer
+        self._dynamic_tool_receipt_observer = dynamic_tool_receipt_observer
         self._active_thread_id: str | None = None
         self._session_task: asyncio.Task[object] | None = None
+        self._terminal_answer_requested = False
+        self._terminal_answer_interrupt_sent = False
+        self._terminal_answer_completed_observed = False
+        self._terminal_answer_stop_deadline: float | None = None
 
     # ------------------------------------------------------------------
     # Agent protocol
@@ -563,6 +736,10 @@ class CodexServerAgent:
         """
         if self._cancelled:
             raise AgentCancelledError(AgentRunnerType.CODEX_SERVER.value)
+        self._terminal_answer_requested = False
+        self._terminal_answer_interrupt_sent = False
+        self._terminal_answer_completed_observed = False
+        self._terminal_answer_stop_deadline = None
 
         start_ms = int(time.monotonic() * 1000)
         is_verifier = on_grade is not None
@@ -706,6 +883,13 @@ class CodexServerAgent:
                     "turn/start failed",
                 )
 
+            turn_id = str(turn_resp.get("result", {}).get("turn", {}).get("id", ""))
+            if not turn_id:
+                raise AgentExecutionError(
+                    AgentRunnerType.CODEX_SERVER.value,
+                    "turn/start response did not include a turn id",
+                )
+
             logger.info(
                 "CodexServerAgent: turn started — run=%s task=%s phase=%s thread_id=%s",
                 context.run_id,
@@ -729,39 +913,127 @@ class CodexServerAgent:
                     return
                 req_id, tool_name, tool_args = tool_result
                 num_actions += 1
+                # Freeze the parsed request before routing. Controller
+                # callbacks may inspect or transform nested values; receipts
+                # must describe what arrived at this transport boundary.
+                request_bytes = _canonical_json_bytes(tool_msg)
                 parser.parse_jsonrpc_message(tool_msg)
+
+                async def _send_dynamic_tool_response(
+                    *,
+                    success: bool,
+                    output: str | None = None,
+                    best_effort: bool = False,
+                ) -> None:
+                    """Observe a response pair before writing it to app-server."""
+                    response = build_dynamic_tool_call_response(
+                        req_id,
+                        success=success,
+                        output=output,
+                    )
+                    if self._dynamic_tool_receipt_observer is not None:
+                        # An opted-in evidence probe fails closed if it cannot
+                        # record the exact pair. Do not log its exception here;
+                        # the outer session boundary supplies a safe diagnostic
+                        # and no response is sent after the failure.
+                        try:
+                            receipt = _dynamic_tool_receipt(
+                                request_bytes,
+                                response,
+                                thread_id=thread_id,
+                                turn_id=turn_id,
+                                request_id=req_id,
+                            )
+                            await self._dynamic_tool_receipt_observer(receipt)
+                        except Exception as exc:
+                            # Keep receipt construction/observer failures out of
+                            # routing handlers: a ValueError from the probe is not
+                            # a tool rejection.
+                            raise _DynamicToolReceiptObserverError(
+                                "dynamic tool receipt observer failed"
+                            ) from exc
+                    try:
+                        await transport.send(response)
+                    except Exception:
+                        if not best_effort:
+                            raise
+                        logger.warning(
+                            "CodexServerAgent: dynamic tool response delivery failed "
+                            "after terminal answer staging; continuing owned stop"
+                        )
+
+                terminal_answer_staged = (
+                    self._terminal_answer_requested and self._terminal_answer_interrupt_sent
+                )
+                if terminal_answer_staged:
+                    feedback = "tool call refused after terminal answer staging"
+                    parser.record_dynamic_tool_result(str(req_id), success=False, output=feedback)
+                    await _send_dynamic_tool_response(
+                        success=False,
+                        output=feedback,
+                        best_effort=True,
+                    )
+                    return
+
                 try:
+                    routed_submit_callback: SubmitCallback = on_submit
+                    decision_submission = is_decision_submission(context.submission_contract)
+                    if tool_name == "submit" and decision_submission:
+                        validate_submission_arguments(
+                            context.submission_contract,
+                            tool_args,
+                        )
+                        invocation = SubmissionInvocation(
+                            execution_id=context.execution_id or context.task_id,
+                            answer_attempt_id=(
+                                "answer-attempt-"
+                                + hashlib.sha256(
+                                    f"{context.run_id}\x00{thread_id}\x00{turn_id}\x00{req_id}".encode()
+                                ).hexdigest()[:24]
+                            ),
+                            transport_channel="codex_dynamic_tool",
+                            transport_session_id=f"{thread_id}:{turn_id}",
+                            transport_request_id=str(req_id),
+                            arguments=tool_args,
+                        )
+
+                        async def decision_submit_callback(
+                            _args: dict[str, Any] | None = None,
+                        ) -> Any:
+                            typed = cast(Any, on_submit)
+                            return await typed(invocation)
+
+                        routed_submit_callback = decision_submit_callback
+
                     feedback = await route_tool_call(
                         tool_name,
                         tool_args,
                         on_checklist_update,
-                        on_submit,
+                        routed_submit_callback,
                         on_submit_graph_patch=context.graph_patch_callback,
                         on_grade=on_grade,
                         on_complete_recovery=on_complete_recovery,
                         agent_label="CodexServerAgent",
                     )
                     parser.record_dynamic_tool_result(str(req_id), success=True)
-                    await transport.send(
-                        build_dynamic_tool_call_response(
-                            req_id,
-                            success=True,
-                            output=feedback or None,
-                        )
+                    await _send_dynamic_tool_response(
+                        success=True,
+                        output=feedback or None,
+                        best_effort=(
+                            tool_name == "submit"
+                            and self._terminal_answer_requested
+                            and self._terminal_answer_interrupt_sent
+                        ),
                     )
+                except _DynamicToolReceiptObserverError:
+                    raise
                 except ValueError as exc:
                     if _is_submit_callback_rejection(tool_name, exc):
                         submit_rejection_causes.append(str(exc))
                         parser.record_dynamic_tool_result(
                             str(req_id), success=False, output=str(exc)
                         )
-                        await transport.send(
-                            build_dynamic_tool_call_response(
-                                req_id,
-                                success=False,
-                                output=str(exc),
-                            )
-                        )
+                        await _send_dynamic_tool_response(success=False, output=str(exc))
                         if len(submit_rejection_causes) >= 3:
                             raise SubmissionRepairExhaustedError(
                                 AgentRunnerType.CODEX_SERVER.value,
@@ -776,13 +1048,7 @@ class CodexServerAgent:
                         return
                     # Disallowed tool — respond with failure to unblock the server.
                     parser.record_dynamic_tool_result(str(req_id), success=False)
-                    await transport.send(
-                        build_dynamic_tool_call_response(
-                            req_id,
-                            success=False,
-                            output=str(exc),
-                        )
-                    )
+                    await _send_dynamic_tool_response(success=False, output=str(exc))
                 except InvalidTransitionError as cb_exc:
                     # Agent called a tool that is invalid in the current task state
                     # (e.g. update_checklist during the verifying phase).  Inform the
@@ -796,9 +1062,7 @@ class CodexServerAgent:
                     parser.record_dynamic_tool_result(
                         str(req_id), success=False, output=str(cb_exc)
                     )
-                    await transport.send(
-                        build_dynamic_tool_call_response(req_id, success=False, output=str(cb_exc))
-                    )
+                    await _send_dynamic_tool_response(success=False, output=str(cb_exc))
                 except WorktreeCommitError as commit_exc:
                     # The agent submitted but the pre-submit commit gate (ruff /
                     # pyright / pytest pre-commit hooks) failed.  This is a
@@ -819,9 +1083,7 @@ class CodexServerAgent:
                         commit_exc,
                     )
                     parser.record_dynamic_tool_result(str(req_id), success=False, output=feedback)
-                    await transport.send(
-                        build_dynamic_tool_call_response(req_id, success=False, output=feedback)
-                    )
+                    await _send_dynamic_tool_response(success=False, output=feedback)
                     submit_rejection_causes.append(feedback)
                     if len(submit_rejection_causes) >= 3:
                         raise SubmissionRepairExhaustedError(
@@ -842,7 +1104,7 @@ class CodexServerAgent:
                     parser.record_dynamic_tool_result(
                         str(req_id), success=False, output=str(cb_exc)
                     )
-                    await transport.send(build_dynamic_tool_call_response(req_id, success=False))
+                    await _send_dynamic_tool_response(success=False)
                     raise
 
             async def _process_msg(msg: dict[str, Any]) -> bool:
@@ -863,6 +1125,26 @@ class CodexServerAgent:
                     item = msg.get("params", {}).get("item", {})
                     if item.get("type") not in ("agentMessage", None):
                         num_actions += 1
+                    receipt = _command_execution_receipt(
+                        msg,
+                        thread_id=thread_id,
+                        turn_id=turn_id,
+                    )
+                    if receipt is not None and self._command_completion_observer is not None:
+                        await self._command_completion_observer(receipt)
+                terminal, status = is_terminal_notification(msg)
+                if (
+                    terminal
+                    and self._terminal_answer_requested
+                    and self._terminal_answer_interrupt_sent
+                    and status in {"completed", "interrupted"}
+                ):
+                    self._terminal_answer_completed_observed = True
+                    parser.parse_jsonrpc_message(msg)
+                    usage = extract_turn_usage(msg)
+                    if usage:
+                        turn_usage.update(usage)
+                    return True
                 parser.parse_jsonrpc_message(msg)
                 terminal, usage = await self._handle_notification(
                     msg,
@@ -904,7 +1186,22 @@ class CodexServerAgent:
 
             # Then continue reading live notifications until terminal.
             while not done and not self._cancelled:
-                msg = await transport.recv()
+                if self._terminal_answer_stop_deadline is None:
+                    msg = await transport.recv()
+                else:
+                    remaining = self._terminal_answer_stop_deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise AgentTimeoutError(
+                            AgentRunnerType.CODEX_SERVER.value,
+                            "terminal answer stop was not observed within 180 seconds",
+                        )
+                    try:
+                        msg = await asyncio.wait_for(transport.recv(), timeout=remaining)
+                    except TimeoutError as exc:
+                        raise AgentTimeoutError(
+                            AgentRunnerType.CODEX_SERVER.value,
+                            "terminal answer stop was not observed within 180 seconds",
+                        ) from exc
                 if await _process_msg(msg):
                     done = True
 
@@ -925,6 +1222,14 @@ class CodexServerAgent:
             # as "server_shutdown" (enabling auto-resume on next startup) rather
             # than the non-recoverable "agent_cancelled".
             raise
+        except _DynamicToolReceiptObserverError:
+            # The opt-in observer is an evidence boundary. Its failure must
+            # stop execution, but its exception text (which may contain probe
+            # data) must not enter public diagnostics or logs.
+            raise AgentExecutionError(
+                AgentRunnerType.CODEX_SERVER.value,
+                "Dynamic tool receipt observer failed",
+            ) from None
         except OSError as exc:
             duration_ms = int(time.monotonic() * 1000) - start_ms
             diagnostic = _transport_failure_diagnostic(
@@ -1002,6 +1307,8 @@ class CodexServerAgent:
                 "gen_ai_usage_reasoning_output_tokens", 0
             ),
         )
+        if self._terminal_answer_completed_observed:
+            result.completion_cause = "terminal_answer_completed"
         action_log = parser.finalize()
         action_log.agent_model = model
         action_log.total_duration_ms = duration_ms
@@ -1036,6 +1343,18 @@ class CodexServerAgent:
         logger.info(
             "CodexServerAgent: cancellation requested — thread_id=%s", thread_id or "<none>"
         )
+
+    async def request_terminal_answer_completion(self) -> None:
+        """Stop the active turn after a durable answer without classifying cancellation."""
+        self._terminal_answer_requested = True
+        thread_id = self._active_thread_id
+        transport = self._transport
+        if thread_id is not None and transport is not None:
+            await transport.send(
+                build_jsonrpc_request(98, "turn/interrupt", {"threadId": thread_id})
+            )
+            self._terminal_answer_interrupt_sent = True
+            self._terminal_answer_stop_deadline = time.monotonic() + 180.0
 
     # ------------------------------------------------------------------
     # Internal helpers (public for testing)

@@ -81,6 +81,12 @@ routine:
       required: false
       default: "standard"
       description: "Gap policy profile identifier for generated gap-planner nodes"
+    - name: max_rejected_plan_proposals_per_planner
+      required: false
+      description: "Optional hard cap on rejected reliable-plan proposals for each planner node"
+    - name: max_planner_executions_per_node
+      required: false
+      description: "Optional hard cap on executions for each reliable-plan planner node"
 
   steps:
     - id: "S-01"

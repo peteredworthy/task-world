@@ -15,18 +15,27 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Annotated, Any, cast
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.fastmcp.tools import Tool
+from mcp.types import ContentBlock, Tool as MCPTool
 from pydantic import WithJsonSchema
 
-from orchestrator.graph import reliable_plan_check_decision_tool_schema
-from orchestrator.runners import submission_tool_input_schema, validate_reliable_plan_tool_specs
-from orchestrator.runners.graph_tool_routing import route_tool_call
-from orchestrator.runners.types import (
+from orchestrator.graph import (
+    reliable_plan_check_decision_tool_schema,
+    reliable_plan_dependencies_tool_schema,
+)
+from orchestrator.runners import (
     GradeCallback,
     GraphPatchCallback,
-    SubmissionContract,
     SubmissionAcknowledgement,
+    SubmissionContract,
+    SubmissionInvocation,
     SubmitCallback,
+    is_decision_submission,
+    route_graph_tool_call,
+    submission_tool_input_schema,
+    validate_reliable_plan_tool_specs,
+    validate_submission_arguments,
 )
 
 _GRAPH_MCP_ALLOWLIST = frozenset(
@@ -71,6 +80,42 @@ async def _noop_submit(*_args: Any, **_kwargs: Any) -> None:
     return None
 
 
+class _DecisionSubmissionFastMCP(FastMCP):
+    """FastMCP adapter for the canonical decision submission boundary."""
+
+    def __init__(
+        self,
+        submission_contract: SubmissionContract,
+        *,
+        name: str,
+        instructions: str,
+    ) -> None:
+        self._submission_contract = submission_contract
+        self._submission_input_schema = submission_tool_input_schema(submission_contract)
+        super().__init__(name=name, instructions=instructions)
+
+    async def list_tools(self) -> list[MCPTool]:
+        tools = await super().list_tools()
+        return [
+            tool.model_copy(update={"inputSchema": self._submission_input_schema})
+            if tool.name == "submit"
+            else tool
+            for tool in tools
+        ]
+
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> Sequence[ContentBlock] | dict[str, Any]:
+        if name == "submit":
+            try:
+                validate_submission_arguments(self._submission_contract, arguments)
+            except ValueError as exc:
+                raise ToolError(str(exc)) from exc
+        return await super().call_tool(name, arguments)
+
+
 def build_graph_mcp_server(
     on_submit_graph_patch: GraphPatchCallback,
     on_grade: GradeCallback | None,
@@ -79,6 +124,7 @@ def build_graph_mcp_server(
     required_tools: Sequence[str] = (),
     on_submit: SubmitCallback | None = None,
     submission_contract: SubmissionContract | None = None,
+    submission_invocation_factory: (Callable[[dict[str, Any]], SubmissionInvocation] | None) = None,
 ) -> FastMCP:
     """Build a fresh MCP server exposing the graph tools for one execution.
 
@@ -90,14 +136,35 @@ def build_graph_mcp_server(
             planner/builder executions (in which case ``graph_grade`` is
             not registered at all).
     """
-    mcp = FastMCP(
-        name="orchestrator-graph-exec",
-        instructions=(
-            "Graph tools for this single execution. Use submit_graph_patch "
-            "or one of the macro tools to propose graph mutations."
-        ),
+    decision_submission = is_decision_submission(submission_contract)
+    instructions = (
+        "Decision answer tools for this single execution. Use submit once with "
+        "the answer matching the supplied schema."
+        if decision_submission
+        else "Graph tools for this single execution. Use submit_graph_patch "
+        "or one of the macro tools to propose graph mutations."
     )
-    enabled_tools = frozenset(allowed_tools) if allowed_tools is not None else _GRAPH_MCP_ALLOWLIST
+    if decision_submission and submission_contract is not None:
+        mcp: FastMCP = _DecisionSubmissionFastMCP(
+            submission_contract,
+            name="orchestrator-graph-exec",
+            instructions=instructions,
+        )
+    else:
+        mcp = FastMCP(name="orchestrator-graph-exec", instructions=instructions)
+    enabled_tools: frozenset[str] = (
+        frozenset(allowed_tools) if allowed_tools is not None else _GRAPH_MCP_ALLOWLIST
+    )
+    # ``required_tools`` is the existing dispatch carrier for a reliable-plan
+    # assignment.  In that mode the controller's semantic constructor is the
+    # sole graph mutation surface; exposing legacy macros would make the model
+    # restate controller-owned topology and identities.  Gap planners retain
+    # their corrective catalog because they do not carry this required-tool
+    # preflight marker.
+    if decision_submission:
+        enabled_tools = frozenset()
+    elif required_tools:
+        enabled_tools = enabled_tools & frozenset(required_tools)
     concrete_specs: list[dict[str, Any]] = []
 
     def _add_tool(function: Any, *, name: str, description: str) -> None:
@@ -113,7 +180,7 @@ def build_graph_mcp_server(
             )
 
     async def _route(tool_name: str, args: dict[str, Any]) -> str:
-        return await route_tool_call(
+        return await route_graph_tool_call(
             tool_name,
             args,
             _noop_checklist,
@@ -136,10 +203,19 @@ def build_graph_mcp_server(
             """Submit model-authored content keyed by the required output port."""
             callback = on_submit or _noop_submit
             typed_callback = cast(
-                Callable[[dict[str, Any] | None], Awaitable[SubmissionAcknowledgement | None]],
+                Callable[
+                    [dict[str, Any] | SubmissionInvocation | None],
+                    Awaitable[SubmissionAcknowledgement | None],
+                ],
                 callback,
             )
-            acknowledgement = await typed_callback({"outputs": outputs})
+            arguments = {"outputs": outputs}
+            invocation: dict[str, Any] | SubmissionInvocation = (
+                submission_invocation_factory(arguments)
+                if submission_invocation_factory is not None
+                else arguments
+            )
+            acknowledgement = await typed_callback(invocation)
             return (
                 acknowledgement.model_dump_json()
                 if acknowledgement is not None
@@ -158,7 +234,11 @@ def build_graph_mcp_server(
         mcp.add_tool(
             submit,
             name="submit",
-            description=f"Submit required graph outputs. Contract: {contract_summary}",
+            description=(
+                f"Return the required decision answer. Contract: {contract_summary}"
+                if decision_submission
+                else f"Submit required graph outputs. Contract: {contract_summary}"
+            ),
         )
 
     async def submit_graph_patch(
@@ -176,8 +256,6 @@ def build_graph_mcp_server(
             "macro_invocations": macro_invocations,
             "rationale_record_id": rationale_record_id,
         }
-        if ops is _OMITTED and macro_invocations is not _OMITTED:
-            values["ops"] = []
         args = {key: value for key, value in values.items() if value is not _OMITTED}
         return await _route("submit_graph_patch", args)
 
@@ -513,6 +591,10 @@ def build_graph_mcp_server(
             }
         ),
     ]
+    construct_reliable_plan_region.__annotations__["dependencies"] = Annotated[
+        list[str] | None,
+        WithJsonSchema(reliable_plan_dependencies_tool_schema()),
+    ]
 
     _add_tool(
         construct_reliable_plan_region,
@@ -703,6 +785,6 @@ def build_graph_mcp_server(
             description="Set a grade on a requirement (verifier phase only).",
         )
 
-    if required_tools:
+    if required_tools and not decision_submission:
         validate_reliable_plan_tool_specs(concrete_specs)
     return mcp

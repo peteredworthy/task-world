@@ -10,6 +10,7 @@ from orchestrator.api.schemas.model_profiles import SelectableAgentRunnerType
 from orchestrator.api.schemas.tasks import ActionLogSchema, AttemptSchema, ModelTokenUsageSchema
 
 from orchestrator.config import AgentRunnerType, MergeStrategy
+from orchestrator.graph import ReliablePlanRuntimeLimits
 
 
 _VALID_MERGE_STRATEGIES = [e.value for e in MergeStrategy]
@@ -75,6 +76,13 @@ class CreateRunRequest(ApiModel):
         has_embedded = self.routine_embedded is not None
         if has_id == has_embedded:  # both set or neither set
             raise ValueError("Exactly one of 'routine_id' or 'routine_embedded' must be provided")
+        ReliablePlanRuntimeLimits.model_validate(
+            {
+                key: self.config[key]
+                for key in ReliablePlanRuntimeLimits.model_fields
+                if key in self.config
+            }
+        )
         return self
 
 

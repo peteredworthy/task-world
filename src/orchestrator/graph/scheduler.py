@@ -200,7 +200,7 @@ def schedule(
         )
 
     candidates = sorted(
-        (node for node in nodes if node.state == "ready" and node.kind != "gate"),
+        (node for node in nodes if node.state == "ready" and node.kind not in _DECISION_GATE_KINDS),
         key=lambda node: (
             -node.priority,
             _kind_schedule_order(node.kind),

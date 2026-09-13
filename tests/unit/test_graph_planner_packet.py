@@ -568,6 +568,8 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
     assert "Planner context packet:" in planner_prompt
     assert '"run_id": "run-planner-packet"' in planner_prompt
     assert "Planner mutation contract:" in planner_prompt
+    assert "For reliable-plan dependencies" in planner_prompt
+    assert "Use [] for the first or only batch" in planner_prompt
     assert "Prefer planner-facing graph macros" in planner_prompt
     assert "Mutate the graph only through submit_graph_patch or macro-backed patch envelopes." in (
         planner_prompt
@@ -1163,7 +1165,7 @@ def test_planner_packet_marks_absent_hidden_oracle_binding_unavailable() -> None
     assert packet["dynamic_feature"]["available_check_bindings"] == ["dynamic_feature_acceptance"]
 
 
-def test_unavailable_hidden_oracle_prompt_requires_batch_command_definition() -> None:
+def test_unavailable_hidden_oracle_reliable_prompt_has_no_fake_command() -> None:
     context = _planner_context(_graph_events())
     context.node_payload["dynamic_feature"] = {
         "feature_spec_content": "Build the dynamic-smoke artifact.",
@@ -1175,38 +1177,23 @@ def test_unavailable_hidden_oracle_prompt_requires_batch_command_definition() ->
             "semantic_stage": "successor_planning",
             "reliable_plan_skeleton_id": "reliable-plan-test-v1",
             "reliable_plan_remaining_horizons": 1,
+            "declared_batch_ids": ["batch-from-accepted-plan"],
         }
     )
 
     packet = _planner_packet(context)
     prompt = _prompt_for_node(context)
-    invariant_example = next(
-        example
-        for example in packet["patch_examples"]
-        if example["purpose"] == "create_invariant_check"
-    )
-    semantic_example = next(
-        example
-        for example in packet["patch_examples"]
-        if example["purpose"] == "construct_reliable_plan_region"
-    )
-
-    assert (
-        "use command_binding='dynamic_feature_hidden_oracle' only when the packet's "
-        "available_check_bindings includes it"
-    ) in prompt
-    assert (
-        "for dynamic_feature final invariant checks, use "
-        "command_binding='dynamic_feature_hidden_oracle'."
-    ) not in prompt
-    assert "otherwise provide an explicit batch-scoped command_definition" in prompt
-    assert "do not use dynamic_feature_acceptance as a semantic-region binding" in prompt
-    invariant_node = invariant_example["ops"][0]["node"]
-    semantic_check = semantic_example["checks"][0]
-    assert "command_binding" not in invariant_node
-    assert invariant_node["command_definition"] == {"cmd": "uv run pytest tests/batch -q"}
-    assert "command_binding" not in semantic_check
-    assert semantic_check["command_definition"] == {"cmd": "uv run pytest tests/batch -q"}
+    assert "patch_examples" not in packet
+    assert "allowed_patch_operations" not in packet
+    assert "horizon_region_templates" not in packet
+    assert packet["reliable_plan_options"]["available_check_bindings"] == []
+    assert packet["dynamic_feature"].get("available_check_bindings", []) == []
+    assert packet["reliable_plan_options"]["scope_mode"] == "select_declared_batch"
+    assert packet["reliable_plan_options"]["scope_options"] == ["batch-from-accepted-plan"]
+    assert "uv run pytest tests/batch -q" not in prompt
+    assert "dynamic_feature_hidden_oracle" not in prompt
+    assert "uv run pytest tests/smoke -q" in prompt
+    assert "provide a concrete command_definition from the current task contract" in prompt
 
 
 def test_planner_packet_contract_fields_remain_stable() -> None:
@@ -1373,34 +1360,15 @@ def test_final_reliable_plan_horizon_gets_exact_finalization_guidance() -> None:
             "the controller rejects a partial batch-only or finalization-only patch",
             "call plain submit only after that complete patch is accepted",
         ],
-        "finalization_rules": [
-            "do not create another worker, check, batch, or successor planner",
-            "create exactly one controller-bound dynamic_feature_acceptance check distinct from any hidden oracle check",
-            "the acceptance check must consume a passed verification report from every declared batch verifier",
-            "the final-audit verifier must consume those passed batch reports and the passed acceptance receipt",
-            "the final gate must consume the passed batch reports, acceptance receipt, and final-audit report",
-            "the final gate declared_batch_ids must exactly equal declared_batch_ids",
-            "declare every concrete input port used by an edge",
+        "controller_outcomes": [
+            "the controller creates exactly one final acceptance check distinct from any semantic check",
+            "the controller binds that acceptance check to a passed verification report from every declared batch verifier",
+            "the controller creates the final audit and gate with their complete typed evidence bindings",
         ],
     }
-    purposes = [example["purpose"] for example in packet["patch_examples"]]
-    assert "create_successor_planner" not in purposes
-    assert "construct_reliable_plan_region" in purposes
-
-    construction = next(
-        example
-        for example in packet["patch_examples"]
-        if example["purpose"] == "construct_reliable_plan_region"
-    )
-    assert construction["scope"] == "batch-2-cli"
-    assert "ops" not in construction
-    assert "node_id" not in construction
-    assert construction["checks"] == [
-        {
-            "name": "bounded project check",
-            "command_definition": {"cmd": "uv run pytest tests/batch -q"},
-        }
-    ]
+    assert "patch_examples" not in packet
+    assert "allowed_patch_operations" not in packet
+    assert "horizon_region_templates" not in packet
 
 
 def test_gap_planner_packet_includes_blocking_obligations() -> None:

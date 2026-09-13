@@ -98,6 +98,19 @@ from orchestrator.graph import (
     semantic_schema_declarations_view,
     validate_semantic_artifact_content,
     effective_node_max_attempts,
+    apply_command,
+    FakeClock,
+    SequentialIdGenerator,
+    DecisionSubmissionEnvelope,
+    DecisionSubmissionRequest,
+    canonical_decision_answer,
+    canonical_decision_answer_hash,
+    compile_decision,
+    compile_implementation_plan,
+    decision_answer_schema,
+    decode_submission_payload,
+    resolve_decision_context,
+    resolve_decision_applicability,
 )
 from orchestrator.graph_runtime import prompts as _prompts
 from orchestrator.graph_runtime.controller import (
@@ -139,6 +152,11 @@ from orchestrator.graph_runtime.gatekeeper import (
 )
 from orchestrator.graph_runtime.graph_mcp_registry import GraphMcpExecutionRegistry
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, SideEffectExecutor
+from orchestrator.graph_runtime.rejection_evidence import (
+    ReliablePlanRejectionRecorder,
+    render_rejected_graph_patch_response,
+    resolve_orchestrator_source_root,
+)
 from orchestrator.graph_runtime.store import GraphEventStore
 from orchestrator.graph_runtime.submission_gate import (
     SubmissionGateBaseline,
@@ -162,6 +180,7 @@ from orchestrator.runners import (
     ReliablePlanToolPreflightError,
     build_dynamic_tool_specs,
     create_agent_runner,
+    is_decision_submission,
     is_reliable_plan_planner,
     resolve_dispatch_tools,
     SubmissionContract,
@@ -171,6 +190,7 @@ from orchestrator.runners import (
     SubmissionRejectionEvidence,
     SubmissionRejectedError,
     SubmissionRepairExhaustedError,
+    SubmissionInvocation,
 )
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
 
@@ -455,6 +475,40 @@ def _declared_output_contract_error(
 
 def _submission_contract(context: GraphDispatchContext) -> SubmissionContract | None:
     """Derive the runner-owned contract from accepted graph declarations."""
+    applicability = resolve_decision_applicability(context.graph_projection, context.node_id)
+    if applicability is not None and applicability.family in {
+        "discovery_brief",
+        "implementation_plan",
+        "batch_decision",
+        "correction_decision",
+    }:
+        resolve_decision_context(context.graph_projection, context.node_id)
+        schema_id, schema_version, _schema_sha256, schema = decision_answer_schema(
+            cast(Any, applicability.family)
+        )
+        return SubmissionContract(
+            interaction_contract="decision-v1",
+            outputs=(
+                SubmissionOutputContract(
+                    port=applicability.output_port,
+                    schema_name=(
+                        "SemanticArtifact"
+                        if applicability.family == "implementation_plan"
+                        else "DecisionAnswer"
+                    ),
+                    required=True,
+                    record_type=(
+                        "semantic_artifact"
+                        if applicability.family == "implementation_plan"
+                        else "decision_answer"
+                    ),
+                    semantic_schema_id=schema_id,
+                    semantic_schema_version=schema_version,
+                    semantic_role=applicability.family,
+                    content_json_schema=schema,
+                ),
+            ),
+        )
     raw_outputs = context.node_payload.get("outputs")
     if not isinstance(raw_outputs, list):
         return None
@@ -509,6 +563,27 @@ def _semantic_output_records_from_submit_args(
     args: dict[str, Any],
 ) -> list[dict[str, object]]:
     """Compose controller-owned records with model-authored semantic content."""
+    applicability = resolve_decision_applicability(context.graph_projection, context.node_id)
+    if applicability is not None and applicability.family == "implementation_plan":
+        if set(args) != {"outputs"} or not isinstance(args.get("outputs"), dict):
+            raise ValueError("decision discovery submit requires exactly the outputs object")
+        outputs = cast(dict[str, Any], args["outputs"])
+        if set(outputs) != {"semantic_artifact"} or not isinstance(
+            outputs.get("semantic_artifact"), dict
+        ):
+            raise ValueError("decision discovery submit requires exactly outputs.semantic_artifact")
+        compiled = compile_implementation_plan(
+            context.graph_projection,
+            node_id=context.node_id,
+            execution_id=context.execution_id,
+            answer=cast(dict[str, Any], outputs["semantic_artifact"]),
+        )
+        return [
+            cast(
+                dict[str, object],
+                compiled.semantic_record.model_dump(mode="json", by_alias=True),
+            )
+        ]
     contract = _submission_contract(context)
     if contract is None or not contract.requires_arguments:
         if args:
@@ -1296,6 +1371,14 @@ def _runtime_death_max_attempts(context: GraphDispatchContext) -> int | None:
     )
 
 
+def _reliable_plan_rejection_limit(context: GraphDispatchContext) -> int | None:
+    if not is_reliable_plan_planner(node_kind=context.node_kind, node_payload=context.node_payload):
+        return None
+    dynamic_feature = routine_snapshot_dynamic_feature_view(context.graph_projection) or {}
+    value = dynamic_feature.get("max_rejected_plan_proposals_per_planner")
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+
 def _authority_file_state_policy(context: GraphDispatchContext) -> FileStatePolicy:
     """Runtime boundary authority comes exclusively from the verified snapshot."""
     binding = cache_authority_binding(context.graph_projection)
@@ -1948,9 +2031,32 @@ class GraphDispatchExecutor(SideEffectExecutor):
         managed = callable(
             getattr(self, "_session_factory", None)
         ) and context.execution_id in getattr(self, "_file_state_baselines", {})
+        planner_rejection_limit_exhausted = False
+        execution_task = asyncio.current_task()
+        reliable_plan_planner = is_reliable_plan_planner(
+            node_kind=context.node_kind, node_payload=context.node_payload
+        )
+        dispatch_applicability = resolve_decision_applicability(
+            context.graph_projection, context.node_id
+        )
+        decision_submission_execution = (
+            dispatch_applicability is not None
+            and dispatch_applicability.family
+            in {"discovery_brief", "implementation_plan", "batch_decision", "correction_decision"}
+        )
         try:
             await self._acknowledge_start(context)
             await self._record_start_heartbeat(context)
+            if managed and await self._reliable_plan_rejection_limit_reached(context):
+                planner_rejection_limit_exhausted = True
+                await self._request_runner_recovery(
+                    context,
+                    "invalid_planner_proposal",
+                    error_detail="proposal_rejection_limit_exhausted",
+                    retry_after_recovery=False,
+                    worktree_lock_held=True,
+                )
+                return
             grades: list[tuple[str, str, str | None]] = []
             graph_patch_submitted = False
             graph_patch_accepted = False
@@ -1971,12 +2077,26 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 return None
 
             async def on_submit(
-                submit_args: dict[str, Any] | None = None,
+                submit_args: dict[str, Any] | SubmissionInvocation | None = None,
             ) -> SubmissionAcknowledgement:
                 nonlocal submitted_callback, submission_acknowledgement
                 nonlocal first_submission_rejection_category, latest_submission_rejection
                 nonlocal first_submission_rejection_detail
-                if submitted_callback:
+                decision_applicability = resolve_decision_applicability(
+                    context.graph_projection, context.node_id
+                )
+                decision_submission = (
+                    decision_applicability is not None
+                    and decision_applicability.family
+                    in {
+                        "discovery_brief",
+                        "implementation_plan",
+                        "batch_decision",
+                        "correction_decision",
+                    }
+                )
+                first_decision_submission = decision_submission and not submitted_callback
+                if submitted_callback and not decision_submission:
                     # Managed callbacks must re-read canonical attempt state so
                     # reconnect delivery can observe later finalization or
                     # recovery. Direct/non-managed callers have no canonical
@@ -1996,13 +2116,21 @@ class GraphDispatchExecutor(SideEffectExecutor):
                         )
                     )
                     return submission_acknowledgement
-                if _requires_graph_patch_before_submit(context) and not graph_patch_submitted:
+                if (
+                    not decision_submission
+                    and _requires_graph_patch_before_submit(context)
+                    and not graph_patch_submitted
+                ):
                     msg = (
                         "planner nodes must call submit_graph_patch before submit; "
                         "submit an accepted graph patch first"
                     )
                     raise ValueError(msg)
-                if _requires_graph_patch_before_submit(context) and not graph_patch_accepted:
+                if (
+                    not decision_submission
+                    and _requires_graph_patch_before_submit(context)
+                    and not graph_patch_accepted
+                ):
                     msg = (
                         "planner nodes must have an accepted submit_graph_patch before submit; "
                         "use patch rejection feedback to submit a corrected patch"
@@ -2010,7 +2138,8 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     raise ValueError(msg)
                 remaining_horizons = context.node_payload.get("reliable_plan_remaining_horizons")
                 if (
-                    isinstance(context.node_payload.get("reliable_plan_skeleton_id"), str)
+                    not decision_submission
+                    and isinstance(context.node_payload.get("reliable_plan_skeleton_id"), str)
                     and context.node_kind == "planner"
                     and context.node_role != "gap_planner"
                 ):
@@ -2051,23 +2180,31 @@ class GraphDispatchExecutor(SideEffectExecutor):
                             "plan verification, and the first successor planner before submit"
                         )
                 try:
-                    contract = _submission_contract(context)
-                    output_records = (
-                        _semantic_output_records_from_submit_args(
-                            context,
-                            submit_args if submit_args is not None else {"outputs": {}},
-                        )
-                        if contract is not None and contract.requires_arguments
-                        else None
-                    )
-                    if output_records is None:
-                        acknowledgement = await self._submit_callback(context, grades)
+                    if decision_submission:
+                        acknowledgement = await self._submit_decision_callback(context, submit_args)
                     else:
-                        acknowledgement = await self._submit_callback(
-                            context,
-                            grades,
-                            output_records=output_records,
+                        authored_args = (
+                            submit_args.arguments
+                            if isinstance(submit_args, SubmissionInvocation)
+                            else submit_args
                         )
+                        contract = _submission_contract(context)
+                        output_records = (
+                            _semantic_output_records_from_submit_args(
+                                context,
+                                authored_args if authored_args is not None else {"outputs": {}},
+                            )
+                            if contract is not None and contract.requires_arguments
+                            else None
+                        )
+                        if output_records is None:
+                            acknowledgement = await self._submit_callback(context, grades)
+                        else:
+                            acknowledgement = await self._submit_callback(
+                                context,
+                                grades,
+                                output_records=output_records,
+                            )
                 except ValueError as exc:
                     detail = str(exc)
                     if detail.startswith("submit callback rejected:"):
@@ -2134,11 +2271,18 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     ),
                     execution_id=context.execution_id,
                 )
+                if first_decision_submission:
+                    close_phase = getattr(runner, "request_terminal_answer_completion", None)
+                    if callable(close_phase):
+                        close_result = close_phase()
+                        if not inspect.isawaitable(close_result):
+                            raise ValueError("runner terminal completion hook is not awaitable")
+                        await cast(Awaitable[object], close_result)
                 return submission_acknowledgement
 
             async def on_submit_graph_patch(patch_payload: dict[str, Any]) -> str:
                 nonlocal graph_patch_submitted, graph_patch_accepted, graph_successor_accepted
-                nonlocal graph_finalization_accepted
+                nonlocal graph_finalization_accepted, planner_rejection_limit_exhausted
                 graph_patch_submitted = True
                 feedback = await self._submit_graph_patch_callback(context, patch_payload)
                 if _graph_patch_feedback_accepted(feedback):
@@ -2152,6 +2296,14 @@ class GraphDispatchExecutor(SideEffectExecutor):
                         context.node_payload["_accepted_gap_planner_patch_had_ops"] = patch_has_ops
                     if patch_has_ops:
                         context.node_payload["_accepted_graph_patch_had_ops"] = True
+                elif await self._reliable_plan_rejection_limit_reached(context):
+                    planner_rejection_limit_exhausted = True
+                    # Cancelling inside the tool callback would prevent delivery of
+                    # its rejection. Queue cancellation of the owning execution task;
+                    # it runs after the callback returns and propagates through the
+                    # runner's normal cancellation-safe transport cleanup.
+                    if execution_task is not None:
+                        asyncio.get_running_loop().call_soon(execution_task.cancel)
                 return feedback
 
             async def on_grade(req_id: str, grade: str, grade_reason: str | None) -> None:
@@ -2181,6 +2333,36 @@ class GraphDispatchExecutor(SideEffectExecutor):
 
                 from orchestrator.graph_runtime.graph_mcp_tools import build_graph_mcp_server
 
+                graph_mcp_token = secrets.token_urlsafe(24)
+                submission_request_index = 0
+
+                def graph_mcp_submission_invocation(
+                    arguments: dict[str, Any],
+                ) -> SubmissionInvocation:
+                    nonlocal submission_request_index
+                    submission_request_index += 1
+                    request_id = str(submission_request_index)
+                    attempt_id = (
+                        "answer-attempt-"
+                        + hashlib.sha256(
+                            "\x00".join(
+                                (
+                                    context.execution_id,
+                                    graph_mcp_token or "",
+                                    request_id,
+                                )
+                            ).encode("utf-8")
+                        ).hexdigest()[:24]
+                    )
+                    return SubmissionInvocation(
+                        execution_id=context.execution_id,
+                        answer_attempt_id=attempt_id,
+                        transport_channel="claude_graph_mcp",
+                        transport_session_id=graph_mcp_token or "",
+                        transport_request_id=request_id,
+                        arguments=arguments,
+                    )
+
                 graph_mcp_server = build_graph_mcp_server(
                     on_submit_graph_patch,
                     on_grade if is_verifier else None,
@@ -2188,8 +2370,10 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     required_tools=execution_context.required_tools,
                     on_submit=on_submit,
                     submission_contract=execution_context.submission_contract,
+                    submission_invocation_factory=(
+                        graph_mcp_submission_invocation if decision_submission_execution else None
+                    ),
                 )
-                graph_mcp_token = secrets.token_urlsafe(24)
                 self._graph_mcp_registry.register(
                     graph_mcp_token, graph_mcp_server.sse_app(mount_path="/")
                 )
@@ -2245,6 +2429,14 @@ class GraphDispatchExecutor(SideEffectExecutor):
             if not managed:
                 if not submitted_callback:
                     await self._agent_died(context, "agent exited without submit")
+            elif planner_rejection_limit_exhausted:
+                await self._request_runner_recovery(
+                    context,
+                    "invalid_planner_proposal",
+                    error_detail="proposal_rejection_limit_exhausted",
+                    retry_after_recovery=False,
+                    worktree_lock_held=True,
+                )
             elif not submitted_callback and latest_submission_rejection is not None:
                 rejection_reason = next(
                     category
@@ -2276,19 +2468,76 @@ class GraphDispatchExecutor(SideEffectExecutor):
             elif not result.success:
                 await self._request_runner_recovery(
                     context,
-                    "runner_died",
-                    error_detail=result.error or "runner returned an unsuccessful result",
+                    (
+                        "invalid_planner_proposal"
+                        if reliable_plan_planner
+                        and graph_patch_submitted
+                        and not graph_patch_accepted
+                        else "runner_died"
+                    ),
+                    error_detail=(
+                        "invalid_planner_proposal"
+                        if reliable_plan_planner
+                        and graph_patch_submitted
+                        and not graph_patch_accepted
+                        else result.error or "runner returned an unsuccessful result"
+                    ),
+                    retry_after_recovery=(
+                        reliable_plan_planner and graph_patch_submitted and not graph_patch_accepted
+                    ),
                     worktree_lock_held=True,
                 )
             elif not submitted_callback:
                 await self._request_runner_recovery(
                     context,
-                    "runner_died",
-                    error_detail="agent exited without a successful submit",
+                    (
+                        "invalid_planner_proposal"
+                        if reliable_plan_planner
+                        and graph_patch_submitted
+                        and not graph_patch_accepted
+                        else "runner_died"
+                    ),
+                    error_detail=(
+                        "invalid_planner_proposal"
+                        if reliable_plan_planner
+                        and graph_patch_submitted
+                        and not graph_patch_accepted
+                        else "agent exited without a successful submit"
+                    ),
+                    retry_after_recovery=(
+                        reliable_plan_planner and graph_patch_submitted and not graph_patch_accepted
+                    ),
                     worktree_lock_held=True,
                 )
             else:
-                witnessed = await self._witness_runner_completion(context, worktree_lock_held=True)
+                terminal_applicability = resolve_decision_applicability(
+                    context.graph_projection, context.node_id
+                )
+                expected_terminal = (
+                    terminal_applicability is not None
+                    and terminal_applicability.family
+                    in {
+                        "discovery_brief",
+                        "implementation_plan",
+                        "batch_decision",
+                        "correction_decision",
+                    }
+                )
+                if expected_terminal and result.completion_cause != "terminal_answer_completed":
+                    await self._request_runner_recovery(
+                        context,
+                        "runner_died",
+                        error_detail="decision runner returned without trusted terminal closure",
+                        worktree_lock_held=True,
+                    )
+                    return
+                witnessed = await self._witness_runner_completion(
+                    context,
+                    runner_return_kind=(
+                        "terminal_answer_completed" if expected_terminal else "successful_return"
+                    ),
+                    worktree_lock_held=True,
+                )
                 if witnessed:
                     await self._crash_barrier.wait_if_armed(
                         run_id=context.run_id,
@@ -2306,22 +2555,40 @@ class GraphDispatchExecutor(SideEffectExecutor):
             # to a live lease.  Shield the durable cleanup intent, then preserve
             # cancellation for the driver.
             if managed:
-                reason: Literal["runner_died", "cancelled"] = (
-                    "runner_died"
-                    if cancellation is not None and cancellation.runner_loss
-                    else "cancelled"
+                reason: Literal["runner_died", "cancelled", "invalid_planner_proposal"] = (
+                    "invalid_planner_proposal"
+                    if planner_rejection_limit_exhausted
+                    else (
+                        "runner_died"
+                        if cancellation is not None and cancellation.runner_loss
+                        else "cancelled"
+                    )
                 )
-                retry_after_recovery = (
-                    cancellation.retry_after_recovery if cancellation is not None else False
-                ) or await self._run_is_stopping_for_pause(context.run_id)
+                if planner_rejection_limit_exhausted:
+                    retry_after_recovery = False
+                else:
+                    retry_after_recovery = (
+                        cancellation.retry_after_recovery if cancellation is not None else False
+                    ) or await self._run_is_stopping_for_pause(context.run_id)
                 await asyncio.shield(
                     self._request_runner_recovery(
                         context,
                         reason,
+                        error_detail=(
+                            "proposal_rejection_limit_exhausted"
+                            if planner_rejection_limit_exhausted
+                            else None
+                        ),
                         retry_after_recovery=retry_after_recovery,
                         worktree_lock_held=True,
                     )
                 )
+            if planner_rejection_limit_exhausted:
+                # This is an executor-owned stop after a terminal budget
+                # decision. The durable recovery above owns the outcome; do
+                # not propagate cancellation into the graph driver draining
+                # this completed execution.
+                return
             raise
         except SubmissionRepairExhaustedError as exc:
             if managed:
@@ -2349,6 +2616,15 @@ class GraphDispatchExecutor(SideEffectExecutor):
             await self._invalid_execution_contract(context, str(exc))
         except Exception as exc:
             if managed:
+                if planner_rejection_limit_exhausted:
+                    await self._request_runner_recovery(
+                        context,
+                        "invalid_planner_proposal",
+                        error_detail="proposal_rejection_limit_exhausted",
+                        retry_after_recovery=False,
+                        worktree_lock_held=True,
+                    )
+                    return
                 # Record the runner exception before recovery mutates the
                 # graph attempt.  Recovery events intentionally describe the
                 # cleanup protocol, not the original transport failure; this
@@ -2465,17 +2741,22 @@ class GraphDispatchExecutor(SideEffectExecutor):
         working_dir: str | None = None,
     ) -> ExecutionContext:
         node = context.node_payload
+        submission_contract = _submission_contract(context)
         prompt = _prompt_for_node(context)
+        reliable_plan = is_reliable_plan_planner(
+            node_kind=context.node_kind, node_payload=context.node_payload
+        )
+        decision_submission = is_decision_submission(submission_contract)
         available_tools = resolve_dispatch_tools(
             node_kind=context.node_kind,
             node_role=context.node_role,
             available_tools=_available_tools_for_context(context),
-        )
-        reliable_plan = is_reliable_plan_planner(
-            node_kind=context.node_kind, node_payload=context.node_payload
+            reliable_plan=reliable_plan and not decision_submission,
+            decision_submission=decision_submission,
         )
         return ExecutionContext(
             run_id=context.run_id,
+            execution_id=context.execution_id,
             task_id=str(node.get("task_id") or node.get("task_region_id") or context.node_id),
             working_dir=working_dir or context.worktree_path,
             prompt=prompt,
@@ -2491,10 +2772,14 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 if context.node_kind == "verifier" or available_tools
                 else None
             ),
-            required_tools=RELIABLE_PLAN_REQUIRED_TOOL_NAMES if reliable_plan else (),
+            required_tools=(
+                RELIABLE_PLAN_REQUIRED_TOOL_NAMES
+                if reliable_plan and not decision_submission
+                else ()
+            ),
             mcp_servers=cast(Any, node.get("mcp_servers")),
             work_mode=_work_mode(node.get("work_mode")),
-            submission_contract=_submission_contract(context),
+            submission_contract=submission_contract,
         )
 
     async def _acknowledge_start(self, context: GraphDispatchContext) -> None:
@@ -2794,6 +3079,228 @@ class GraphDispatchExecutor(SideEffectExecutor):
         async with self._session_factory() as session:
             await create_wired_event_store_v2(session).append(event)
             await commit_with_event_outbox(session)
+
+    async def _submit_decision_callback(
+        self,
+        context: GraphDispatchContext,
+        submission: dict[str, Any] | SubmissionInvocation | None,
+        *,
+        worktree_lock_held: bool | None = None,
+    ) -> SubmissionAcknowledgement:
+        """Validate, dry-run, and stage one decision answer without publishing effects."""
+        if worktree_lock_held is None:
+            worktree_lock_held = context.execution_id in self._file_state_baselines
+        if not worktree_lock_held:
+            async with self._worktree_execution_lock:
+                return await self._submit_decision_callback(
+                    context, submission, worktree_lock_held=True
+                )
+        if not isinstance(submission, SubmissionInvocation):
+            raise ValueError("decision-v1 submit requires trusted transport delivery identity")
+        if submission.execution_id != context.execution_id:
+            raise ValueError("submission invocation execution does not match dispatch")
+        args = submission.arguments
+        if not isinstance(args, dict) or set(args) != {"outputs"}:
+            raise ValueError("decision submit requires exactly the outputs object")
+        raw_outputs = args.get("outputs")
+        if not isinstance(raw_outputs, dict):
+            raise ValueError("decision submit requires exactly one typed output")
+        typed_outputs = cast(dict[str, Any], raw_outputs)
+        applicability = resolve_decision_applicability(context.graph_projection, context.node_id)
+        if applicability is None or applicability.family not in {
+            "discovery_brief",
+            "implementation_plan",
+            "batch_decision",
+            "correction_decision",
+        }:
+            raise ValueError("decision submit family is not activated")
+        output_port = applicability.output_port
+        if set(typed_outputs) != {output_port}:
+            raise ValueError(f"decision submit requires exactly outputs.{output_port}")
+        raw_decision = typed_outputs[output_port]
+        if not isinstance(raw_decision, dict):
+            raise ValueError(f"outputs.{output_port} must be an object")
+        canonical = canonical_decision_answer(
+            cast(Any, applicability.family), cast(dict[str, Any], raw_decision)
+        )
+        answer = {output_port: canonical}
+        if applicability.family == "implementation_plan":
+            _semantic_output_records_from_submit_args(context, {"outputs": answer})
+        answer_hash = canonical_decision_answer_hash(answer)
+
+        existing_ack = await self._read_submission_acknowledgement(context)
+        if existing_ack is not None:
+            existing_payload = await self._resolve_staged_callback_payload(
+                context.run_id,
+                context.execution_id,
+                worktree_lock_held=True,
+            )
+            existing = DecisionSubmissionEnvelope.model_validate(existing_payload)
+            if existing.answer_sha256 != answer_hash:
+                raise ValueError("a different decision answer is already durably staged")
+            return existing_ack
+
+        # The model answered the request rendered from the dispatch snapshot.
+        # Keep that exact request and its read boundary frozen through staging;
+        # the authoritative boundary command below compares it with the current
+        # projection and rejects changed inputs/authority while permitting an
+        # unrelated tail.
+        projection = context.graph_projection
+        observed_position = context.graph_position
+        resolved = resolve_decision_context(projection, context.node_id)
+        schema_id, schema_version, schema_sha256, _schema = decision_answer_schema(
+            cast(Any, applicability.family)
+        )
+        decision_request_id = (
+            "decision-request-"
+            + hashlib.sha256(
+                f"{context.dispatch_event_id}\x00{context.execution_id}".encode("utf-8")
+            ).hexdigest()[:24]
+        )
+        if applicability.family == "implementation_plan":
+            compile_implementation_plan(
+                projection,
+                node_id=context.node_id,
+                execution_id=context.execution_id,
+                answer=canonical,
+            )
+        else:
+            compilation = compile_decision(
+                projection,
+                node_id=context.node_id,
+                decision_request_id=decision_request_id,
+                base_graph_position=observed_position,
+                answer=canonical,
+            )
+            dry_run = apply_command(
+                projection,
+                [],
+                "submit_patch",
+                {
+                    "patch_id": compilation.patch_id,
+                    "base_graph_position": compilation.base_graph_position,
+                    "ops": list(compilation.ops),
+                },
+                PatchCommandContext(
+                    run_id=context.run_id,
+                    current_graph_position=observed_position,
+                    proposed_by_node_id=context.node_id,
+                    actor_role="planner",
+                ),
+                FakeClock(),
+                SequentialIdGenerator(),
+            )
+            if not dry_run or dry_run[0].event_type != "graph_patch_accepted":
+                reason = dry_run[0].payload.get("reason") if dry_run else "empty patch plan"
+                raise ValueError(f"decision consequence validation failed: {reason}")
+
+        context_payload = resolved.protected_question_context()
+        context_bytes = canonical_callback_payload_bytes(context_payload)
+        context_hash, _ = callback_payload_identity(context_payload)
+        boundary = await self._run_worktree_boundary(
+            capture_file_state_boundary,
+            worktree_path=context.worktree_path,
+            run_id=context.run_id,
+            node_id=context.node_id,
+            execution_id=context.execution_id,
+            base_snapshot_id=context.base_snapshot_id,
+            policy=_authority_file_state_policy(context),
+            baseline=self._file_state_baselines.get(context.execution_id),
+            lock_held=True,
+        )
+        if boundary.rejection_record is not None:
+            raise CompromisedFileStateError("decision answer changed protected workspace state")
+        staged = await self._run_worktree_boundary(
+            _capture_runner_boundary,
+            context.worktree_path,
+            _authority_file_state_policy(context),
+            _authority_cache_policy(context),
+            "submission",
+            snapshot_id=_managed_snapshot_id("staged", context.execution_id),
+            force_include_paths=list(boundary.force_include_paths),
+            lock_held=True,
+        )
+
+        async def publish_decision_artifacts_and_stage() -> Any:
+            async with self._artifact_store.publication():
+                context_ref = await self._artifact_store.put(
+                    context_bytes, media_type="application/json", encoding="utf-8"
+                )
+                if context_ref.content_hash != context_hash:
+                    raise ValueError("question context store returned a noncanonical hash")
+                request = DecisionSubmissionRequest(
+                    decision_request_id=decision_request_id,
+                    execution_id=context.execution_id,
+                    routine_snapshot_record_id=resolved.routine_snapshot_record_id,
+                    interaction_contract="decision-v1",
+                    answer_schema_id=schema_id,
+                    answer_schema_version=schema_version,
+                    answer_schema_sha256=schema_sha256,
+                    compiler_contract_version=1,
+                    question_context_ref=context_ref,
+                    question_context_sha256=context_hash,
+                    bound_inputs=resolved.bound_inputs,
+                )
+                envelope = DecisionSubmissionEnvelope.model_validate(
+                    {
+                        "format": "decision-submission-v1",
+                        "request": request,
+                        "answer_attempt_id": submission.answer_attempt_id,
+                        "answer": answer,
+                        "answer_sha256": answer_hash,
+                    }
+                )
+                payload = envelope.model_dump(mode="json", by_alias=True)
+                payload_bytes = canonical_callback_payload_bytes(payload)
+                payload_hash, payload_size = callback_payload_identity(payload)
+                payload_ref = await self._artifact_store.put(
+                    payload_bytes, media_type="application/json", encoding="utf-8"
+                )
+                if payload_ref.size_bytes != payload_size:
+                    raise ValueError("artifact store returned a noncanonical decision size")
+                return await self._handle_command_retry_stale(
+                    context.run_id,
+                    await self._current_position(context.run_id),
+                    "stage_runner_submission",
+                    {
+                        "node_id": context.node_id,
+                        "execution_id": context.execution_id,
+                        "lease_id": context.lease_id,
+                        "lease_generation": context.lease_generation,
+                        "base_snapshot_id": context.base_snapshot_id,
+                        "observed_graph_position": observed_position,
+                        "idempotency_key": f"{decision_request_id}:submit",
+                        "payload_hash": payload_hash,
+                        "payload": payload,
+                        "payload_ref": payload_ref.model_dump(mode="json"),
+                        "staged_snapshot_id": staged.snapshot.id,
+                        "staged_snapshot_ref": staged.snapshot.ref,
+                        "staged_commit_sha": staged.snapshot.commit_sha,
+                        "staged_tree_sha": staged.snapshot.tree_sha,
+                        "boundary_hash": staged.boundary_hash,
+                        "boundary_entries": staged.entries,
+                        "cache_authority_hash": context.cache_authority_hash,
+                        "cache_roots": staged.cache_roots,
+                        "cache_status_evidence": staged.cache_status_evidence,
+                    },
+                    preserve_observed_graph_position=True,
+                )
+
+        result = await self._run_worktree_boundary(
+            publish_decision_artifacts_and_stage, lock_held=True, offload=False
+        )
+        reason = _callback_conflict_reason(result.events)
+        if reason is not None:
+            raise ValueError(f"submit callback rejected: {reason}")
+        await self._run_worktree_boundary(
+            publish_snapshot, context.worktree_path, staged.snapshot, lock_held=True
+        )
+        return SubmissionAcknowledgement(
+            disposition="durably_staged",
+            message="decision answer is durably staged pending trusted terminal closure",
+            execution_id=context.execution_id,
+            graph_position=result.projection_position,
+        )
 
     async def _submit_callback(
         self,
@@ -3318,12 +3825,19 @@ class GraphDispatchExecutor(SideEffectExecutor):
         self,
         context: GraphDispatchContext,
         *,
+        runner_return_kind: Literal[
+            "successful_return", "terminal_answer_completed"
+        ] = "successful_return",
         worktree_lock_held: bool = False,
     ) -> bool:
         """Capture and persist runner success before any callback is accepted."""
         if not worktree_lock_held:
             async with self._worktree_execution_lock:
-                return await self._witness_runner_completion(context, worktree_lock_held=True)
+                return await self._witness_runner_completion(
+                    context,
+                    runner_return_kind=runner_return_kind,
+                    worktree_lock_held=True,
+                )
         projection = await self._controller.read_projection(context.run_id)
         attempt = execution_attempts_view(projection).get(context.execution_id)
         if attempt is None or attempt.state != "submission_staged":
@@ -3365,7 +3879,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 "staged_commit_sha": attempt.staged_commit_sha,
                 "staged_tree_sha": attempt.staged_tree_sha,
                 "staged_boundary_hash": attempt.staged_boundary_hash,
-                "runner_return_kind": "successful_return",
+                "runner_return_kind": runner_return_kind,
                 "final_snapshot_id": capture.snapshot.id,
                 "final_snapshot_ref": capture.snapshot.ref,
                 "final_commit_sha": capture.snapshot.commit_sha,
@@ -3412,6 +3926,43 @@ class GraphDispatchExecutor(SideEffectExecutor):
         attempt = execution_attempts_view(projection).get(context.execution_id)
         if attempt is None or attempt.state != "completion_witnessed":
             raise ValueError("runner completion and final boundary are not durably witnessed")
+        applicability = resolve_decision_applicability(projection, context.node_id)
+        interaction_contract = "decision-v1" if applicability is not None else "legacy"
+        decoded_submission = decode_submission_payload(
+            callback_payload,
+            interaction_contract=interaction_contract,
+        )
+        decision_question_context: dict[str, Any] | None = None
+        if isinstance(decoded_submission, DecisionSubmissionEnvelope):
+            question_ref = decoded_submission.request.question_context_ref
+            content = await self._run_worktree_boundary(
+                self._artifact_store.read,
+                question_ref,
+                lock_held=True,
+                offload=False,
+            )
+            try:
+                raw_question = json.loads(content.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ArtifactIntegrityError(
+                    "protected decision question context is not canonical JSON"
+                ) from exc
+            if not isinstance(raw_question, dict):
+                raise ArtifactIntegrityError(
+                    "protected decision question context must contain an object"
+                )
+            decision_question_context = cast(dict[str, Any], raw_question)
+            context_hash, context_size = callback_payload_identity(decision_question_context)
+            if (
+                canonical_callback_payload_bytes(decision_question_context) != content
+                or context_hash != decoded_submission.request.question_context_sha256
+                or context_hash != question_ref.content_hash
+                or context_hash != question_ref.artifact_id
+                or context_size != question_ref.size_bytes
+            ):
+                raise ArtifactIntegrityError(
+                    "protected decision question context does not match durable identity"
+                )
         exact_identity = (
             attempt.final_snapshot_id,
             attempt.final_snapshot_ref,
@@ -3466,6 +4017,12 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     item.model_dump(mode="json") for item in attempt.final_cache_status_evidence
                 ],
                 "callback_payload": callback_payload,
+                "decision_base_graph_position": (
+                    attempt.observed_graph_position
+                    if isinstance(decoded_submission, DecisionSubmissionEnvelope)
+                    else None
+                ),
+                "decision_question_context": decision_question_context,
             },
         )
         reason = _callback_conflict_reason(result.events)
@@ -3518,6 +4075,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             "staged_artifact_missing",
             "staged_artifact_corrupt",
             "submission_repair_exhausted",
+            "invalid_planner_proposal",
             "submission_format_rejected",
             "candidate_check_failed",
             "validation_environment_blocked",
@@ -3602,6 +4160,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             "staged_artifact_missing",
             "staged_artifact_corrupt",
             "submission_repair_exhausted",
+            "invalid_planner_proposal",
             "submission_format_rejected",
             "candidate_check_failed",
             "validation_environment_blocked",
@@ -3806,27 +4365,25 @@ class GraphDispatchExecutor(SideEffectExecutor):
             None,
         )
         if rejection is not None:
-            reason = rejection.payload.get("reason") or "unknown rejection"
-            patch_id = rejection.payload.get("patch_id", payload.get("patch_id", "unknown"))
-            event_diagnostics = rejection.payload.get("diagnostics")
-            diagnostics_payload: dict[str, Any] | None = (
-                cast(dict[str, Any], event_diagnostics)
-                if isinstance(event_diagnostics, dict)
-                else full_validation_diagnostics
+            response = render_rejected_graph_patch_response(
+                result.events,
+                patch_payload,
+                full_validation_diagnostics,
             )
-            if diagnostics_payload is not None:
-                diagnostics = json.dumps(
-                    diagnostics_payload,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-                return (
-                    f"graph patch {patch_id} rejected: {reason}; "
-                    f"graph_patch_rejected; validation_diagnostics={diagnostics}"
-                )
-            return f"graph patch {patch_id} rejected: {reason}"
+            if response is not None:
+                return response
 
         return "graph patch command completed without accepted or rejected patch event"
+
+    async def _reliable_plan_rejection_limit_reached(self, context: GraphDispatchContext) -> bool:
+        limit = _reliable_plan_rejection_limit(context)
+        if limit is None:
+            return False
+        async with self._session_factory() as session:
+            count = await GraphEventStore(session).reliable_plan_rejection_count(
+                context.run_id, context.node_id
+            )
+        return count >= limit
 
     async def _agent_died(self, context: GraphDispatchContext, reason: str) -> None:
         payload: dict[str, object] = {
@@ -3868,6 +4425,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         *,
         proposed_by_node_id: str | None = None,
         actor_role: str | None = None,
+        preserve_observed_graph_position: bool = False,
     ) -> Any:
         """Issue a graph command, retrying stale-projection races and transient DB locks.
 
@@ -3926,7 +4484,10 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 if attempt >= MAX_STALE_COMMAND_RETRIES:
                     raise
                 current_position = await self._current_position(run_id)
-                if "observed_graph_position" in retry_payload:
+                if (
+                    "observed_graph_position" in retry_payload
+                    and not preserve_observed_graph_position
+                ):
                     retry_payload["observed_graph_position"] = current_position
         raise StaleProjectionError(f"stale graph projection for run {run_id}: retry loop exhausted")
 
@@ -4404,6 +4965,11 @@ def build_graph_runtime(
         journal_max_bytes=journal_max_bytes,
         runtime_boundary_capability=capability,
         artifact_store=artifact_store,
+        reliable_plan_rejection_recorder=ReliablePlanRejectionRecorder(
+            session_factory,
+            artifact_store,
+            resolve_orchestrator_source_root(),
+        ),
     )
     executor = GraphDispatchExecutor(
         session_factory,

@@ -521,6 +521,10 @@ def _dynamic_input_port(contract: NodeContract, port: str) -> PortContract | Non
         "final_gate",
     }:
         return _port(port, "verification_report", schemas=("VerificationReport",))
+    if port.startswith("dependency_verification_") and contract.node_type == "worker":
+        return _port(port, "verification_report", schemas=("VerificationReport",))
+    if port == "plan_verification_report" and contract.node_type == "planner":
+        return _port(port, "verification_report", schemas=("VerificationReport",))
     if port.startswith("source_record_") and contract.node_type == "join":
         return _port(
             port,
@@ -717,6 +721,12 @@ DEFAULT_NODE_CONTRACTS = _registry(
             ),
             outputs=(
                 _port(
+                    "decision",
+                    "decision_answer",
+                    schemas=("DecisionAnswer",),
+                    required=False,
+                ),
+                _port(
                     "graph_patch_proposal",
                     "graph_patch_proposal",
                     schemas=("GraphPatch",),
@@ -817,6 +827,18 @@ DEFAULT_NODE_CONTRACTS = _registry(
                 _port("graph_status_summary", "analysis_summary", schemas=("GraphStatusSummary",)),
             ),
             outputs=(
+                _port(
+                    "decision",
+                    "decision_answer",
+                    schemas=("DecisionAnswer",),
+                    required=False,
+                ),
+                _port(
+                    "semantic_artifact",
+                    "semantic_artifact",
+                    schemas=("SemanticArtifact",),
+                    required=False,
+                ),
                 _port(
                     "gap_plan",
                     "gap_plan",

@@ -13,6 +13,7 @@ from orchestrator.graph._commands import (
     RUN_LIFECYCLE_TRANSITIONS,
     TERMINAL_RUN_STATES,
     command_rejected,
+    reliable_plan_proposal_rejection_limit,
     authoritative_batch_verification_report_ids,
     event_factory,
     serialize_event_payload,
@@ -197,21 +198,47 @@ def apply_command(
                 "invalid command context: submit_patch requires PatchCommandContext",
             )
         ]
+    if command_type == "submit_patch" and isinstance(context, PatchCommandContext):
+        rejection_limit = reliable_plan_proposal_rejection_limit(projection, context)
+        if rejection_limit is not None and context.reliable_plan_rejection_count >= rejection_limit:
+            raw_patch_id = payload.get("patch_id")
+            raw_base_position = payload.get("base_graph_position")
+            rejection_payload: dict[str, Any] = {
+                "command_type": "submit_patch",
+                "reason": "proposal_rejection_limit_exhausted",
+                "actor_role": context.actor_role,
+                "proposed_by_node_id": context.proposed_by_node_id,
+                "budget": rejection_limit,
+                "count": context.reliable_plan_rejection_count,
+            }
+            if isinstance(raw_patch_id, str):
+                rejection_payload["patch_id"] = raw_patch_id
+            if isinstance(raw_base_position, int) and not isinstance(raw_base_position, bool):
+                rejection_payload["base_graph_position"] = raw_base_position
+            return [make_event("command_rejected", rejection_payload)]
     try:
         validated = spec.payload_model.model_validate(payload)
     except ValidationError as exc:
-        return [
-            command_rejected(
-                make_event,
-                command_type,
-                safe_exception_reason(
-                    exc,
-                    code="invalid_command_payload",
-                    message="invalid command payload",
-                ),
-                diagnostics=safe_validation_diagnostics(exc),
+        rejection_payload: dict[str, Any] = {
+            "command_type": command_type,
+            "reason": safe_exception_reason(
+                exc,
+                code="invalid_command_payload",
+                message="invalid command payload",
+            ),
+            "diagnostics": safe_validation_diagnostics(exc),
+        }
+        if command_type == "submit_patch" and isinstance(context, PatchCommandContext):
+            rejection_payload.update(
+                {
+                    "actor_role": context.actor_role,
+                    "proposed_by_node_id": context.proposed_by_node_id,
+                }
             )
-        ]
+            raw_patch_id = payload.get("patch_id")
+            if isinstance(raw_patch_id, str):
+                rejection_payload["patch_id"] = raw_patch_id
+        return [make_event("command_rejected", rejection_payload)]
     return spec.handler(
         projection,
         events,

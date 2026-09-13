@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-13T20:54:05Z",
+  "status": "validated_staged_merge_pending_commit",
+  "scope": "Merge-era provenance and validation for integrating Slice 3 with the main recovery implementation.",
+  "refs": {
+    "merge_base": "13b6ebd07678ed404ebf8024013af2374699700d",
+    "main_at_merge_start": "7ee461e929612e4ebd8a8d5eaded588db02efbfa",
+    "slice_tip": "06f136b73be84dffd7b416032e13d600299d2aa6",
+    "slice_branch": "codex/recovery-stabilization",
+    "integration_branch": "codex/slice3-main-integration"
+  },
+  "merge_status": {
+    "git_merge_in_progress": true,
+    "conflicts_resolved": true,
+    "unmerged_index_entries": 0,
+    "candidate_staged": true,
+    "merge_commit_created": false,
+    "note": "The candidate is the staged merge index on the main-at-merge-start commit; it does not yet have an immutable merge-commit identity."
+  },
+  "direct_execution_normalization": {
+    "path": "docs/intent/31-decision-runtime/reproduce-rejected-plan-gap.py",
+    "slice_tip_sha256": "54091e74f9dbbee9681131d0fb13211fd3bfcfc5981824de5808beaa1ca66464",
+    "merged_sha256": "c0ab8ef2c773d2148061bfa472c90fb29602a9041a80bc847024db88ac28bee5",
+    "reason": "Resolve the repository root from __file__, add it to sys.path before project imports, and defer those imports so direct execution works from the repository root without a caller-supplied PYTHONPATH.",
+    "behavioral_intent": "Portability only; the disposable production dispatch, repeated plan repair, independent verification, and successor assertions are unchanged."
+  },
+  "log_normalization": {
+    "reason": "Formatting-only cleanup for git diff --check; captured outcomes, counts, timings, and failure text are unchanged.",
+    "logs": {
+      "docs/reviews/recovery-successor-gate-attempt-1.log": {
+        "original_sha256": "f2df64d8a5d8ac86c297889a84fb9c623e7aa5b37597ff4c1794dabbb83fc65c",
+        "normalized_sha256": "c6a6a049f1df098a1741a4b3ca6c55605b17d52e499cc2c217cc8d9f4368ae6e",
+        "changes": "Removed trailing and final blank whitespace; replaced a conflict-marker-shaped pytest separator with an explicit pytest summary label.",
+        "provenance_owner": "docs/reviews/recovery-successor-validation-result.json"
+      },
+      "docs/reviews/recovery-successor-gate-attempt-2.log": {
+        "original_sha256": "61430a8d7d15d0c6f9a670c46b720606fc5b1ebf475d7d5c169ee1d7ed236c33",
+        "normalized_sha256": "e2b3f91e3b83c0a6e4865fabd8d8208c383a0b256643af9e70113995c6ad6a99",
+        "changes": "Removed the final blank line.",
+        "provenance_owner": "docs/reviews/recovery-successor-validation-result.json"
+      },
+      "docs/reviews/recovery-successor-gate-final.log": {
+        "original_sha256": "19b5995b32a8f6aca46e94573426ad2c1f60809cd6d02b52193a2175f8c367fe",
+        "normalized_sha256": "403d0fecec6c890159918278742a59910fb8b724e0edf8119722005ed75cdab3",
+        "changes": "Removed the final blank line.",
+        "provenance_owner": "docs/reviews/recovery-successor-validation-result.json"
+      },
+      "docs/intent/31-decision-runtime/slice-3-review-gate-attempt-2.log": {
+        "original_sha256": "127d484b8a4ae8c8afb900971fbb0177ca7eb80ce8a7a86f0c8d8eae35ecec3c",
+        "normalized_sha256": "540857f58dcea5155a736ec0a611524c237642609fed2025ef8232aa00574ced",
+        "changes": "Removed trailing whitespace from the preserved traceback excerpt, including its whitespace-only source line and pytest separator."
+      }
+    }
+  },
+  "historical_manifests": {
+    "policy": "These files describe earlier evidence epochs and intentionally remain byte-for-byte identical to the Slice tip; current merge hashes belong only in this merge-era record.",
+    "files": {
+      "docs/intent/31-decision-runtime/slice-3-review-final-hashes.json": "eb259e19cdaabcf2f5dc00eba8c8e7f12ef17925812a6c569ea890a7575deed1",
+      "docs/intent/31-decision-runtime/slice-3-review-starting-hashes.json": "6ba34c45b14879a8634a9b96a966664f13ceb9f171afca50e94389e27c744faf",
+      "docs/intent/31-decision-runtime/preparation-result.json": "2587284d72f2a188e533baf66c54686d8f8ca081e1d27ae7dfb133bf11bbb7c4"
+    },
+    "slice_tip_byte_comparison": "matched"
+  },
+  "validation": {
+    "full_suite_proof": {
+      "claim": "Split proof caused by the process-inspection sandbox; this is not one clean full-suite run.",
+      "sandboxed_run": {
+        "result": "6265 passed, 5 skipped, 1 sandbox-sensitive failure, 22 warnings in 467.67s",
+        "evidence": "docs/intent/31-decision-runtime/slice-3-review-gate-attempt-2.log"
+      },
+      "unsandboxed_last_failed_complement": {
+        "command": "UV_CACHE_DIR=/tmp/orchestrator-recovery-uv uv run --no-sync pytest --lf",
+        "result": "30 passed in 85.58s",
+        "scope": "Exact pytest last-failed complement rerun with the required process-inspection permission; no named-file selection is inferred."
+      }
+    },
+    "focused_regression": {
+      "command": "uv run pytest -n 0 tests/integration/test_rejected_plan_gap_script.py -q",
+      "result": "1 passed in 14.93s"
+    },
+    "product_real_reproducer": {
+      "command": "env -u PYTHONPATH UV_CACHE_DIR=/tmp/orchestrator-recovery-uv uv run --no-sync python docs/intent/31-decision-runtime/reproduce-rejected-plan-gap.py",
+      "exit_code": 0,
+      "result": "Passed: rejected plan → repeated repair → independent verification → successor"
+    },
+    "static_and_integrity": {
+      "ruff": "uv run ruff check docs/intent/31-decision-runtime/reproduce-rejected-plan-gap.py: passed",
+      "json_parse": "All 44 staged JSON artifacts parse successfully.",
+      "staged_diff_check": "git diff --cached --check: passed",
+      "unmerged_check": "git diff --cached --name-only --diff-filter=U and git ls-files -u: empty",
+      "worktree_check": "No unstaged tracked changes."
+    }
+  },
+  "hash_policy": {
+    "algorithm": "sha256",
+    "self_hash": "intentionally omitted to avoid a self-hash cycle",
+    "successor_validation_sha256": "81c2c3ec1738a414928d0610cb78eaa4a24487766193411b51ef4313230811ae"
+  }
+}

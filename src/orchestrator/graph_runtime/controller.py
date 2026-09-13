@@ -27,6 +27,7 @@ from orchestrator.graph import (
     serialize_event_payload,
     StoredArtifactRef,
     SubmitPatchCommand,
+    node_payload_view,
     planner_patch_decisions_by_id_view,
     semantic_schema_declarations_view,
     submit_patch_operation_fingerprint,
@@ -63,10 +64,23 @@ CommandCommitObserver = Callable[
     [Literal["before_commit", "after_commit"], str, str, tuple[EventEnvelope, ...]],
     Awaitable[None],
 ]
+ReliablePlanRejectionRecorder = Callable[
+    [str, int, dict[str, object], PatchCommandContext, list[EventEnvelope]],
+    Awaitable[dict[str, object]],
+]
 
 
 MAX_NODE_USAGE_WRITE_RETRIES = 5
 logger = logging.getLogger(__name__)
+
+
+def _is_reliable_plan_macro_request(payload: dict[str, object]) -> bool:
+    invocations = payload.get("macro_invocations")
+    return isinstance(invocations, list) and any(
+        isinstance(item, dict)
+        and cast(dict[str, object], item).get("macro") == "construct_reliable_plan_region"
+        for item in cast(list[object], invocations)
+    )
 
 
 class RuntimeBoundaryCapability:
@@ -101,6 +115,7 @@ class GraphController:
         runtime_boundary_capability: RuntimeBoundaryCapability | None = None,
         artifact_store: ArtifactStore | None = None,
         command_commit_observer: CommandCommitObserver | None = None,
+        reliable_plan_rejection_recorder: ReliablePlanRejectionRecorder | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._clock = clock
@@ -113,6 +128,7 @@ class GraphController:
         )
         self._artifact_store = artifact_store
         self._command_commit_observer = command_commit_observer
+        self._reliable_plan_rejection_recorder = reliable_plan_rejection_recorder
 
     async def handle_command(
         self,
@@ -211,6 +227,25 @@ class GraphController:
                 reconciled_patch_id=patch_id,
                 reconciled_successor_planner_node_ids=successor_node_ids,
             )
+        planner_payload = (
+            node_payload_view(projection, context.proposed_by_node_id)
+            if command_type == "submit_patch" and isinstance(context, PatchCommandContext)
+            else None
+        )
+        if (
+            command_type == "submit_patch"
+            and isinstance(context, PatchCommandContext)
+            and context.actor_role == "planner"
+            and planner_payload is not None
+            and planner_payload.get("kind") == "planner"
+            and planner_payload.get("role") != "gap_planner"
+            and isinstance(planner_payload.get("reliable_plan_skeleton_id"), str)
+        ):
+            async with self._session_factory() as count_session:
+                rejection_count = await GraphEventStore(
+                    count_session
+                ).reliable_plan_rejection_count(run_id, context.proposed_by_node_id)
+            context = context.model_copy(update={"reliable_plan_rejection_count": rejection_count})
         if current_position != expected_position:
             msg = (
                 f"stale graph projection for run {run_id}: "
@@ -254,6 +289,44 @@ class GraphController:
             command_type,
             run_id,
         )
+        if (
+            command_type == "submit_patch"
+            and isinstance(context, PatchCommandContext)
+            and context.actor_role == "planner"
+            and _is_reliable_plan_macro_request(command_payload)
+            and any(
+                event.event_type in {"graph_patch_rejected", "command_rejected"}
+                for event in planned_events
+            )
+            and self._reliable_plan_rejection_recorder is not None
+        ):
+            try:
+                rejection_evidence = await self._reliable_plan_rejection_recorder(
+                    run_id,
+                    expected_position,
+                    command_payload,
+                    context,
+                    planned_events,
+                )
+            except Exception:
+                logger.error("reliable-plan rejection evidence capture failed")
+                rejection_evidence = {
+                    "classification": "capture_failed",
+                    "replayable": False,
+                }
+            planned_events = [
+                event.model_copy(
+                    update={
+                        "payload": serialize_event_payload(
+                            event.event_type,
+                            {**event.payload, "rejection_evidence": rejection_evidence},
+                        )
+                    }
+                )
+                if event.event_type in {"graph_patch_rejected", "command_rejected"}
+                else event
+                for event in planned_events
+            ]
 
         # Phase 2: short write transaction. Re-check the position cheaply
         # (COUNT/MAX query, not a full read) before appending, so a writer
@@ -540,6 +613,16 @@ def _patch_base_graph_position(
     command_type: str,
     payload: dict[str, object],
 ) -> int | None:
+    if command_type == "finalize_runner_execution":
+        value = payload.get("decision_base_graph_position")
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        return None
+    if command_type == "stage_runner_submission":
+        value = payload.get("observed_graph_position")
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        return None
     if command_type != "submit_patch":
         return None
     value = payload.get("base_graph_position")

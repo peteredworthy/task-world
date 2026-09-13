@@ -932,6 +932,7 @@ def test_discovery_and_plan_verification_macros_preserve_read_only_typed_handoff
     worker = discovery.ops[0].node
     assert worker is not None
     assert worker["access_mode"] == "read_only"
+    assert worker["scope"] == "repository analysis"
     assert worker["authority"]["resource_claims"][0]["mode"] == "read"
 
     projection = build_projection(

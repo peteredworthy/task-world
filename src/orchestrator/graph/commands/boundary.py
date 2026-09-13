@@ -6,6 +6,7 @@ from typing import Any, cast
 
 from orchestrator.graph._commands import (
     apply_callback_command,
+    apply_patch_command,
     apply_record_managed_snapshot_cleanup_applied,
     failure_record_payload,
 )
@@ -19,11 +20,23 @@ from orchestrator.graph.command_models import (
     RequestRunnerRecoveryCommand,
     ResolveValidationEnvironmentBlockageCommand,
     StageRunnerSubmissionCommand,
+    SubmitPatchCommand,
     WitnessRunnerCompletionCommand,
+    PatchCommandContext,
+)
+from orchestrator.graph.decisions import (
+    DecisionSubmissionEnvelope,
+    compile_decision,
+    compile_implementation_plan,
+    decision_answer_schema,
+    decode_submission_payload,
+    resolve_decision_context,
+    resolve_decision_applicability,
 )
 from orchestrator.graph.models import EventEnvelope, FileStateRecord, LeaseRevokedPayload
 from orchestrator.graph.projection_collections import thaw_json
 from orchestrator.graph.projection_models import GraphProjection
+from orchestrator.graph.projections import reduce_event
 from orchestrator.graph.projection_queries import (
     execution_attempts_view,
     leases_view,
@@ -45,6 +58,54 @@ from orchestrator.graph.boundary_types import (
     validate_callback_json,
 )
 from orchestrator.graph.callbacks import callback_payload_identity
+
+
+def _decision_staleness_reason(
+    events: list[EventEnvelope],
+    *,
+    base_graph_position: int,
+    read_set: tuple[str, ...],
+) -> str | None:
+    """Reject only post-answer events that touch frozen decision authority."""
+    authority = set(read_set)
+    for event in events:
+        if event.position <= base_graph_position:
+            continue
+        payload = event.payload
+        if event.event_type == "run_lifecycle_changed":
+            if payload.get("to_state") in {"cancelling", "cancelled", "failed"}:
+                return f"decision run authority changed at {event.event_id}"
+            continue
+        if event.event_type == "node_state_changed":
+            if payload.get("node_id") in authority and payload.get("new_state") in {
+                "retired",
+                "cancelled",
+            }:
+                return f"decision node authority changed at {event.event_id}"
+            continue
+        if event.event_type not in {
+            "requirement_revision_recorded",
+            "node_authority_changed",
+            "plan_region_marked_suspect",
+        }:
+            continue
+        touched: set[str] = set()
+        for key in (
+            "node_id",
+            "record_id",
+            "requirement_id",
+            "version_id",
+            "requirement_version_id",
+        ):
+            value = payload.get(key)
+            if isinstance(value, str):
+                touched.add(value)
+        raw_region = payload.get("region_node_ids")
+        if isinstance(raw_region, list):
+            touched.update(item for item in cast(list[Any], raw_region) if isinstance(item, str))
+        if touched & authority:
+            return f"decision read authority changed at {event.event_id}"
+    return None
 
 
 def _conflict(make_event: Any, command: str, reason: str) -> list[EventEnvelope]:
@@ -229,25 +290,180 @@ def handle_stage_runner_submission(
             if same
             else _conflict(make_event, "stage_runner_submission", "execution submission conflicts")
         )
-    # Reuse the established callback validator/contract checks, but deliberately
-    # discard its effect events until the boundary is finalized.
-    validation = apply_callback_command(
-        projection,
-        events,
-        payload,
-        context.run_id,
-        make_event,
-        allow_recorded_runner_execution=True,
-    )
-    if not validation or validation[0].event_type != "callback_accepted":
-        return [make_event(item.event_type, item.payload) for item in validation]
-    if any(item.event_type == "file_state_rejected" for item in validation):
-        # A rejected boundary has no staged snapshot. Preserve the callback
-        # and rejection facts so runtime recovery is armed instead of
-        # publishing a synthetic staged submission that finalization cannot
-        # validate.
-        return [make_event(item.event_type, item.payload) for item in validation]
-    owns_file_state_snapshot = _accepted_file_state_owns_staged_snapshot(validation, payload)
+    decision_envelope = None
+    try:
+        applicability = resolve_decision_applicability(projection, payload.node_id)
+        interaction_contract = "decision-v1" if applicability is not None else "legacy"
+        decoded = decode_submission_payload(
+            cast(dict[str, Any], payload.payload),
+            interaction_contract=interaction_contract,
+        )
+    except (TypeError, ValueError) as exc:
+        return _conflict(
+            make_event,
+            "stage_runner_submission",
+            f"submission payload does not match frozen authority: {exc}",
+        )
+    if isinstance(decoded, DecisionSubmissionEnvelope):
+        decision_envelope = decoded
+        try:
+            if applicability is None or applicability.family not in {
+                "discovery_brief",
+                "implementation_plan",
+                "batch_decision",
+                "correction_decision",
+            }:
+                raise ValueError("decision family is not activated")
+            resolved = resolve_decision_context(projection, payload.node_id)
+            schema_id, schema_version, schema_sha256, _schema = decision_answer_schema(
+                cast(Any, applicability.family)
+            )
+            request = decision_envelope.request
+            if (
+                request.execution_id != payload.execution_id
+                or request.routine_snapshot_record_id != applicability.routine_snapshot_record_id
+                or request.answer_schema_id != schema_id
+                or request.answer_schema_version != schema_version
+                or request.answer_schema_sha256 != schema_sha256
+                or request.bound_inputs != resolved.bound_inputs
+                or set(decision_envelope.answer) != {applicability.output_port}
+            ):
+                authority = (
+                    "exact successor authority"
+                    if applicability.family == "batch_decision"
+                    else "exact initial-planning authority"
+                )
+                raise ValueError(f"decision request does not match {authority}")
+            thawed_answer = cast(dict[str, Any], thaw_json(decision_envelope.answer))
+            if applicability.family == "implementation_plan":
+                plan_compilation = compile_implementation_plan(
+                    projection,
+                    node_id=payload.node_id,
+                    execution_id=payload.execution_id,
+                    answer=cast(dict[str, Any], thawed_answer["semantic_artifact"]),
+                )
+                if stale := _decision_staleness_reason(
+                    events,
+                    base_graph_position=payload.observed_graph_position,
+                    read_set=plan_compilation.read_set,
+                ):
+                    raise ValueError(stale)
+                patch_plan = apply_patch_command(
+                    projection,
+                    events,
+                    SubmitPatchCommand(
+                        patch_id=plan_compilation.patch_id,
+                        base_graph_position=payload.observed_graph_position,
+                        ops=list(plan_compilation.ops),
+                    ),
+                    PatchCommandContext(
+                        run_id=context.run_id,
+                        current_graph_position=context.current_graph_position,
+                        proposed_by_node_id=payload.node_id,
+                        actor_role="controller",
+                    ),
+                    make_event,
+                )
+                if not patch_plan or patch_plan[0].event_type != "graph_patch_accepted":
+                    raise ValueError("implementation plan successor patch is not admissible")
+                prospective = projection
+                for offset, item in enumerate(patch_plan, start=1):
+                    prospective = reduce_event(
+                        prospective,
+                        item.model_copy(
+                            update={"position": context.current_graph_position + offset}
+                        ),
+                        enforce_relationships=True,
+                    )
+                validation_payload = payload.model_copy(
+                    update={
+                        "observed_graph_position": (
+                            context.current_graph_position + len(patch_plan)
+                        ),
+                        "payload": {
+                            "output_records": [
+                                plan_compilation.semantic_record.model_dump(
+                                    mode="json", by_alias=True
+                                )
+                            ]
+                        },
+                    }
+                )
+                validation = apply_callback_command(
+                    prospective,
+                    [],
+                    validation_payload,
+                    context.run_id,
+                    make_event,
+                    allow_recorded_runner_execution=True,
+                )
+                if not validation or validation[0].event_type != "callback_accepted":
+                    detail = (
+                        f"{validation[0].event_type}: {validation[0].payload}"
+                        if validation
+                        else "empty callback plan"
+                    )
+                    raise ValueError(f"implementation plan callback is not admissible: {detail}")
+                owns_file_state_snapshot = False
+            else:
+                compilation = compile_decision(
+                    projection,
+                    node_id=payload.node_id,
+                    decision_request_id=request.decision_request_id,
+                    base_graph_position=payload.observed_graph_position,
+                    answer=cast(dict[str, Any], thawed_answer["decision"]),
+                )
+                if stale := _decision_staleness_reason(
+                    events,
+                    base_graph_position=payload.observed_graph_position,
+                    read_set=compilation.read_set,
+                ):
+                    raise ValueError(stale)
+                patch_plan = apply_patch_command(
+                    projection,
+                    events,
+                    SubmitPatchCommand(
+                        patch_id=compilation.patch_id,
+                        base_graph_position=compilation.base_graph_position,
+                        ops=list(compilation.ops),
+                    ),
+                    PatchCommandContext(
+                        run_id=context.run_id,
+                        current_graph_position=context.current_graph_position,
+                        proposed_by_node_id=payload.node_id,
+                        actor_role="planner",
+                    ),
+                    make_event,
+                )
+                if not patch_plan or patch_plan[0].event_type != "graph_patch_accepted":
+                    raise ValueError("decision consequence patch is not admissible")
+                validation = []
+                owns_file_state_snapshot = False
+        except (TypeError, ValueError) as exc:
+            return _conflict(
+                make_event,
+                "stage_runner_submission",
+                f"decision submission invalid: {exc}",
+            )
+        validation = validation if applicability.family == "implementation_plan" else []
+    else:
+        # Reuse the established callback validator/contract checks, but deliberately
+        # discard its effect events until the boundary is finalized.
+        validation = apply_callback_command(
+            projection,
+            events,
+            payload,
+            context.run_id,
+            make_event,
+            allow_recorded_runner_execution=True,
+        )
+        if not validation or validation[0].event_type != "callback_accepted":
+            return [make_event(item.event_type, item.payload) for item in validation]
+        if any(item.event_type == "file_state_rejected" for item in validation):
+            # A rejected boundary has no accepted snapshot. Preserve the callback
+            # and rejection facts so runtime recovery is armed.
+            return [make_event(item.event_type, item.payload) for item in validation]
+        owns_file_state_snapshot = _accepted_file_state_owns_staged_snapshot(validation, payload)
     staged = {
         "execution_id": payload.execution_id,
         "node_id": payload.node_id,
@@ -356,6 +572,329 @@ def handle_finalize_runner_execution(
             "finalize_runner_execution",
             "resolved callback payload does not match staged identity",
         )
+    try:
+        applicability = resolve_decision_applicability(projection, attempt.node_id)
+        interaction_contract = "decision-v1" if applicability is not None else "legacy"
+        decoded = decode_submission_payload(
+            resolved_callback_payload,
+            interaction_contract=interaction_contract,
+        )
+    except (TypeError, ValueError) as exc:
+        return _conflict(
+            make_event,
+            "finalize_runner_execution",
+            f"submission payload does not match frozen authority: {exc}",
+        )
+    decision_envelope = None
+    if isinstance(decoded, DecisionSubmissionEnvelope):
+        try:
+            decision_envelope = decoded
+            if attempt.runner_return_kind != "terminal_answer_completed":
+                raise ValueError("decision finalization requires terminal_answer_completed")
+            if applicability is None or applicability.family not in {
+                "discovery_brief",
+                "implementation_plan",
+                "batch_decision",
+                "correction_decision",
+            }:
+                raise ValueError("decision family is not activated")
+            resolved = resolve_decision_context(projection, attempt.node_id)
+            schema_id, schema_version, schema_sha256, _schema = decision_answer_schema(
+                cast(Any, applicability.family)
+            )
+            request = decision_envelope.request
+            if (
+                request.execution_id != attempt.execution_id
+                or request.bound_inputs != resolved.bound_inputs
+                or request.routine_snapshot_record_id != resolved.routine_snapshot_record_id
+                or request.answer_schema_id != schema_id
+                or request.answer_schema_version != schema_version
+                or request.answer_schema_sha256 != schema_sha256
+            ):
+                raise ValueError("staged decision bindings are stale")
+            question_context = payload.decision_question_context
+            if question_context is None:
+                raise ValueError("protected decision question context was not resolved")
+            context_hash, context_size = callback_payload_identity(question_context)
+            if (
+                context_hash != request.question_context_sha256
+                or context_hash != request.question_context_ref.content_hash
+                or context_hash != request.question_context_ref.artifact_id
+                or context_size != request.question_context_ref.size_bytes
+                or question_context != resolved.protected_question_context()
+            ):
+                raise ValueError("protected decision question context is stale or corrupt")
+            thawed_answer = thaw_json(decision_envelope.answer)
+            if not isinstance(thawed_answer, dict) or set(thawed_answer) != {
+                applicability.output_port
+            }:
+                raise ValueError("staged decision answer is malformed")
+            if applicability.family == "implementation_plan":
+                plan_compilation = compile_implementation_plan(
+                    projection,
+                    node_id=attempt.node_id,
+                    execution_id=attempt.execution_id,
+                    answer=cast(dict[str, Any], thawed_answer["semantic_artifact"]),
+                )
+                if stale := _decision_staleness_reason(
+                    events,
+                    base_graph_position=cast(int, attempt.observed_graph_position),
+                    read_set=plan_compilation.read_set,
+                ):
+                    raise ValueError(stale)
+                patch_plan = apply_patch_command(
+                    projection,
+                    events,
+                    SubmitPatchCommand(
+                        patch_id=plan_compilation.patch_id,
+                        base_graph_position=cast(int, attempt.observed_graph_position),
+                        ops=list(plan_compilation.ops),
+                    ),
+                    PatchCommandContext(
+                        run_id=context.run_id,
+                        current_graph_position=context.current_graph_position,
+                        proposed_by_node_id=attempt.node_id,
+                        actor_role="controller",
+                    ),
+                    make_event,
+                )
+                if not patch_plan or patch_plan[0].event_type != "graph_patch_accepted":
+                    raise ValueError("implementation plan successor patch is no longer admissible")
+                prospective = projection
+                positioned_patch: list[EventEnvelope] = []
+                for offset, item in enumerate(patch_plan, start=1):
+                    positioned = item.model_copy(
+                        update={"position": context.current_graph_position + offset}
+                    )
+                    prospective = reduce_event(prospective, positioned, enforce_relationships=True)
+                    positioned_patch.append(positioned)
+                callback_plan = apply_callback_command(
+                    prospective,
+                    [],
+                    StageRunnerSubmissionCommand.model_validate(
+                        {
+                            "node_id": attempt.node_id,
+                            "execution_id": attempt.execution_id,
+                            "lease_id": attempt.lease_id,
+                            "lease_generation": attempt.lease_generation,
+                            "base_snapshot_id": (
+                                attempt.callback_base_snapshot_id or attempt.baseline_snapshot_id
+                            ),
+                            "observed_graph_position": (
+                                context.current_graph_position + len(positioned_patch)
+                            ),
+                            "idempotency_key": attempt.idempotency_key,
+                            "payload": {
+                                "output_records": [
+                                    plan_compilation.semantic_record.model_dump(
+                                        mode="json", by_alias=True
+                                    )
+                                ]
+                            },
+                            "is_mutating": False,
+                            "complete_node": True,
+                            "new_state": "completed",
+                            "staged_snapshot_id": attempt.staged_snapshot_id,
+                            "staged_snapshot_ref": attempt.staged_snapshot_ref,
+                            "staged_commit_sha": attempt.staged_commit_sha,
+                            "staged_tree_sha": attempt.staged_tree_sha,
+                            "boundary_hash": attempt.staged_boundary_hash,
+                            "boundary_entries": [
+                                entry.model_dump(mode="json")
+                                for entry in attempt.staged_boundary_entries
+                            ],
+                            "cache_authority_hash": attempt.cache_authority_hash,
+                            "cache_roots": [
+                                RunnerCacheRoot.model_validate(root).model_dump(mode="json")
+                                for root in attempt.staged_cache_roots
+                                if not isinstance(root, str)
+                            ],
+                            "cache_status_evidence": [
+                                item.model_dump(mode="json")
+                                for item in attempt.staged_cache_status_evidence
+                            ],
+                        }
+                    ),
+                    context.run_id,
+                    make_event,
+                    allow_recorded_runner_execution=True,
+                )
+                if not callback_plan or callback_plan[0].event_type != "callback_accepted":
+                    return [make_event(item.event_type, item.payload) for item in callback_plan]
+                final_payload = payload.model_dump(
+                    mode="json",
+                    exclude={
+                        "callback_payload",
+                        "cache_roots",
+                        "decision_base_graph_position",
+                        "decision_question_context",
+                    },
+                )
+                final_payload["disposition"] = "finalized_accepted"
+                return [
+                    make_event("runner_execution_finalized", final_payload),
+                    *(make_event(item.event_type, item.payload) for item in patch_plan),
+                    *(make_event(item.event_type, item.payload) for item in callback_plan),
+                    *_snapshot_cleanup_events(
+                        make_event,
+                        attempt,
+                        final_snapshot=(
+                            payload.final_snapshot_id,
+                            payload.final_snapshot_ref,
+                            payload.final_tree_sha,
+                            payload.final_commit_sha,
+                        ),
+                        retain_staged_snapshot=False,
+                    ),
+                ]
+            compilation = compile_decision(
+                projection,
+                node_id=attempt.node_id,
+                decision_request_id=request.decision_request_id,
+                base_graph_position=cast(int, attempt.observed_graph_position),
+                answer=cast(dict[str, Any], thawed_answer["decision"]),
+            )
+            if stale := _decision_staleness_reason(
+                events,
+                base_graph_position=cast(int, attempt.observed_graph_position),
+                read_set=compilation.read_set,
+            ):
+                raise ValueError(stale)
+            patch_plan = apply_patch_command(
+                projection,
+                events,
+                SubmitPatchCommand(
+                    patch_id=compilation.patch_id,
+                    base_graph_position=compilation.base_graph_position,
+                    ops=list(compilation.ops),
+                ),
+                PatchCommandContext(
+                    run_id=context.run_id,
+                    current_graph_position=context.current_graph_position,
+                    proposed_by_node_id=attempt.node_id,
+                    actor_role="planner",
+                ),
+                make_event,
+            )
+            if not patch_plan or patch_plan[0].event_type != "graph_patch_accepted":
+                raise ValueError("decision consequence patch is no longer admissible")
+            prospective = projection
+            positioned_patch: list[EventEnvelope] = []
+            for offset, item in enumerate(patch_plan, start=1):
+                positioned = item.model_copy(
+                    update={"position": context.current_graph_position + offset}
+                )
+                prospective = reduce_event(prospective, positioned, enforce_relationships=True)
+                positioned_patch.append(positioned)
+            if (
+                applicability.family == "batch_decision"
+                and compilation.disposition == "proceed"
+                and not non_gap_planner_completion_contract_satisfied(prospective, attempt.node_id)
+            ):
+                raise ValueError(
+                    "decision consequence does not satisfy prospective planner completion"
+                )
+            callback = {
+                "node_id": attempt.node_id,
+                "execution_id": attempt.execution_id,
+                "lease_id": attempt.lease_id,
+                "lease_generation": attempt.lease_generation,
+                "base_snapshot_id": (
+                    attempt.callback_base_snapshot_id or attempt.baseline_snapshot_id
+                ),
+                "observed_graph_position": (context.current_graph_position + len(positioned_patch)),
+                "idempotency_key": attempt.idempotency_key,
+                "payload": {
+                    "output_records": [
+                        record.model_dump(mode="json", by_alias=True)
+                        for record in compilation.output_records
+                    ]
+                },
+                "is_mutating": True,
+                "complete_node": True,
+                "new_state": compilation.completion_state,
+            }
+            callback_plan = apply_callback_command(
+                prospective,
+                [],
+                StageRunnerSubmissionCommand.model_validate(
+                    {
+                        **callback,
+                        "staged_snapshot_id": attempt.staged_snapshot_id,
+                        "staged_snapshot_ref": attempt.staged_snapshot_ref,
+                        "staged_commit_sha": attempt.staged_commit_sha,
+                        "staged_tree_sha": attempt.staged_tree_sha,
+                        "boundary_hash": attempt.staged_boundary_hash,
+                        "boundary_entries": [
+                            entry.model_dump(mode="json")
+                            for entry in attempt.staged_boundary_entries
+                        ],
+                        "cache_authority_hash": attempt.cache_authority_hash,
+                        "cache_roots": [
+                            RunnerCacheRoot.model_validate(root).model_dump(mode="json")
+                            for root in attempt.staged_cache_roots
+                            if not isinstance(root, str)
+                        ],
+                        "cache_status_evidence": [
+                            item.model_dump(mode="json")
+                            for item in attempt.staged_cache_status_evidence
+                        ],
+                    }
+                ),
+                context.run_id,
+                make_event,
+                allow_recorded_runner_execution=True,
+            )
+            if not callback_plan or callback_plan[0].event_type != "callback_accepted":
+                return [make_event(item.event_type, item.payload) for item in callback_plan]
+            if compilation.failure_reason is not None:
+                callback_plan = [
+                    item.model_copy(
+                        update={
+                            "payload": {
+                                **item.payload,
+                                "reason": compilation.failure_reason,
+                            }
+                        }
+                    )
+                    if item.event_type == "node_state_changed"
+                    and item.payload.get("node_id") == attempt.node_id
+                    and item.payload.get("new_state") == "failed"
+                    else item
+                    for item in callback_plan
+                ]
+            final_payload = payload.model_dump(
+                mode="json",
+                exclude={
+                    "callback_payload",
+                    "cache_roots",
+                    "decision_base_graph_position",
+                    "decision_question_context",
+                },
+            )
+            final_payload["disposition"] = "finalized_accepted"
+            return [
+                make_event("runner_execution_finalized", final_payload),
+                *(make_event(item.event_type, item.payload) for item in patch_plan),
+                *(make_event(item.event_type, item.payload) for item in callback_plan),
+                *_snapshot_cleanup_events(
+                    make_event,
+                    attempt,
+                    final_snapshot=(
+                        payload.final_snapshot_id,
+                        payload.final_snapshot_ref,
+                        payload.final_tree_sha,
+                        payload.final_commit_sha,
+                    ),
+                    retain_staged_snapshot=False,
+                ),
+            ]
+        except (TypeError, ValueError) as exc:
+            return _conflict(
+                make_event,
+                "finalize_runner_execution",
+                f"decision finalization rejected: {exc}",
+            )
     callback = {
         "node_id": attempt.node_id,
         "execution_id": attempt.execution_id,
@@ -404,7 +943,15 @@ def handle_finalize_runner_execution(
     if not callback_plan or callback_plan[0].event_type != "callback_accepted":
         return [make_event(item.event_type, item.payload) for item in callback_plan]
     # Finalization precedes every externally visible callback effect atomically.
-    final_payload = payload.model_dump(mode="json", exclude={"callback_payload", "cache_roots"})
+    final_payload = payload.model_dump(
+        mode="json",
+        exclude={
+            "callback_payload",
+            "cache_roots",
+            "decision_base_graph_position",
+            "decision_question_context",
+        },
+    )
     final_payload["disposition"] = "finalized_accepted"
     staged_snapshot_transferred = _accepted_file_state_owns_staged_snapshot(callback_plan, attempt)
     return [
@@ -486,7 +1033,15 @@ def handle_witness_runner_completion(
             "witness_runner_completion",
             "staged payload or snapshot identity does not match",
         )
-    witness_payload = payload.model_dump(mode="json", exclude={"callback_payload", "cache_roots"})
+    witness_payload = payload.model_dump(
+        mode="json",
+        exclude={
+            "callback_payload",
+            "cache_roots",
+            "decision_base_graph_position",
+            "decision_question_context",
+        },
+    )
     witness_payload["disposition"] = "completion_witnessed"
     witnessed = make_event("runner_completion_witnessed", witness_payload)
     if attempt.staged_boundary_hash == payload.boundary_hash:
@@ -803,6 +1358,7 @@ def handle_complete_runner_recovery(
         "staged_artifact_corrupt",
         "submission_format_rejected",
         "candidate_check_failed",
+        "invalid_planner_proposal",
     } or (attempt.recovery_reason == "cancelled" and attempt.retry_after_recovery)
     if attempt.recovery_reason == "validation_environment_blocked":
         reason = attempt.recovery_error_detail or "submission validation environment blocked"
@@ -837,8 +1393,20 @@ def handle_complete_runner_recovery(
                 ),
             ]
         )
-    elif attempt.recovery_reason == "submission_repair_exhausted":
+    elif (
+        attempt.recovery_reason
+        in {
+            "submission_repair_exhausted",
+            "invalid_planner_proposal",
+        }
+        and not attempt.retry_after_recovery
+    ):
         reason = attempt.recovery_error_detail or "submission repair exhausted"
+        error_class = (
+            "invalid_planner_proposal"
+            if attempt.recovery_reason == "invalid_planner_proposal"
+            else "submission_repair_exhausted"
+        )
         lifecycle_events.extend(
             [
                 make_event(
@@ -847,7 +1415,7 @@ def handle_complete_runner_recovery(
                         node_id=attempt.node_id,
                         phase="submission",
                         failure_class="invalid_plan_failure",
-                        error_class="submission_repair_exhausted",
+                        error_class=error_class,
                         retryable=False,
                         lease_id=attempt.lease_id,
                         execution_id=attempt.execution_id,
@@ -860,7 +1428,7 @@ def handle_complete_runner_recovery(
                     {
                         "node_id": attempt.node_id,
                         "new_state": "failed",
-                        "trigger": "submission_repair_exhausted",
+                        "trigger": error_class,
                         "reason": reason,
                     },
                 ),
@@ -873,8 +1441,15 @@ def handle_complete_runner_recovery(
         max_attempts = attempt.recovery_max_attempts or node_max_attempts_view(projection).get(
             attempt.node_id, 0
         )
+        try:
+            legacy_completion_shortcut = (
+                resolve_decision_applicability(projection, attempt.node_id) is None
+            )
+        except ValueError:
+            legacy_completion_shortcut = False
         if (
             attempt.recovery_reason == "runner_died"
+            and legacy_completion_shortcut
             and non_gap_planner_completion_contract_satisfied(projection, attempt.node_id)
         ):
             lifecycle_events.append(
@@ -891,13 +1466,38 @@ def handle_complete_runner_recovery(
             failure_reason = (
                 attempt.recovery_error_detail or attempt.recovery_reason or "max_attempts_exhausted"
             )
+            if attempt.recovery_reason == "invalid_planner_proposal":
+                lifecycle_events.append(
+                    make_event(
+                        "output_record_accepted",
+                        failure_record_payload(
+                            node_id=attempt.node_id,
+                            phase="planning",
+                            failure_class="invalid_plan_failure",
+                            error_class="invalid_planner_proposal",
+                            retryable=False,
+                            lease_id=attempt.lease_id,
+                            execution_id=attempt.execution_id,
+                            generation=attempt.lease_generation,
+                            reason=failure_reason,
+                            metadata={
+                                "attempt_number": attempt_number,
+                                "max_attempts": max_attempts,
+                            },
+                        ),
+                    )
+                )
             lifecycle_events.append(
                 make_event(
                     "node_state_changed",
                     {
                         "node_id": attempt.node_id,
                         "new_state": "failed",
-                        "trigger": "max_attempts_exhausted",
+                        "trigger": (
+                            "invalid_planner_execution_limit_exhausted"
+                            if attempt.recovery_reason == "invalid_planner_proposal"
+                            else "max_attempts_exhausted"
+                        ),
                         "reason": failure_reason,
                         "attempt_number": attempt_number,
                         "max_attempts": max_attempts,

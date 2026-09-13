@@ -1,0 +1,15 @@
+{
+  "record_kind": "operator-curated bounded qualification summary",
+  "http_status": 201,
+  "server_child_pid": 81602,
+  "reference": "rpq_CD9aJ8zeC87A-HAJ1seecGfzZjK4xMbMybzd6ngwtWM",
+  "runner_id": "sqlite-controller-product-path-v1",
+  "runner_version": 1,
+  "incident_id": "fff4f6b7-bf33-475f-8280-31ff5e1ef7ca",
+  "skeleton_id": "reliable-plan-fff4f6b7-v1",
+  "scenario_count": 10,
+  "passed_scenario_count": 10,
+  "receipt_record_id": "reliable-plan-qualification-receipt",
+  "manifest_hash": "sha256:0c784464f412d4bf58aaddced9d1fee6906577d8eed475f2e57f2e85a413f5f6",
+  "evidence_hash": "sha256:f77d3a0ba632273d0b24b6d861847dda8325b493e695a86471a57525254ec76a"
+}

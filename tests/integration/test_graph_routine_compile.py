@@ -542,6 +542,28 @@ async def test_seed_dynamic_graph_feature_persists_run_inputs(tmp_path: Path) ->
         "hidden_oracle_command": "uv run python -c 'print(\"validation-strengthened\")'",
         "patch_budget": 4,
         "gap_policy_profile": "standard",
+        "max_rejected_plan_proposals_per_planner": 2,
+        "max_planner_executions_per_node": 1,
+        "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
+        "reliable_plan_selected_runner_type": "codex_server",
+        "reliable_plan_model_assignments": {
+            "arm_id": "bounded-runtime",
+            **{
+                role: {
+                    "runner_type": "codex_server",
+                    "model": "selected-model",
+                    "profile": profile,
+                }
+                for role, profile in {
+                    "planner": "architect",
+                    "discovery_worker": "summarizer",
+                    "implementation_worker": "coder",
+                    "correction_worker": "coder",
+                    "verifier": "coder",
+                    "successor_planner": "architect",
+                }.items()
+            },
+        },
     }
 
     try:
@@ -558,12 +580,16 @@ async def test_seed_dynamic_graph_feature_persists_run_inputs(tmp_path: Path) ->
             stored_events = await GraphEventStore(session).read_run("seed-dynamic-feature")
 
         planner = _node_event(stored_events, "planner-s-01").payload
-        assert planner["dynamic_feature"] == run_config
+        expected_dynamic_feature = {
+            key: value for key, value in run_config.items() if not key.startswith("reliable_plan_")
+        }
+        assert planner["dynamic_feature"] == expected_dynamic_feature
+        assert planner["max_attempts"] == 1
         assert "docs/graph-approach/dynamic-smoke-feature-spec.md" in planner["task_context"]
         assert "validation-strengthened" not in planner["task_context"]
         assert "hidden_oracle_binding: dynamic_feature_hidden_oracle" in planner["task_context"]
         snapshot = _node_event(stored_events, "routine-snapshot").payload["snapshot"]
-        assert snapshot["dynamic_feature"] == run_config
+        assert snapshot["dynamic_feature"] == expected_dynamic_feature
         seeded_authority = cache_authority_binding(_project(stored_events))
         assert seeded_authority.policy.scan_budget.max_entries == 50_000
         assert seeded_authority.policy.scan_budget.max_bytes == 1_073_741_824

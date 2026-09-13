@@ -17,6 +17,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
@@ -196,6 +197,10 @@ class HealthcheckResult(BaseModel):
 
 class ProcessGroupInspectionError(RuntimeError):
     """Raised when the OS will not expose members of a process group."""
+
+
+class ProcessIdentityUnavailableError(ProcessGroupInspectionError):
+    """Identity could not be read; this is neither exit nor mismatch evidence."""
 
 
 def utc_now() -> datetime:
@@ -702,7 +707,10 @@ def reclaim_stale_child(state: SupervisorState, *, grace_seconds: float) -> Stal
 
 
 def reclaim_stale_collector(
-    state: SupervisorState, *, grace_seconds: float
+    state: SupervisorState,
+    *,
+    grace_seconds: float,
+    inspect_identity: Callable[[int], ProcessIdentityInspection] = inspect_process_identity,
 ) -> StaleChildReclaimResult:
     """Terminate an orphaned collector PID without signaling its shared process group."""
     if state.collector_pid is None:
@@ -716,7 +724,7 @@ def reclaim_stale_collector(
     # the PID is already absent, there is nothing to signal and therefore no
     # identity ambiguity to fail closed on. Live or uninspectable processes
     # still require the complete identity before any signal is permitted.
-    initial_inspection = inspect_process_identity(state.collector_pid)
+    initial_inspection = inspect_identity(state.collector_pid)
     if initial_inspection.outcome == "not_running":
         return StaleChildReclaimResult(
             outcome="not_running",
@@ -753,11 +761,11 @@ def reclaim_stale_collector(
     )
 
     def inspect_expected(*, before_signal: str) -> tuple[ProcessIdentity | None, str]:
-        inspection = inspect_process_identity(expected.pid)
+        inspection = inspect_identity(expected.pid)
         if inspection.outcome == "not_running":
             return None, inspection.detail
         if inspection.outcome != "available" or inspection.identity is None:
-            raise ProcessGroupInspectionError(
+            raise ProcessIdentityUnavailableError(
                 f"collector identity inspection unavailable {before_signal}; {inspection.detail}"
             )
         matches, match_detail = process_identity_matches(expected, inspection.identity)
@@ -798,6 +806,12 @@ def reclaim_stale_collector(
             observed_identity, observed_detail = inspect_expected(
                 before_signal="while awaiting SIGTERM"
             )
+        except ProcessIdentityUnavailableError:
+            # Kernel identity reads can be unavailable during process exit.
+            # Keep observing within the existing deadline without signaling or
+            # claiming exit. Escalation still requires a fresh full identity.
+            time.sleep(0.05)
+            continue
         except ProcessGroupInspectionError as exc:
             return StaleChildReclaimResult(
                 outcome="refused",
@@ -851,6 +865,9 @@ def reclaim_stale_collector(
             observed_identity, observed_detail = inspect_expected(
                 before_signal="while awaiting SIGKILL"
             )
+        except ProcessIdentityUnavailableError:
+            time.sleep(0.05)
+            continue
         except ProcessGroupInspectionError as exc:
             return StaleChildReclaimResult(
                 outcome="refused",
@@ -873,7 +890,7 @@ def reclaim_stale_collector(
         child_pid=state.collector_pid,
         process_group_id=state.collector_process_group_id,
         signal_number=signal.SIGKILL,
-        detail="verified stale collector remained live after SIGKILL",
+        detail="verified stale collector exit could not be verified after SIGKILL",
     )
 
 

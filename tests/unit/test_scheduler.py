@@ -87,6 +87,23 @@ def test_evaluate_readiness_basic() -> None:
     assert reason == ""
 
 
+def test_scheduler_never_dispatches_controller_owned_decision_gate_kinds() -> None:
+    decision = schedule(
+        [
+            _node("ordinary-worker"),
+            _node("automatic-gate", kind="gate"),
+            _node("human-action", kind="human_gate"),
+            _node("authority-action", kind="authority_request"),
+        ],
+        "active",
+        [],
+        projection_position=7,
+    )
+
+    assert decision.candidates == ["ordinary-worker"]
+    assert decision.selected == ["ordinary-worker"]
+
+
 def test_evaluate_readiness_run_not_active() -> None:
     ready, reason = evaluate_readiness(_node("n1", state="planned"), "paused", [], [])
 

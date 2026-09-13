@@ -155,6 +155,37 @@ def _record_cases() -> dict[str, dict[str, Any]]:
                 "decider": {"kind": "human", "id": "alice"},
             },
         },
+        "decision_answer": {
+            "record_id": "decision-answer-1",
+            "record_kind": "graph_record",
+            "record_type": "decision_answer",
+            "producer_node_id": "planner-1",
+            "producer_port": "decision",
+            "port": "decision",
+            "schema": "DecisionAnswer",
+            "schema_version": 1,
+            "value": {
+                "interaction_contract": "decision-v1",
+                "family": "discovery_brief",
+                "decision_request_id": "decision-request-1",
+                "answer_schema_id": "orchestrator.reliable-plan.discovery-brief",
+                "answer_schema_version": 1,
+                "answer_schema_sha256": (
+                    "sha256:17548efb240a39a9c7bec1a0b05d5a8804503cccf832bc6daf0f09da59ca73d6"
+                ),
+                "compiler_contract_version": 1,
+                "answer_sha256": (
+                    "sha256:6323df8978b0f856b8d937f412977fb2db8e90d47c3851e634576108e50c583a"
+                ),
+                "answer": {
+                    "questions": ["Which repository paths define the feature boundary?"],
+                    "rationale": "The implementation plan needs an explicit repository boundary.",
+                    "focus": ["repository analysis"],
+                },
+                "consequence_patch_id": "discovery-patch-1",
+                "bound_input_record_ids": ["routine-1", "requirement-1"],
+            },
+        },
         "decision_request": {
             "record_id": "request-1",
             "record_kind": "graph_record",

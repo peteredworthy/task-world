@@ -40,6 +40,7 @@ from orchestrator.graph_runtime.dispatch import (
     reconcile_runtime,
 )
 from orchestrator.graph_runtime.graph_mcp_tools import build_graph_mcp_server
+from orchestrator.graph_runtime.graph_mcp_registry import GraphMcpExecutionRegistry
 from orchestrator.graph_runtime.errors import (
     CacheScanBudgetExceededError,
     CompromisedFileStateError,
@@ -104,6 +105,21 @@ from orchestrator.graph_runtime.reliable_plan_qualification import (
     require_reliable_plan_qualification_for_run,
     sealed_reliable_plan_run_authorization,
     verified_reliable_plan_seed_config,
+)
+from orchestrator.graph_runtime.rejection_evidence import (
+    MAX_REJECTION_EVIDENCE_BYTES,
+    MAX_REJECTION_PREFIX_EVENTS,
+    REJECTION_EVIDENCE_MEDIA_TYPE,
+    RejectionEvidenceArtifact,
+    RejectionEvidencePublicRef,
+    RejectionReplayResult,
+    ReliablePlanRejectionRecorder,
+    SourceIdentity,
+    capture_reliable_plan_rejection_evidence,
+    capture_source_identity,
+    render_rejected_graph_patch_response,
+    resolve_orchestrator_source_root,
+    replay_reliable_plan_rejection,
 )
 from orchestrator.graph_runtime.seeding import SeedRunResult, seed_run
 from orchestrator.graph_runtime.submission_gate import (
@@ -173,6 +189,7 @@ __all__ = [
     "GraphController",
     "GraphDispatchContext",
     "GraphDispatchExecutor",
+    "GraphMcpExecutionRegistry",
     "GraphProcessRegistry",
     "GraphRunnerBuilder",
     "GraphToolCatalogProvider",
@@ -210,6 +227,14 @@ __all__ = [
     "ReliablePlanProductPathRunner",
     "ReliablePlanQualificationRun",
     "ReliablePlanScenarioAssertionError",
+    "MAX_REJECTION_EVIDENCE_BYTES",
+    "MAX_REJECTION_PREFIX_EVENTS",
+    "REJECTION_EVIDENCE_MEDIA_TYPE",
+    "RejectionEvidenceArtifact",
+    "RejectionEvidencePublicRef",
+    "RejectionReplayResult",
+    "ReliablePlanRejectionRecorder",
+    "SourceIdentity",
     "RunnerOwnedProcessRegistry",
     "SelectedRunnerGraphToolCatalog",
     "ResidueClassifier",
@@ -263,6 +288,11 @@ __all__ = [
     "reconcile_graph",
     "reconcile_runtime",
     "run_reliable_plan_product_path_scenarios",
+    "capture_reliable_plan_rejection_evidence",
+    "capture_source_identity",
+    "render_rejected_graph_patch_response",
+    "resolve_orchestrator_source_root",
+    "replay_reliable_plan_rejection",
     "consume_reliable_plan_qualification",
     "has_caller_supplied_reliable_plan_authorization",
     "issue_reliable_plan_qualification",

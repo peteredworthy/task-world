@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from orchestrator.graph.models import EventEnvelope
 
@@ -11,16 +11,83 @@ KNOWN_CHECK_COMMAND_BINDINGS = frozenset(
     {"dynamic_feature_acceptance", "dynamic_feature_hidden_oracle"}
 )
 CheckInvocation = tuple[str | list[str], str, bool]
+CheckCommandBindingCode = Literal[
+    "unavailable_command_binding",
+    "invalid_command_definition",
+]
+
+
+def check_command_definition_tool_schema() -> dict[str, Any]:
+    """Describe the executable command shapes accepted by check dispatch."""
+    argv_schema = {
+        "type": "array",
+        "prefixItems": [
+            {
+                "type": "string",
+                "pattern": r"\S",
+                "description": "Executable name; must contain non-whitespace text.",
+            }
+        ],
+        "items": {"type": "string"},
+        "minItems": 1,
+    }
+    shell_command_schema = {"type": "string", "pattern": r"\S"}
+    return {
+        "type": "object",
+        "description": (
+            "One executable command using non-empty argv, cmd, or command. Optional id and "
+            "positive timeout_seconds metadata are supported."
+        ),
+        "properties": {
+            "argv": {
+                "description": (
+                    "Argument-vector command. Used only when it is a non-empty string array "
+                    "whose executable contains non-whitespace text."
+                ),
+            },
+            "cmd": {
+                "description": "Shell command fallback; must contain non-whitespace text.",
+            },
+            "command": {
+                "description": "Legacy shell command fallback; must contain non-whitespace text.",
+            },
+            "id": {"type": "string", "minLength": 1},
+            "timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
+        },
+        "anyOf": [
+            {"properties": {"argv": argv_schema}, "required": ["argv"]},
+            {"properties": {"cmd": shell_command_schema}, "required": ["cmd"]},
+            {
+                "properties": {"command": shell_command_schema},
+                "required": ["command"],
+            },
+        ],
+        # Existing command records may carry controller-owned metadata beyond
+        # the executable fields. Dispatch ignores unknown keys, so the public
+        # schema advertises the supported core without rejecting extensions.
+        "additionalProperties": True,
+    }
 
 
 class CheckCommandBindingError(ValueError):
     """Raised when a known check binding has no executable command available."""
 
-    code = "unavailable_command_binding"
-
-    def __init__(self, *, node_id: Any, binding: str, detail: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        node_id: Any,
+        binding: str,
+        detail: str | None = None,
+        code: CheckCommandBindingCode = "unavailable_command_binding",
+    ) -> None:
         self.node_id = node_id if isinstance(node_id, str) and node_id else None
         self.binding = binding
+        self.code: CheckCommandBindingCode = code
+        self.safe_message = (
+            "Command definitions require a non-empty argv, cmd, or command value."
+            if code == "invalid_command_definition"
+            else "The check command binding is unavailable; provide a concrete command_definition."
+        )
         node_detail = f" for node {self.node_id}" if self.node_id is not None else ""
         if detail is not None:
             reason = detail
@@ -134,6 +201,7 @@ def validate_check_command_binding(
             node_id=node_payload.get("node_id"),
             binding="command_definition",
             detail="requires non-empty argv or cmd; provide an executable command definition",
+            code="invalid_command_definition",
         )
 
     command_binding = node_payload.get("command_binding")

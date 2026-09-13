@@ -108,7 +108,13 @@ def _base_events(*, successor: bool, remaining: int = 2) -> list[Any]:
         "reliable_plan_remaining_horizons": remaining,
     }
     if successor:
-        planner.update({"semantic_stage": "successor_planning", "planning_horizon": 1})
+        planner.update(
+            {
+                "semantic_stage": "successor_planning",
+                "planning_horizon": 1,
+                "task_region_id": "successor-region",
+            }
+        )
     return [
         event("node_created", planner, position=0),
         event(
@@ -368,6 +374,12 @@ def test_constructor_builds_final_acceptance_audit_and_completion_dependencies()
     audit = next(node for node in nodes if node.get("semantic_stage") == "final_audit")
     gate = next(node for node in nodes if node.get("kind") == "final_gate")
 
+    assert {
+        node["task_region_id"]
+        for node in nodes
+        if node.get("semantic_stage") in {"effectful_batch", "final_acceptance", "final_audit"}
+    } == {"successor-region"}
+    assert gate["task_region_id"] == "successor-region"
     assert acceptance["command_binding"] == "dynamic_feature_acceptance"
     assert gate["declared_batch_ids"] == ["batch-1", "batch-2"]
     gate_sources = {

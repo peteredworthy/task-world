@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 from orchestrator.artifacts import ArtifactStore, StoredArtifactRef
 from orchestrator.graph import (
     accepted_declared_batch_ids,
+    decision_answer_schema,
     planner_generation_budget,
     planner_generations_view,
     edges_view,
@@ -34,6 +35,8 @@ from orchestrator.graph import (
     DEFAULT_NODE_CONTRACTS,
     EventEnvelope,
     GraphProjection,
+    resolve_decision_context,
+    resolve_decision_applicability,
 )
 from orchestrator.graph import resolve_check_command_definition
 from orchestrator.graph import (
@@ -241,6 +244,75 @@ def _summarizer_packet(context: GraphDispatchContext) -> dict[str, Any]:
     }
 
 
+def _decision_packet(context: GraphDispatchContext) -> dict[str, Any]:
+    """Render only model-facing judgment inputs for an activated decision."""
+    applicability = resolve_decision_applicability(context.graph_projection, context.node_id)
+    if applicability is None:
+        raise InvalidExecutionContractError("decision packet requires decision-v1 authority")
+    resolved = resolve_decision_context(context.graph_projection, context.node_id)
+    protected = resolved.protected_question_context()
+    _schema_id, _schema_version, _schema_sha256, schema = decision_answer_schema(
+        cast(Any, applicability.family)
+    )
+    if applicability.family == "discovery_brief":
+        return {
+            "question": protected["question"],
+            "bound_evidence": protected["bound_evidence"],
+            "available_choices": protected["scope_choices"],
+            "answer_schema": schema,
+        }
+    if applicability.family == "implementation_plan":
+        return {
+            "question": protected["question"],
+            "bound_evidence": {
+                "requirements": protected["requirements"],
+                "plan_contract": protected["plan_contract"],
+                "check_policy": protected["check_policy"],
+                "source_references": protected["source_references"],
+            },
+            "available_choices": protected["check_policy"]["available_bindings"],
+            "answer_schema": schema,
+        }
+    if applicability.family == "correction_decision":
+        return {
+            "question": protected["question"],
+            "bound_evidence": {
+                "scope": protected["scope"],
+                "selected_batch": protected["selected_batch"],
+                "accepted_baseline": protected["accepted_baseline"],
+                "requirement_aliases": protected["requirement_aliases"],
+                "evidence_aliases": protected["evidence_aliases"],
+                "planning_policy": {
+                    "planning_horizon": protected["planning_horizon"],
+                    "remaining_horizons": protected["remaining_horizons"],
+                },
+                "check_policy": protected["check_policy"],
+            },
+            "available_choices": protected["available_dispositions"],
+            "answer_schema": schema,
+        }
+    aliases = list(cast(dict[str, str], protected["requirement_aliases"]))
+    requirements = [
+        {"alias": alias, "text": _bounded_text(context.requirements[index])}
+        for index, alias in enumerate(aliases)
+        if index < len(context.requirements)
+    ]
+    return {
+        "question": protected["question"],
+        "bound_evidence": {
+            "selected_batch": protected["selected_batch"],
+            "requirements": requirements,
+            "check_policy": protected["check_policy"],
+            "planning_policy": {
+                "planning_horizon": protected["planning_horizon"],
+                "remaining_horizons": protected["remaining_horizons"],
+            },
+        },
+        "available_choices": protected["available_dispositions"],
+        "answer_schema": schema,
+    }
+
+
 def _prompt_for_node(context: GraphDispatchContext) -> str:
     node = context.node_payload
     if context.node_kind == "verifier":
@@ -286,7 +358,51 @@ def _prompt_for_node(context: GraphDispatchContext) -> str:
             )
         )
     if context.node_kind == "planner":
+        applicability = resolve_decision_applicability(context.graph_projection, context.node_id)
+        if applicability is not None and applicability.family in {
+            "discovery_brief",
+            "batch_decision",
+            "correction_decision",
+        }:
+            packet = _decision_packet(context)
+            return _bounded_prompt(
+                "\n".join(
+                    [
+                        "Decision packet:",
+                        _bounded_json(packet),
+                        "",
+                        "Return one typed answer through submit(outputs={decision: ...}).",
+                        "Use the supplied question, bounded evidence, available choices, and exact generated answer schema.",
+                        "The runtime owns graph construction and all bookkeeping consequences.",
+                    ]
+                )
+            )
         packet = _planner_packet(context)
+        if _is_reliable_plan_context(context):
+            reliable_lines = [
+                "Planner mutation contract:",
+                "- This is a reliable-plan semantic decision. Describe only the current operation; the controller constructs the complete authorized horizon.",
+                "- Call construct_reliable_plan_region exactly once with operation_key, scope, objective, requirement IDs, dependencies, acceptance, checks, and rubric.",
+                "- Use only requirement IDs from bound_requirements and only dependency IDs listed in reliable_plan_options.",
+                "- Use only check bindings listed in reliable_plan_options. If no binding is available, provide a concrete command_definition from the current task contract; do not invent a command.",
+                "- Use current_graph_position from the packet as base_graph_position and use a stable patch_id for this attempt.",
+                "- Wait for accepted construction feedback, then call plain submit. Do not submit raw operations or construct topology, evidence wiring, assignments, checks, or continuations yourself.",
+                "",
+                "Reliable-plan semantic contract:",
+                _bounded_json(packet["reliable_plan_contract"]),
+                "Reliable-plan options from current state:",
+                _bounded_json(packet["reliable_plan_options"]),
+            ]
+            return _bounded_prompt(
+                "\n".join(
+                    [
+                        "Planner context packet:",
+                        _bounded_json(packet),
+                        "",
+                        *reliable_lines,
+                    ]
+                )
+            )
         return _bounded_prompt(
             "\n".join(
                 [
@@ -305,6 +421,7 @@ def _prompt_for_node(context: GraphDispatchContext) -> str:
                     "- Read frontier, evidence, open_planner_proposals, accepted_planner_patches, and patch_rejections before proposing.",
                     "- If dynamic_feature is present, ground generated worker, verifier, gap-analysis, corrective-work, and final invariant regions in those feature inputs.",
                     "- Check nodes must include command_definition or command_binding. For dynamic_feature semantic checks, use command_binding='dynamic_feature_hidden_oracle' only when the packet's available_check_bindings includes it; otherwise provide an explicit batch-scoped command_definition. The reliable-plan final acceptance check is controller-owned and must remain distinct; do not use dynamic_feature_acceptance as a semantic-region binding.",
+                    "- For reliable-plan dependencies, use only previously materialized accepted batch IDs. Use [] for the first or only batch; never use the current scope, node IDs, record IDs, or requirement IDs.",
                     "- Every required check, including final invariant checks, must have a failure continuation: bind failed check_result evidence into a gap planner or corrective-work path so a failed check cannot leave the graph quiescent with no schedulable recovery node.",
                     "- For gap planners, follow gap_analysis_contract and prefer corrective_work_region for corrective worker/verifier patches.",
                     "- A write worker cannot evade declared-batch semantics by using corrective_work. Use effectful_batch for implementation correction; use semantic_plan_revision only with exact failed SemanticArtifact and plan-verification record/topology facts from the packet.",
@@ -366,6 +483,13 @@ def _packet_for_prompt_summary(context: GraphDispatchContext) -> dict[str, Any]:
     if context.node_kind == "summarizer":
         return _summarizer_packet(context)
     if context.node_kind == "planner":
+        applicability = resolve_decision_applicability(context.graph_projection, context.node_id)
+        if applicability is not None and applicability.family in {
+            "discovery_brief",
+            "batch_decision",
+            "correction_decision",
+        }:
+            return _decision_packet(context)
         return _planner_packet(context)
     if context.node_kind == "check":
         return {
@@ -395,6 +519,13 @@ def _packet_for_prompt_summary(context: GraphDispatchContext) -> dict[str, Any]:
 
 
 def _packet_type_for_context(context: GraphDispatchContext) -> str:
+    applicability = resolve_decision_applicability(context.graph_projection, context.node_id)
+    if applicability is not None and applicability.family in {
+        "discovery_brief",
+        "batch_decision",
+        "correction_decision",
+    }:
+        return "decision_packet"
     if context.node_kind == "planner" and context.node_role == "gap_planner":
         return "gap_planner"
     return context.node_kind
@@ -406,6 +537,26 @@ def _prompt_sections_for_context(context: GraphDispatchContext) -> list[str]:
     if context.node_kind == "summarizer":
         return ["summarizer_context_packet"]
     if context.node_kind == "planner":
+        applicability = resolve_decision_applicability(context.graph_projection, context.node_id)
+        if applicability is not None and applicability.family in {
+            "discovery_brief",
+            "batch_decision",
+            "correction_decision",
+        }:
+            return [
+                "decision_question",
+                "bound_evidence",
+                "available_choices",
+                "answer_schema",
+                "typed_submit",
+            ]
+        if _is_reliable_plan_context(context):
+            return [
+                "planner_context_packet",
+                "reliable_plan_contract",
+                "reliable_plan_options",
+                "plain_submit_completion",
+            ]
         sections = [
             "planner_context_packet",
             "planner_mutation_contract",
@@ -555,6 +706,9 @@ def _worker_contract_packet(context: GraphDispatchContext) -> dict[str, Any]:
     scope = node.get("scope")
     if isinstance(scope, str) and scope.strip():
         packet["scope"] = _bounded_text(scope)
+    implementation_notes = node.get("implementation_notes")
+    if isinstance(implementation_notes, str) and implementation_notes.strip():
+        packet["implementation_notes"] = _bounded_text(implementation_notes)
     for key in ("bound_requirement_ids", "invariants", "prohibited_actions"):
         value = node.get(key)
         if isinstance(value, list) and value:
@@ -652,6 +806,21 @@ def _worker_authority_packet(context: GraphDispatchContext) -> dict[str, Any]:
 
 
 def _available_tools_for_context(context: GraphDispatchContext) -> list[str] | None:
+    applicability = resolve_decision_applicability(context.graph_projection, context.node_id)
+    if applicability is not None and applicability.family in {
+        "discovery_brief",
+        "batch_decision",
+        "correction_decision",
+    }:
+        explicit_tools = context.node_payload.get("available_tools")
+        if not isinstance(explicit_tools, list):
+            return []
+        graph_tools = DEFAULT_NODE_CONTRACTS.allowed_tools_for(context.node_kind, context.node_role)
+        return [
+            tool
+            for tool in cast(list[Any], explicit_tools)
+            if isinstance(tool, str) and tool not in graph_tools
+        ]
     explicit_tools = context.node_payload.get("available_tools")
     if isinstance(explicit_tools, list):
         return [tool for tool in cast(list[Any], explicit_tools) if isinstance(tool, str)]
@@ -800,14 +969,23 @@ def _planner_packet(context: GraphDispatchContext) -> dict[str, Any]:
     }
     dynamic_feature = node.get("dynamic_feature")
     if isinstance(dynamic_feature, dict):
-        packet["dynamic_feature"] = _planner_visible_dynamic_feature(
+        visible_dynamic_feature = _planner_visible_dynamic_feature(
             cast(dict[str, Any], dynamic_feature)
         )
-    packet["allowed_patch_operations"] = _planner_allowed_ops_packet()
-    packet["horizon_region_templates"] = horizon_region_templates()
+        if _is_reliable_plan_context(context):
+            # Whole-feature acceptance is controller-owned finalization.  It
+            # must not be presented as a semantic check choice to the planner.
+            visible_dynamic_feature.pop("available_check_bindings", None)
+            visible_dynamic_feature.pop("hidden_oracle_binding", None)
+        packet["dynamic_feature"] = visible_dynamic_feature
     reliable_plan_contract = _planner_reliable_plan_contract(context)
     if reliable_plan_contract is not None:
         packet["reliable_plan_contract"] = reliable_plan_contract
+    if _is_reliable_plan_context(context):
+        packet["reliable_plan_options"] = _planner_reliable_plan_options(context)
+    else:
+        packet["allowed_patch_operations"] = _planner_allowed_ops_packet()
+        packet["horizon_region_templates"] = horizon_region_templates()
     if context.node_role == "gap_planner":
         packet["gap_analysis_contract"] = {
             "inspect": [
@@ -848,8 +1026,68 @@ def _planner_packet(context: GraphDispatchContext) -> dict[str, Any]:
             context,
             projection,
         )
-    packet["patch_examples"] = _planner_patch_examples(packet, context)
+    if not _is_reliable_plan_context(context):
+        packet["patch_examples"] = _planner_patch_examples(packet, context)
     return packet
+
+
+def _is_reliable_plan_context(context: GraphDispatchContext) -> bool:
+    """Return whether this is a root/successor reliable-plan planner.
+
+    Gap planners can carry the same skeleton provenance, but their corrective
+    contract intentionally remains the compatibility planner contract.
+    """
+    return (
+        context.node_kind == "planner"
+        and context.node_payload.get("role") != "gap_planner"
+        and isinstance(context.node_payload.get("reliable_plan_skeleton_id"), str)
+    )
+
+
+def _planner_reliable_plan_options(context: GraphDispatchContext) -> dict[str, Any]:
+    """Expose only currently usable semantic choices to a reliable planner."""
+    node = context.node_payload
+    raw_dynamic_feature = _dynamic_feature_from_context(context)
+    dynamic_feature = (
+        _planner_visible_dynamic_feature(raw_dynamic_feature)
+        if raw_dynamic_feature is not None
+        else None
+    )
+    available_bindings = (
+        list(cast(list[Any], dynamic_feature.get("available_check_bindings", [])))
+        if dynamic_feature is not None
+        else []
+    )
+    # ``dynamic_feature_acceptance`` is controller-owned finalization and is
+    # intentionally unavailable to semantic construction.  Only the binding
+    # accepted by ReliablePlanCheckDecision can be offered here.
+    available_bindings = [
+        item
+        for item in available_bindings
+        if isinstance(item, str) and item == "dynamic_feature_hidden_oracle"
+    ]
+    declared = _reliable_plan_declared_batch_ids(context)
+    materialized = sorted(accepted_declared_batch_ids(context.graph_projection))
+    current_scope = node.get("declared_batch_id")
+    if isinstance(current_scope, str) and current_scope:
+        scopes = [current_scope]
+    elif declared:
+        scopes = [batch_id for batch_id in declared if batch_id not in materialized]
+    else:
+        scopes = []
+    return {
+        "scope_mode": (
+            "author_new_initial_scope"
+            if node.get("semantic_stage") != "successor_planning"
+            else "current_declared_batch"
+            if isinstance(current_scope, str) and current_scope
+            else "select_declared_batch"
+        ),
+        "scope_options": scopes,
+        "dependency_options": materialized,
+        "available_check_bindings": available_bindings,
+        "explicit_command_definition": "available; supply a concrete command from the task contract",
+    }
 
 
 def _planner_visible_dynamic_feature(dynamic_feature: dict[str, Any]) -> dict[str, Any]:
@@ -1617,14 +1855,10 @@ def _planner_reliable_plan_contract(
             "the controller rejects a partial batch-only or finalization-only patch",
             "call plain submit only after that complete patch is accepted",
         ]
-        contract["finalization_rules"] = [
-            "do not create another worker, check, batch, or successor planner",
-            "create exactly one controller-bound dynamic_feature_acceptance check distinct from any hidden oracle check",
-            "the acceptance check must consume a passed verification report from every declared batch verifier",
-            "the final-audit verifier must consume those passed batch reports and the passed acceptance receipt",
-            "the final gate must consume the passed batch reports, acceptance receipt, and final-audit report",
-            "the final gate declared_batch_ids must exactly equal declared_batch_ids",
-            "declare every concrete input port used by an edge",
+        contract["controller_outcomes"] = [
+            "the controller creates exactly one final acceptance check distinct from any semantic check",
+            "the controller binds that acceptance check to a passed verification report from every declared batch verifier",
+            "the controller creates the final audit and gate with their complete typed evidence bindings",
         ]
     elif isinstance(remaining, int) and not isinstance(remaining, bool) and remaining > 1:
         contract["required_sequence"] = [
@@ -1895,6 +2129,13 @@ def _node_role(node_kind: str, node_payload: dict[str, Any]) -> str:
 
 
 def _can_submit_graph_patch(context: GraphDispatchContext) -> bool:
+    applicability = resolve_decision_applicability(context.graph_projection, context.node_id)
+    if applicability is not None and applicability.family in {
+        "discovery_brief",
+        "batch_decision",
+        "correction_decision",
+    }:
+        return False
     return "submit_graph_patch" in DEFAULT_NODE_CONTRACTS.allowed_tools_for(
         context.node_kind, context.node_role
     )

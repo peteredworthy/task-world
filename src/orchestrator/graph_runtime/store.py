@@ -2082,6 +2082,21 @@ def _artifact_references_from_events(
     """Extract validated CAS references from their typed durable owners."""
     references: list[tuple[int, StoredArtifactRef]] = []
     for event in events:
+        if event.event_type in {"command_rejected", "graph_patch_rejected"}:
+            raw_evidence = event.payload.get("rejection_evidence")
+            raw_ref = (
+                cast(dict[str, Any], raw_evidence).get("artifact_ref")
+                if isinstance(raw_evidence, dict)
+                else None
+            )
+            if isinstance(raw_ref, dict):
+                try:
+                    ref = StoredArtifactRef.model_validate(raw_ref)
+                except ValidationError:
+                    continue
+                if ref.artifact_id == ref.content_hash:
+                    references.append((event.position, ref))
+            continue
         if event.event_type == "runner_submission_staged":
             raw_ref = event.payload.get("payload_ref")
             if isinstance(raw_ref, dict):
@@ -2399,6 +2414,25 @@ class GraphEventStore:
     def __init__(self, session: AsyncSession, *, journal_max_bytes: int = 64 * 1024 * 1024) -> None:
         self._session = session
         self._journal_max_bytes = journal_max_bytes
+
+    async def reliable_plan_rejection_count(self, run_id: str, node_id: str) -> int:
+        """Count durable rejected patch calls for one planner node."""
+
+        proposed_by = func.json_extract(EventV2Model.payload, "$.payload.proposed_by_node_id")
+        command_type = func.json_extract(EventV2Model.payload, "$.payload.command_type")
+        result = await self._session.scalar(
+            select(func.count(EventV2Model.position))
+            .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
+            .where(EventV2Model.event_type.in_(("command_rejected", "graph_patch_rejected")))
+            .where(proposed_by == node_id)
+            .where(
+                or_(
+                    EventV2Model.event_type == "graph_patch_rejected",
+                    command_type == "submit_patch",
+                )
+            )
+        )
+        return int(result or 0)
 
     async def append_events(
         self,
@@ -6733,6 +6767,11 @@ def _projection_event(event: EventEnvelope) -> EventEnvelope:
     if event.event_type in {"output_record_accepted", "file_state_accepted"}:
         payload["graph_position"] = event.position
         payload["run_id"] = event.run_id
+    if record_type == "decision_answer" and "schema_version" in event.payload:
+        # Decision answers bind an exact versioned answer schema.  Unlike
+        # legacy accepted records, that version participates in projection
+        # validation and must survive the bounded replay shape.
+        payload["schema_version"] = event.payload["schema_version"]
     return event.model_copy(update={"payload": payload})
 
 

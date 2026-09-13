@@ -664,6 +664,7 @@ class RoutineSnapshotValue(StrictNestedModel):
     task_count: StrictInt = Field(ge=0)
     builder_agent: str | None = None
     verifier_agent: str | None = None
+    agent_interaction_contract: Literal["decision-v1"] | None = None
     dynamic_feature: dict[str, Any] | None = None
     cache_authority_preimage: str | None = None
     cache_authority_hash: str | None = None
@@ -1030,6 +1031,7 @@ class CommandRejectedPayload(StrictEventPayload):
     read_set_diff: dict[str, Any] | None = None
     budget: StrictInt | None = None
     count: StrictInt | None = None
+    rejection_evidence: dict[str, Any] | None = None
 
 
 class CallbackPayloadBase(StrictEventPayload):
@@ -1311,6 +1313,7 @@ class RunnerRecoveryRequestedPayload(StrictEventPayload):
         "staged_artifact_missing",
         "staged_artifact_corrupt",
         "submission_repair_exhausted",
+        "invalid_planner_proposal",
         "submission_format_rejected",
         "candidate_check_failed",
         "validation_environment_blocked",
@@ -1442,7 +1445,7 @@ class RunnerCompletionWitnessedPayload(StrictEventPayload):
     staged_commit_sha: str
     staged_tree_sha: str
     staged_boundary_hash: str
-    runner_return_kind: Literal["successful_return"]
+    runner_return_kind: Literal["successful_return", "terminal_answer_completed"]
     disposition: Literal["completion_witnessed"] = "completion_witnessed"
     final_snapshot_id: str
     final_snapshot_ref: str
@@ -1711,6 +1714,7 @@ class GraphPatchRejectedPayload(GraphEventPayloadBase):
     diagnostics: dict[str, Any] | None = None
     budget: StrictInt | None = None
     count: StrictInt | None = None
+    rejection_evidence: dict[str, Any] | None = None
 
 
 class RequirementRevisionPayload(GraphEventPayloadBase):
@@ -1909,6 +1913,7 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     command_definition: CommandDefinitionProjection | None = None
     command_definition_id: str | None = None
     hidden_oracle_command: str | None = None
+    implementation_notes: str | None = None
     command_binding: str | None = None
     command: str | None = None
     command_text: str | None = None
@@ -1981,8 +1986,10 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     semantic_stage: (
         Literal[
             "discovery",
+            "initial_planning",
             "plan_verification",
             "successor_planning",
+            "gap_planning",
             "effectful_batch",
             "final_acceptance",
             "final_audit",
@@ -1997,6 +2004,7 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     declared_batch_id: str | None = None
     declared_batch_ids: list[str] | None = None
     accepted_plan_amendment_record_id: str | None = None
+    decision_successor_node_id: str | None = None
     failed_verification_record_id: str | None = None
     failed_check_record_ids: list[str] | None = None
     correction_trigger: (
@@ -2529,6 +2537,47 @@ class DecisionRecord(TypedRecordBase):
         return self
 
 
+class DecisionAnswerValue(StrictNestedModel):
+    """Canonical accepted judgment and the runtime request it answered."""
+
+    interaction_contract: Literal["decision-v1"]
+    family: Literal["discovery_brief", "batch_decision", "correction_decision"]
+    decision_request_id: str
+    answer_schema_id: str
+    answer_schema_version: StrictInt = Field(ge=1)
+    answer_schema_sha256: str
+    compiler_contract_version: StrictInt = Field(ge=1)
+    answer_sha256: str
+    answer: dict[str, Any]
+    consequence_patch_id: str
+    bound_input_record_ids: list[str]
+
+    @field_validator("answer_schema_sha256", "answer_sha256")
+    @classmethod
+    def decision_hashes_are_canonical(cls, value: str) -> str:
+        return validate_sha256(value)
+
+
+class DecisionAnswerRecord(TypedRecordBase):
+    record_id: str
+    record_kind: Literal["graph_record"]
+    producer_node_id: str
+    port: Literal["decision"]
+    schema_: Literal["DecisionAnswer"] = Field(alias="schema")
+    value: DecisionAnswerValue
+
+    @model_validator(mode="after")
+    def decision_answer_fields_are_consistent(self) -> "DecisionAnswerRecord":
+        if self.record_type != "decision_answer":
+            raise ValueError("record_type must be decision_answer")
+        if self.schema_version != self.value.answer_schema_version:
+            raise ValueError(
+                "schema_version must match answer schema version "
+                f"({self.schema_version!r} != {self.value.answer_schema_version!r})"
+            )
+        return self
+
+
 class AuthorityDecisionValue(StrictNestedModel):
     decision: Literal["granted", "denied", "deferred"]
     decision_type: Literal["authority"]
@@ -2911,6 +2960,7 @@ OutputRecordPayload = (
     | CandidateRecord
     | GapClassificationRecord
     | DecisionRecord
+    | DecisionAnswerRecord
     | AuthorityDecisionRecord
     | AnalysisSummaryRecord
     | GraphPatchProposalRecord
@@ -3112,6 +3162,7 @@ OUTPUT_RECORD_MODELS_BY_TYPE: MappingProxyType[str, type[GraphBaseModel]] = Mapp
         "classified_gap": GapClassificationRecord,
         "completion_decision": CompletionDecisionRecord,
         "decision_record": DecisionRecord,
+        "decision_answer": DecisionAnswerRecord,
         "decision_request": DecisionRequestRecord,
         "failure_record": FailureRecord,
         "fan_out_inputs": OutputRecord,

@@ -29,12 +29,18 @@ from orchestrator.runners import (
 )
 from orchestrator.runners.errors import AgentNotAvailableError, SubmissionRepairExhaustedError
 from orchestrator.runners.errors import SubmissionRejectedError
-from orchestrator.runners import SubmissionAcknowledgement, SubmissionRejectionEvidence
+from orchestrator.runners import (
+    SubmissionAcknowledgement,
+    SubmissionContract,
+    SubmissionOutputContract,
+    SubmissionRejectionEvidence,
+)
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
 from orchestrator.config import ChecklistStatus
 from orchestrator.config.models import MCPServerConfig
 from orchestrator.config.models import RoutineConfig, StepConfig
 from orchestrator.graph import (
+    batch_decision_schema,
     FakeClock,
     ReliablePlanEvaluationConfig,
     SequentialIdGenerator,
@@ -83,6 +89,21 @@ class _FailingStdioTransport:
 
     async def close(self) -> None:
         pass
+
+
+class _AckFailingStdioTransport(_FakeStdioTransport):
+    """Transport that loses one server-request response after durable staging."""
+
+    def __init__(self, recv_sequence: list[dict[str, Any]], request_id: int) -> None:
+        super().__init__(recv_sequence)
+        self._request_id = request_id
+        self.failed_responses: list[dict[str, Any]] = []
+
+    async def send(self, message: dict[str, Any]) -> None:
+        if message.get("id") == self._request_id and "result" in message:
+            self.failed_responses.append(message)
+            raise BrokenPipeError("response pipe closed")
+        await super().send(message)
 
 
 class _ChunkedFakeStdout:
@@ -319,6 +340,20 @@ def _make_agent(
         _environ={},
     )
     return agent, transport
+
+
+def _decision_submission_contract() -> SubmissionContract:
+    return SubmissionContract(
+        interaction_contract="decision-v1",
+        outputs=(
+            SubmissionOutputContract(
+                port="decision",
+                schema_name="BatchDecision",
+                semantic_role="batch_decision",
+                content_json_schema=batch_decision_schema(),
+            ),
+        ),
+    )
 
 
 def test_codex_runtime_observation_capability_matches_transport_ownership() -> None:
@@ -963,6 +998,205 @@ async def test_execute_breaks_loop_on_turn_completed() -> None:
 
     assert "before terminal" in result.output_lines
     assert "after terminal — must not appear" not in result.output_lines
+
+
+async def test_decision_completion_requires_observed_owned_interrupt_terminal() -> None:
+    notifications = [
+        _tool_call_request(
+            "submit",
+            {"outputs": {"decision": {"disposition": "proceed", "implementation_notes": ""}}},
+            41,
+        ),
+        _turn_completed(status="interrupted"),
+    ]
+    agent, transport = _make_agent(notifications)
+    context = _ctx()
+    context.submission_contract = _decision_submission_contract()
+
+    async def stage_and_stop(_invocation: object) -> None:
+        await agent.request_terminal_answer_completion()
+
+    result = await agent.execute(
+        context=context,
+        on_checklist_update=_noop_checklist,
+        on_submit=stage_and_stop,
+    )
+
+    assert result.completion_cause == "terminal_answer_completed"
+    assert any(message.get("method") == "turn/interrupt" for message in transport.sent)
+
+
+async def test_decision_ack_loss_after_staging_continues_to_owned_terminal() -> None:
+    request_id = 41
+    transport = _AckFailingStdioTransport(
+        [
+            _initialize_response(),
+            _thread_start_response(),
+            _turn_start_response(),
+            _tool_call_request(
+                "submit",
+                {
+                    "outputs": {
+                        "decision": {
+                            "disposition": "proceed",
+                            "implementation_notes": "",
+                        }
+                    }
+                },
+                request_id,
+            ),
+            _turn_completed(status="interrupted"),
+        ],
+        request_id,
+    )
+    agent = CodexServerAgent(
+        api_key=None,
+        local_provider="openai",
+        _transport=transport,
+        _environ={},
+    )
+    context = _ctx()
+    context.submission_contract = _decision_submission_contract()
+    submissions: list[object] = []
+
+    async def stage_and_stop(invocation: object) -> SubmissionAcknowledgement:
+        submissions.append(invocation)
+        await agent.request_terminal_answer_completion()
+        return SubmissionAcknowledgement(
+            disposition="durably_staged",
+            message="staged",
+            execution_id=context.task_id,
+        )
+
+    result = await agent.execute(context, _noop_checklist, stage_and_stop)
+
+    assert len(submissions) == 1
+    assert len(transport.failed_responses) == 1
+    assert not any(
+        message.get("id") == request_id and "result" in message for message in transport.sent
+    )
+    assert result.success
+    assert result.completion_cause == "terminal_answer_completed"
+
+
+async def test_decision_refuses_dynamic_tool_after_staging_and_still_completes() -> None:
+    notifications = [
+        _tool_call_request(
+            "submit",
+            {
+                "outputs": {
+                    "decision": {
+                        "disposition": "proceed",
+                        "implementation_notes": "",
+                    }
+                }
+            },
+            41,
+        ),
+        _tool_call_request(
+            "update_checklist",
+            {"req_id": "R-01", "status": "done"},
+            42,
+        ),
+        _turn_completed(status="interrupted"),
+    ]
+    agent, transport = _make_agent(notifications)
+    context = _ctx()
+    context.submission_contract = _decision_submission_contract()
+    checklist_calls: list[str] = []
+
+    async def checklist(req_id: str, _status: ChecklistStatus, _note: str | None) -> None:
+        checklist_calls.append(req_id)
+
+    async def stage_and_stop(_invocation: object) -> SubmissionAcknowledgement:
+        await agent.request_terminal_answer_completion()
+        return SubmissionAcknowledgement(
+            disposition="durably_staged",
+            message="staged",
+            execution_id=context.task_id,
+        )
+
+    result = await agent.execute(context, checklist, stage_and_stop)
+
+    assert checklist_calls == []
+    refused = next(message for message in transport.sent if message.get("id") == 42)
+    assert refused["result"]["success"] is False
+    assert "refused after terminal answer staging" in refused["result"]["contentItems"][0]["text"]
+    assert result.success
+    assert result.completion_cause == "terminal_answer_completed"
+
+
+async def test_decision_catalog_exposes_only_submit_callback_by_default() -> None:
+    context = _ctx(node_kind="planner", node_role="planner")
+    context.submission_contract = _decision_submission_contract()
+    context.required_tools = RELIABLE_PLAN_REQUIRED_TOOL_NAMES
+    context.available_tools = ["update_checklist", "request_clarification", "submit_graph_patch"]
+    agent, transport = _make_agent([_turn_completed()])
+
+    await agent.execute(context, _noop_checklist, _noop_submit)
+
+    thread_start = next(
+        message for message in transport.sent if message.get("method") == "thread/start"
+    )
+    assert [spec["name"] for spec in thread_start["params"]["dynamicTools"]] == ["submit"]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"outputs": {"decision": {"disposition": "proceed"}}},
+        {"outputs": {"decision": {"disposition": "invented"}}},
+        {
+            "outputs": {
+                "decision": {
+                    "disposition": "proceed",
+                    "implementation_notes": "",
+                    "unexpected": True,
+                }
+            }
+        },
+        {"outputs": {"unknown": {"disposition": "proceed"}}},
+        {
+            "outputs": {
+                "decision": {
+                    "disposition": "proceed",
+                    "implementation_notes": "",
+                }
+            },
+            "unexpected": True,
+        },
+    ],
+)
+async def test_decision_codex_ingress_rejects_invalid_arguments_before_callback(
+    arguments: dict[str, Any],
+) -> None:
+    agent, transport = _make_agent([_tool_call_request("submit", arguments, 41), _turn_completed()])
+    context = _ctx(node_kind="planner", node_role="planner")
+    context.submission_contract = _decision_submission_contract()
+    calls: list[object] = []
+
+    async def on_submit(invocation: object) -> SubmissionAcknowledgement:
+        calls.append(invocation)
+        return SubmissionAcknowledgement(disposition="durably_staged", message="staged")
+
+    await agent.execute(context, _noop_checklist, on_submit)
+
+    response = next(message for message in transport.sent if message.get("id") == 41)
+    assert response["result"]["success"] is False
+    assert calls == []
+
+
+async def test_requested_without_sent_interrupt_does_not_claim_terminal_completion() -> None:
+    agent, _transport = _make_agent([_turn_completed()])
+    agent._terminal_answer_requested = True  # pyright: ignore[reportPrivateUsage]
+
+    result = await agent.execute(
+        context=_ctx(),
+        on_checklist_update=_noop_checklist,
+        on_submit=_noop_submit,
+    )
+
+    assert result.completion_cause is None
 
 
 async def test_execute_mixed_events_produces_correct_output_and_callbacks() -> None:

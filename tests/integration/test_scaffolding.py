@@ -1,6 +1,7 @@
 """Integration tests for scaffolding module."""
 
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -231,6 +232,63 @@ class TestEnsureGitignore:
 
         assert result is False  # .orchestrator (without slash) is already there
 
+    def test_linked_worktree_uses_anchored_repository_exclude(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        linked = tmp_path / "linked"
+        repo.mkdir()
+        (repo / "SMOKE_SPEC.md").write_text("one source file\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "add", "SMOKE_SPEC.md"], cwd=repo, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-m",
+                "fixture",
+            ],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "worktree", "add", "-b", "run-test", str(linked)],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        (linked / ".orchestrator").mkdir()
+        (linked / ".orchestrator" / "runtime.json").write_text("{}\n", encoding="utf-8")
+        nested = linked / "nested" / ".orchestrator"
+        nested.mkdir(parents=True)
+        (nested / "user.txt").write_text("user source\n", encoding="utf-8")
+
+        assert ensure_gitignore(linked, ".orchestrator/") is True
+
+        assert not (linked / ".gitignore").exists()
+        assert not (repo / ".gitignore").exists()
+        excluded = subprocess.run(
+            ["git", "check-ignore", "-q", ".orchestrator/runtime.json"], cwd=linked
+        )
+        nested_not_excluded = subprocess.run(
+            ["git", "check-ignore", "-q", "nested/.orchestrator/user.txt"], cwd=linked
+        )
+        assert excluded.returncode == 0
+        assert nested_not_excluded.returncode == 1
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=linked,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert status == "?? nested/.orchestrator/user.txt\n"
+
 
 class TestScaffoldingIntegration:
     """Integration tests for scaffolding in the workflow."""
@@ -377,10 +435,18 @@ steps:
             ).read_text() == "# Template File\n"
             assert (routine_files_path / "scaffolding" / "guide.md").read_text() == "# Guide\n"
 
-            # Verify .gitignore was updated
-            gitignore = worktree_path / ".gitignore"
-            assert gitignore.exists()
-            assert ".orchestrator/" in gitignore.read_text()
+            # Runtime scaffolding is ignored without changing project source.
+            assert not (worktree_path / ".gitignore").exists()
+            ignored = subprocess.run(
+                [
+                    "git",
+                    "check-ignore",
+                    "-q",
+                    ".orchestrator/routine-files/scaffolding/template.md",
+                ],
+                cwd=worktree_path,
+            )
+            assert ignored.returncode == 0
 
         # Cleanup
         await engine.dispose()

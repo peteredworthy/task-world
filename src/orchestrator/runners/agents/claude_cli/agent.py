@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import shutil
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
@@ -31,8 +32,11 @@ from orchestrator.runners.mcp_scope import (
     resolve_mcp_server_cwd,
     scope_mcp_servers_to_available_tools,
 )
+from orchestrator.runners.submission import (
+    is_decision_submission,
+    submission_prompt_instruction,
+)
 from orchestrator.runners.planner_tools import GRAPH_PLANNER_TOOL_ORDER
-from orchestrator.runners.submission import submission_prompt_instruction
 from orchestrator.workflow import GateBlockedError
 from orchestrator.git import WorktreeCommitError
 from orchestrator.runners.runtime.nudger import NudgeAction, Nudger, NudgerConfig, TimeProvider
@@ -55,12 +59,18 @@ from orchestrator.runners.types import (
     SubmitCallbackResult,
 )
 from orchestrator.config.enums import AgentRunnerType
+from orchestrator.state import ActionLog
 
 if TYPE_CHECKING:
     from orchestrator.runners.runtime.monitor import AgentRunnerMonitor
     from orchestrator.runners.parsers.base import StreamParser
 
 logger = logging.getLogger(__name__)
+
+
+def is_owned_terminal_answer_stop(stop_owned: bool, returncode: int | None) -> bool:
+    """Return whether an observed SIGTERM is the adapter-owned terminal stop."""
+    return stop_owned and returncode in {-signal.SIGTERM, 128 + signal.SIGTERM}
 
 
 def _first_api_error(lines: list[str]) -> str | None:
@@ -179,6 +189,7 @@ class CLIAgent:
         bare: bool = False,
         subprocess_factory: Callable[..., Awaitable[asyncio.subprocess.Process]] | None = None,
         max_commit_fix_attempts: int = 2,
+        terminal_answer_stop_timeout: float = 180.0,
     ) -> None:
         self._command = command
         base_args = list(args or [])
@@ -201,6 +212,13 @@ class CLIAgent:
         self._time_provider = time_provider or _DefaultTimeProvider()
         self._poll_interval = poll_interval
         self._cancelled = False
+        self._terminal_answer_requested = False
+        self._terminal_answer_stop_owned = False
+        self._terminal_answer_stop_timed_out = False
+        if not 0 < terminal_answer_stop_timeout <= 180.0:
+            raise ValueError("terminal_answer_stop_timeout must be in (0, 180]")
+        self._terminal_answer_stop_timeout = terminal_answer_stop_timeout
+        self._terminal_answer_stop_task: asyncio.Task[None] | None = None
         self._process: asyncio.subprocess.Process | None = None
         self._parser = parser
         self._runner_monitor = runner_monitor
@@ -271,8 +289,9 @@ class CLIAgent:
                     "  (e.g. `git --no-pager diff`, `git --no-pager log`, `git --no-pager show`)\n"
                 )
 
+        decision_submission = is_decision_submission(context.submission_contract)
         graph_tools_section = ""
-        if context.graph_mcp_url is not None:
+        if context.graph_mcp_url is not None and not decision_submission:
             graph_tool_names = ", ".join(
                 name
                 for name in GRAPH_PLANNER_TOOL_ORDER
@@ -298,6 +317,18 @@ class CLIAgent:
                 + submission_prompt_instruction(context.submission_contract)
                 + "\nUse the orchestrator-graph MCP submit tool with exactly this payload shape. "
                 "A bare submit() cannot complete this node."
+            )
+
+        if decision_submission:
+            return (
+                prompt
+                + "\n\n## Required Decision Answer\n"
+                + "Use the supplied question, bounded evidence, and available choices. "
+                "Return only the authored answer; the runtime owns graph construction and "
+                "completion bookkeeping.\n"
+                + submission_prompt_instruction(context.submission_contract)
+                + "\nUse the orchestrator-graph MCP submit tool once. No constructor, raw "
+                "patch, checklist, or separate finalization call is required."
             )
 
         if context.api_base_url is None:
@@ -659,6 +690,153 @@ class CLIAgent:
 
         return args
 
+    async def _notify_agent_died(
+        self,
+        context: ExecutionContext,
+        *,
+        exit_code: int | None,
+        reason: str,
+    ) -> None:
+        if self._runner_monitor is None or self._run_id is None:
+            return
+        try:
+            await self._runner_monitor.on_agent_died(
+                run_id=self._run_id,
+                agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+                exit_code=exit_code,
+                reason=reason,
+                pause_run=False,
+                task_id=context.task_id,
+            )
+        except Exception as exc:
+            logger.warning("Failed to notify monitor of agent death: %s", exc)
+
+    async def _read_main_output(
+        self,
+        context: ExecutionContext,
+        nudger: Nudger,
+        on_output: LogLineCallback | None,
+    ) -> list[str]:
+        """Drain one CLI process while applying cancellation and stuck policy."""
+        process = self._process
+        if process is None:
+            raise AgentExecutionError("cli_subprocess", "subprocess was not started")
+        output_lines: list[str] = []
+        batch_buffer: list[str] = []
+        raw_buf = b""
+        while True:
+            if self._cancelled:
+                process.terminate()
+                raise AgentCancelledError("cli_subprocess")
+            if process.stdout is None:
+                break
+            try:
+                chunk = await asyncio.wait_for(
+                    process.stdout.read(64 * 1024),
+                    timeout=self._poll_interval,
+                )
+            except TimeoutError:
+                action = nudger.check()
+                if action == NudgeAction.KILL:
+                    process.terminate()
+                    if batch_buffer and on_output:
+                        await on_output(batch_buffer)
+                    await self._notify_agent_died(
+                        context,
+                        exit_code=None,
+                        reason=f"agent_stuck_killed_after_{nudger.nudge_count}_nudges",
+                    )
+                    raise AgentExecutionError(
+                        "cli_subprocess",
+                        f"Agent stuck after {nudger.nudge_count} nudges, killed",
+                    )
+                if action == NudgeAction.NUDGE:
+                    message = nudger.record_nudge()
+                    output_lines.append(f"[nudge #{nudger.nudge_count}] {message}")
+                    if self._stdin_mode == "open" and process.stdin is not None:
+                        try:
+                            process.stdin.write((message + "\n").encode())
+                            await process.stdin.drain()
+                        except (BrokenPipeError, ConnectionResetError, RuntimeError):
+                            pass
+                continue
+            if not chunk:
+                if raw_buf:
+                    line = raw_buf.decode(errors="replace").rstrip()
+                    if line:
+                        output_lines.append(line)
+                        batch_buffer.append(line)
+                        if self._parser is not None:
+                            self._parser.parse_line(line)
+                break
+            raw_buf += chunk
+            nudger.record_output()
+            while b"\n" in raw_buf:
+                line_bytes, raw_buf = raw_buf.split(b"\n", 1)
+                line = line_bytes.decode(errors="replace").rstrip()
+                output_lines.append(line)
+                batch_buffer.append(line)
+                if self._parser is not None:
+                    self._parser.parse_line(line)
+                if len(batch_buffer) >= 20 and on_output:
+                    await on_output(batch_buffer)
+                    batch_buffer = []
+        if batch_buffer and on_output:
+            await on_output(batch_buffer)
+        return output_lines
+
+    def _finalize_action_output(
+        self,
+        context: ExecutionContext,
+        output_lines: list[str],
+    ) -> tuple[ActionLog | None, list[str]]:
+        if self._parser is None:
+            return None, output_lines
+        action_log = self._parser.finalize()
+        final_output_lines = output_lines
+        readable = self._parser.get_readable_text()
+        if readable.strip():
+            final_output_lines = readable.split("\n")
+        if action_log.session_id and context.working_dir:
+            from orchestrator.runners.agents.claude_cli.subagents import load_sub_agents
+
+            sub_agents = load_sub_agents(context.working_dir, action_log.session_id)
+            if sub_agents:
+                action_log.sub_agents = sub_agents
+                for sub_agent in sub_agents:
+                    action_log.sub_agent_gen_ai_usage_input_tokens += (
+                        sub_agent.gen_ai_usage_input_tokens
+                    )
+                    action_log.sub_agent_gen_ai_usage_output_tokens += (
+                        sub_agent.gen_ai_usage_output_tokens
+                    )
+                    action_log.sub_agent_gen_ai_usage_cache_read_input_tokens += (
+                        sub_agent.gen_ai_usage_cache_read_input_tokens
+                    )
+                    action_log.sub_agent_gen_ai_usage_cache_creation_input_tokens += (
+                        sub_agent.gen_ai_usage_cache_creation_input_tokens
+                    )
+        return action_log, final_output_lines
+
+    async def _watch_terminal_answer_stop(
+        self,
+        process: asyncio.subprocess.Process,
+    ) -> None:
+        """Escalate an owned decision stop at the exact bounded deadline."""
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(process.wait()),
+                timeout=self._terminal_answer_stop_timeout,
+            )
+        except TimeoutError:
+            self._terminal_answer_stop_timed_out = True
+            if process.returncode is None:
+                process.kill()
+            try:
+                await asyncio.wait_for(asyncio.shield(process.wait()), timeout=5.0)
+            except TimeoutError:
+                logger.error("CLI process did not drain after terminal-answer SIGKILL")
+
     async def execute(
         self,
         context: ExecutionContext,
@@ -679,6 +857,10 @@ class CLIAgent:
 
         if self._cancelled:
             raise AgentCancelledError("cli_subprocess")
+        self._terminal_answer_requested = False
+        self._terminal_answer_stop_owned = False
+        self._terminal_answer_stop_timed_out = False
+        self._terminal_answer_stop_task = None
 
         nudger = Nudger(self._nudger_config, self._time_provider)
         enriched_prompt = self.build_prompt(
@@ -750,148 +932,38 @@ class CLIAgent:
                 if self._stdin_mode == "close":
                     self._process.stdin.close()
 
-            # Read output with periodic nudge checks.
-            # Use chunked reads (read(n)) instead of readline() so that
-            # arbitrarily large JSON lines — which exceed readline()'s
-            # LimitOverrunError threshold — never crash the agent.
-            output_lines: list[str] = []
-            batch_buffer: list[str] = []
-            BATCH_SIZE = 20
-            CHUNK_SIZE = 64 * 1024  # 64KB per read
-            raw_buf: bytes = b""
-
-            while True:
-                if self._cancelled:
-                    self._process.terminate()
-                    raise AgentCancelledError("cli_subprocess")
-
-                try:
-                    if self._process.stdout is None:
-                        break
-                    chunk: bytes = await asyncio.wait_for(
-                        self._process.stdout.read(CHUNK_SIZE),
-                        timeout=self._poll_interval,
-                    )
-                    if not chunk:
-                        # EOF — flush any remaining bytes as a final line
-                        if raw_buf:
-                            line = raw_buf.decode(errors="replace").rstrip()
-                            if line:
-                                output_lines.append(line)
-                                batch_buffer.append(line)
-                                if self._parser is not None:
-                                    self._parser.parse_line(line)
-                            raw_buf = b""
-                        break
-
-                    raw_buf += chunk
-                    nudger.record_output()
-
-                    # Emit all complete newline-delimited lines from the buffer
-                    while b"\n" in raw_buf:
-                        line_bytes, raw_buf = raw_buf.split(b"\n", 1)
-                        line = line_bytes.decode(errors="replace").rstrip()
-                        output_lines.append(line)
-                        batch_buffer.append(line)
-                        if self._parser is not None:
-                            self._parser.parse_line(line)
-                        if len(batch_buffer) >= BATCH_SIZE and on_output:
-                            await on_output(batch_buffer)
-                            batch_buffer = []
-
-                except TimeoutError:
-                    # No bytes received within poll_interval — check nudger
-                    action = nudger.check()
-                    if action == NudgeAction.KILL:
-                        self._process.terminate()
-                        if batch_buffer and on_output:
-                            await on_output(batch_buffer)
-                        # Log agent death event (but don't pause the run —
-                        # the AgentExecutionError below propagates to _run_loop
-                        # which handles the pause with proper reason tracking).
-                        if self._runner_monitor and self._run_id:
-                            try:
-                                await self._runner_monitor.on_agent_died(
-                                    run_id=self._run_id,
-                                    agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
-                                    exit_code=None,
-                                    reason=f"agent_stuck_killed_after_{nudger.nudge_count}_nudges",
-                                    pause_run=False,
-                                    task_id=context.task_id,
-                                )
-                            except Exception as e:
-                                logger.warning(f"Failed to notify monitor of stuck agent: {e}")
-                        raise AgentExecutionError(
-                            "cli_subprocess",
-                            f"Agent stuck after {nudger.nudge_count} nudges, killed",
-                        )
-                    elif action == NudgeAction.NUDGE:
-                        message = nudger.record_nudge()
-                        output_lines.append(f"[nudge #{nudger.nudge_count}] {message}")
-                        # Deliver nudge to stdin if still open
-                        if self._stdin_mode == "open" and self._process.stdin is not None:
-                            try:
-                                self._process.stdin.write((message + "\n").encode())
-                                await self._process.stdin.drain()
-                            except (BrokenPipeError, ConnectionResetError, RuntimeError):
-                                pass  # Process already exited (RuntimeError = uvloop transport closed)
-
-            if batch_buffer and on_output:
-                await on_output(batch_buffer)
-                batch_buffer = []
+            output_lines = await self._read_main_output(context, nudger, on_output)
 
             await self._process.wait()
 
-            success = self._process.returncode == 0
+            stop_task = self._terminal_answer_stop_task
+            if stop_task is not None:
+                await cast(asyncio.Task[None], stop_task)
+
+            owned_terminal_stop = (
+                is_owned_terminal_answer_stop(
+                    self._terminal_answer_stop_owned,
+                    self._process.returncode,
+                )
+                and not self._terminal_answer_stop_timed_out
+            )
+            success = self._process.returncode == 0 or owned_terminal_stop
 
             # If process exited with non-zero code (failure), log death event
             # (don't pause — let error propagate to _run_loop)
-            if not success and self._runner_monitor and self._run_id:
-                try:
-                    await self._runner_monitor.on_agent_died(
-                        run_id=self._run_id,
-                        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
-                        exit_code=self._process.returncode,
-                        reason="agent_exit_failure",
-                        pause_run=False,
-                        task_id=context.task_id,
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to notify monitor of agent exit failure: {e}")
+            if not success:
+                await self._notify_agent_died(
+                    context,
+                    exit_code=self._process.returncode,
+                    reason=(
+                        "terminal_answer_stop_timeout"
+                        if self._terminal_answer_stop_timed_out
+                        else "agent_exit_failure"
+                    ),
+                )
 
             # Finalize parser to get structured action log
-            action_log = None
-            final_output_lines = output_lines
-            if self._parser is not None:
-                action_log = self._parser.finalize()
-                # Extract readable text from parsed entries so agent_output
-                # remains useful even though stdout is NDJSON
-                readable = self._parser.get_readable_text()
-                if readable.strip():
-                    final_output_lines = readable.split("\n")
-
-                # Load sub-agent sessions spawned via the Agent tool.
-                # These run as separate Claude Code processes and their token
-                # costs are NOT included in the parent session totals above.
-                if action_log.session_id and context.working_dir:
-                    from orchestrator.runners.agents.claude_cli.subagents import load_sub_agents
-
-                    sub_agents = load_sub_agents(context.working_dir, action_log.session_id)
-                    if sub_agents:
-                        action_log.sub_agents = sub_agents
-                        for sa in sub_agents:
-                            action_log.sub_agent_gen_ai_usage_input_tokens += (
-                                sa.gen_ai_usage_input_tokens
-                            )
-                            action_log.sub_agent_gen_ai_usage_output_tokens += (
-                                sa.gen_ai_usage_output_tokens
-                            )
-                            action_log.sub_agent_gen_ai_usage_cache_read_input_tokens += (
-                                sa.gen_ai_usage_cache_read_input_tokens
-                            )
-                            action_log.sub_agent_gen_ai_usage_cache_creation_input_tokens += (
-                                sa.gen_ai_usage_cache_creation_input_tokens
-                            )
+            action_log, final_output_lines = self._finalize_action_output(context, output_lines)
 
             # Detect rate-limit: the CLI returned a limit message instead of
             # doing work.  Raise before any retry logic can consume a slot.
@@ -912,7 +984,10 @@ class CLIAgent:
             # submit, bounded by max_commit_fix_attempts. The worktree persists between
             # spawns, so the agent fixes its own changes in place. Only the
             # currently-fatal commit-gate path is affected; the success path is unchanged.
-            if success:
+            if success and not (
+                context.submission_contract is not None
+                and context.submission_contract.requires_arguments
+            ):
                 fix_lines = await self._submit_with_bounded_correction(
                     on_submit=on_submit,
                     cmd=cmd,
@@ -928,7 +1003,12 @@ class CLIAgent:
             # Prefer the structured exit_subtype from the result event over the
             # raw exit code, which is always "1" and tells the user nothing.
             error: str | None = None
-            if self._process.returncode != 0:
+            if self._terminal_answer_stop_timed_out:
+                error = (
+                    "Owned terminal-answer stop exceeded "
+                    f"{self._terminal_answer_stop_timeout:g}s and was killed"
+                )
+            elif self._process.returncode != 0 and not owned_terminal_stop:
                 exit_subtype = action_log.exit_subtype if action_log else ""
                 api_error = _first_api_error(final_output_lines)
                 if api_error:
@@ -956,6 +1036,7 @@ class CLIAgent:
                     if isinstance(self._parser, ClaudeStreamParser)
                     else []
                 ),
+                completion_cause=("terminal_answer_completed" if owned_terminal_stop else None),
             )
 
         except AgentCancelledError:
@@ -992,6 +1073,16 @@ class CLIAgent:
                     self._process.terminate()
                 except Exception:
                     pass
+            stop_task = self._terminal_answer_stop_task
+            if stop_task is not None:
+                typed_stop_task = cast(asyncio.Task[None], stop_task)
+                if not typed_stop_task.done():
+                    typed_stop_task.cancel()
+                try:
+                    await typed_stop_task
+                except asyncio.CancelledError:
+                    pass
+                self._terminal_answer_stop_task = None
             self._process = None
 
     async def _run_commit_fix_pass(
@@ -1117,6 +1208,16 @@ class CLIAgent:
         self._cancelled = True
         if self._process is not None:
             self._process.terminate()
+
+    async def request_terminal_answer_completion(self) -> None:
+        """Terminate the owned CLI process after its decision was durably staged."""
+        self._terminal_answer_requested = True
+        if self._process is not None and self._process.returncode is None:
+            self._terminal_answer_stop_owned = True
+            self._process.terminate()
+            self._terminal_answer_stop_task = asyncio.create_task(
+                self._watch_terminal_answer_stop(self._process)
+            )
 
 
 class ClaudeCliQuotaAgent:

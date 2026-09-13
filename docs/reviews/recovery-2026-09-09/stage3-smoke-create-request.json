@@ -1,0 +1,58 @@
+{
+  "routine_id": "dynamic-graph-feature",
+  "repo_name": "fixture",
+  "branch": "main",
+  "config": {
+    "feature_spec_path": "SMOKE_SPEC.md",
+    "feature_spec_content": "",
+    "acceptance_command": "/private/tmp/orchestrator-stage3-smoke.DA0X5r/stage3_oracle.sh",
+    "acceptance_command_timeout_seconds": 10,
+    "hidden_oracle_command": "",
+    "patch_budget": 3,
+    "gap_policy_profile": "standard",
+    "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
+    "reliable_plan_model_assignments": {
+      "arm_id": "recovery-stage3-platform-smoke",
+      "planner": {
+        "runner_type": "codex_server",
+        "model": "gpt-5.6-luna",
+        "profile": "architect"
+      },
+      "discovery_worker": {
+        "runner_type": "codex_server",
+        "model": "gpt-5.6-luna",
+        "profile": "summarizer"
+      },
+      "implementation_worker": {
+        "runner_type": "codex_server",
+        "model": "gpt-5.6-luna",
+        "profile": "coder"
+      },
+      "correction_worker": {
+        "runner_type": "codex_server",
+        "model": "gpt-5.6-luna",
+        "profile": "coder"
+      },
+      "verifier": {
+        "runner_type": "codex_server",
+        "model": "gpt-5.6-luna",
+        "profile": "coder"
+      },
+      "successor_planner": {
+        "runner_type": "codex_server",
+        "model": "gpt-5.6-luna",
+        "profile": "architect"
+      }
+    }
+  },
+  "agent_runner_type": "codex_server",
+  "agent_runner_config": {
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "medium",
+    "restrictions": "managed",
+    "local_provider": "openai"
+  },
+  "merge_strategy": "squash",
+  "execution_mode": "graph",
+  "reliable_plan_qualification_reference": "rpq_CD9aJ8zeC87A-HAJ1seecGfzZjK4xMbMybzd6ngwtWM"
+}
