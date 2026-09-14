@@ -1320,6 +1320,17 @@ def _bind_decision_successors(
                 and node.get("role") == "planner"
                 and node.get("semantic_stage") == "successor_planning"
             )
+            or (
+                node.get("kind") == "verifier"
+                and node.get("role") == "verifier"
+                and node.get("semantic_stage")
+                in {"plan_verification", "effectful_batch", "corrective_work", "final_audit"}
+            )
+            or (
+                node.get("kind") == "worker"
+                and node.get("role") in {"implementer", "fixer"}
+                and node.get("semantic_stage") in {"effectful_batch", "corrective_work"}
+            )
             or (node.get("kind") == "planner" and node.get("role") == "gap_planner")
         )
         if not target:
@@ -1347,6 +1358,33 @@ def _bind_decision_successors(
                     }
                 )
         outputs = cast(list[dict[str, Any]], node.setdefault("outputs", []))
+        if node.get("kind") == "worker" and node.get("role") in {"implementer", "fixer"}:
+            for port, schema in (
+                ("candidate", "ImplementationCandidate"),
+                ("file_state", "FileStateRecord"),
+                ("decision", "DecisionAnswer"),
+            ):
+                if not any(item.get("port") == port for item in outputs):
+                    outputs.append(
+                        {
+                            "port": port,
+                            "direction": "output",
+                            "schema": schema,
+                            "record_layers": ["graph_record"],
+                            "required": True,
+                        }
+                    )
+        if node.get("kind") == "verifier" and not any(
+            item.get("port") == "verification_report" for item in outputs
+        ):
+            outputs.append(
+                {
+                    "port": "verification_report",
+                    "direction": "output",
+                    "schema": "VerificationReport",
+                    "required": True,
+                }
+            )
         if node.get("role") == "gap_planner" and not any(
             item.get("port") == "decision" for item in outputs
         ):
@@ -1379,6 +1417,30 @@ def _bind_decision_successors(
                     "port": "decision",
                     "direction": "output",
                     "schema": "DecisionAnswer",
+                    "record_layers": ["graph_record"],
+                    "required": True,
+                }
+            )
+        if node.get("kind") == "verifier" and not any(
+            item.get("port") == "decision" for item in outputs
+        ):
+            outputs.append(
+                {
+                    "port": "decision",
+                    "direction": "output",
+                    "schema": "DecisionAnswer",
+                    "record_layers": ["graph_record"],
+                    "required": True,
+                }
+            )
+        if node.get("kind") == "verifier" and not any(
+            item.get("port") == "semantic_artifact" for item in outputs
+        ):
+            outputs.append(
+                {
+                    "port": "semantic_artifact",
+                    "direction": "output",
+                    "schema": "SemanticArtifact",
                     "record_layers": ["graph_record"],
                     "required": True,
                 }

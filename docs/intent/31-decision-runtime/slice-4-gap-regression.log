@@ -1,0 +1,25 @@
+
+[boundary-check] 1.033s | files_checked=1764 ast_parsed=28
+........................................................................ [ 18%]
+........................................................................ [ 37%]
+........................................................................ [ 56%]
+........................................................................ [ 75%]
+........................................................................ [ 93%]
+.......................                                                  [100%]
+=============================== warnings summary ===============================
+tests/unit/test_graph_runner_boundary_commands.py::test_recovery_authority_collapses_identical_roots_retained_in_phase_history
+  /Users/peter/code/task-world/worktrees/recovery-stabilization/src/orchestrator/graph/projection_collections.py:98: UserWarning: Pydantic serializer warnings:
+    PydanticSerializationUnexpectedValue(Expected `RunnerCacheRoot` - serialized value may not be as expected [field_name='baseline_cache_roots', input_value={'path': '.pytest_cache', 'kind': 'ignored'}, input_type=dict])
+    PydanticSerializationUnexpectedValue(Expected `str` - serialized value may not be as expected [field_name='baseline_cache_roots', input_value={'path': '.pytest_cache', 'kind': 'ignored'}, input_type=dict])
+    PydanticSerializationUnexpectedValue(Expected `RunnerCacheRoot` - serialized value may not be as expected [field_name='baseline_cache_roots', input_value={'path': '.pytest_cache', 'kind': 'ignored'}, input_type=dict])
+    PydanticSerializationUnexpectedValue(Expected `str` - serialized value may not be as expected [field_name='baseline_cache_roots', input_value={'path': '.pytest_cache', 'kind': 'ignored'}, input_type=dict])
+    return handler(dict(backend))
+
+tests/unit/test_graph_mcp_tools.py: 8 warnings
+tests/unit/test_graph_dispatch_on_output.py: 1 warning
+tests/integration/test_graph_decision_runtime.py: 9 warnings
+  /Users/peter/code/task-world/worktrees/recovery-stabilization/.venv/lib/python3.12/site-packages/pydantic/json_schema.py:2448: PydanticJsonSchemaWarning: Default value <object object at 0x10a0fb6f0> is not JSON serializable; excluding default from JSON schema [non-serializable-default]
+    warnings.warn(message, PydanticJsonSchemaWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+383 passed, 19 warnings in 254.48s (0:04:14)

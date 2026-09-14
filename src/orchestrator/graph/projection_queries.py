@@ -120,7 +120,6 @@ def evidence_closure_for_node(
     identified candidate and file-state records. Unknown accepted references
     and citation cycles fail closed for every consumer.
     """
-    del consumer  # One shared contract; the name documents the calling boundary.
     node = node_payload_view(projection, node_id) or {}
 
     bindings = input_bindings_view(projection).get(node_id, {})
@@ -150,6 +149,13 @@ def evidence_closure_for_node(
     output_records = record_payloads_view(projection)
     file_states = file_state_records_view(projection)
     known_ids = {*output_records, *file_states}
+    final_audit_candidate_ids: list[str] = []
+    if consumer == "final_audit":
+        for record_id in _record_ids_for_binding_ports(bindings, ("dynamic_feature_acceptance",)):
+            payload = output_records.get(record_id)
+            candidate_id = payload.get("candidate_id") if payload is not None else None
+            if isinstance(candidate_id, str):
+                final_audit_candidate_ids.append(candidate_id)
     for record_id in tuple(candidate_ids):
         payload = output_records.get(record_id)
         if payload is not None:
@@ -209,6 +215,16 @@ def evidence_closure_for_node(
     candidate_ids = _unique_ids(candidate_ids)
     file_state_ids = _unique_ids(file_state_ids)
     evaluated_ids = _unique_ids([*evidence_ids, *indirect_ids, *candidate_ids, *file_state_ids])
+    if final_audit_candidate_ids:
+        candidate_ids = _unique_ids(final_audit_candidate_ids)
+        file_state_ids = _unique_ids(
+            [
+                file_state_id
+                for candidate_id in candidate_ids
+                if (payload := output_records.get(candidate_id)) is not None
+                for file_state_id in _citation_ids(payload, "file_state_record_ids")
+            ]
+        )
     return EvidenceClosure(
         candidate_record_ids=tuple(candidate_ids),
         file_state_record_ids=tuple(file_state_ids),

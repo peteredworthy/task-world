@@ -156,7 +156,12 @@ from orchestrator.graph.retry_policy import (
     effective_node_attempt_number,
     effective_node_max_attempts,
 )
-from orchestrator.graph.decisions import resolve_decision_applicability
+from orchestrator.graph.decisions import (
+    VERIFICATION_JUDGMENT_SCHEMA_ID,
+    VERIFICATION_JUDGMENT_SCHEMA_VERSION,
+    resolve_decision_applicability,
+    resolve_verification_decision_context,
+)
 from orchestrator.graph.projection_queries import (
     EvidenceClosureError,
     node_failed_candidates_view,
@@ -2186,17 +2191,76 @@ def _verification_record_conflict(
                 f"verification record candidate_id at index {index} is not bound "
                 f"to verifier input: {candidate_id}"
             )
-        represented_requirement_ids = set(active_requirement_versions_view(projection))
-        represented_requirement_ids.update(
-            item.value.id
-            for item in output_record_payloads_view(projection).values()
-            if isinstance(item, RequirementRecord) and item.value.source == "routine"
+        applicability = resolve_decision_applicability(projection, expected_producer_node_id)
+        typed_verification = applicability is not None and applicability.family == (
+            "verification_decision"
         )
+        if typed_verification:
+            resolved = resolve_verification_decision_context(projection, expected_producer_node_id)
+            records = output_record_payloads_view(projection)
+            represented_requirement_ids = {
+                requirement.value.id
+                for obligation in resolved.obligation_table
+                if obligation.source_field == "value.text"
+                and isinstance(
+                    requirement := records.get(obligation.source_record_or_node_identity),
+                    RequirementRecord,
+                )
+            }
+            grade_ids = [grade.requirement_id for grade in record.value.grades]
+            if grade_ids != [
+                requirement.value.id
+                for obligation in resolved.obligation_table
+                if obligation.source_field == "value.text"
+                and isinstance(
+                    requirement := records.get(obligation.source_record_or_node_identity),
+                    RequirementRecord,
+                )
+            ]:
+                return (
+                    f"verification record at index {index} grades do not match exact "
+                    "bound requirement obligations"
+                )
+            judgment_id = record.value.judgment_artifact_record_id
+            judgment_payload: dict[str, Any] | None = None
+            for item in cast(list[Any], raw_records):
+                if not isinstance(item, dict):
+                    continue
+                candidate_payload = cast(dict[str, Any], item)
+                if (
+                    candidate_payload.get("record_id") == judgment_id
+                    and candidate_payload.get("record_type") == "semantic_artifact"
+                ):
+                    judgment_payload = candidate_payload
+                    break
+            judgment_value = (
+                cast(dict[str, Any], judgment_payload.get("value"))
+                if judgment_payload is not None and isinstance(judgment_payload.get("value"), dict)
+                else None
+            )
+            if (
+                not isinstance(judgment_id, str)
+                or judgment_value is None
+                or judgment_value.get("schema_id") != VERIFICATION_JUDGMENT_SCHEMA_ID
+                or judgment_value.get("schema_version") != VERIFICATION_JUDGMENT_SCHEMA_VERSION
+                or record.evidence != {"judgment_artifact_record_id": judgment_id}
+            ):
+                return (
+                    f"verification record at index {index} is missing its exact "
+                    "versioned judgment artifact"
+                )
+        else:
+            represented_requirement_ids = set(active_requirement_versions_view(projection))
+            represented_requirement_ids.update(
+                item.value.id
+                for item in output_record_payloads_view(projection).values()
+                if isinstance(item, RequirementRecord) and item.value.source == "routine"
+            )
         # An empty rubric has no grades to report. Treat an empty list as the
         # complete evaluation of that rubric; once requirements exist, a
         # verifier must still provide grades and the coverage checks below
         # remain authoritative.
-        if not record.value.grades and represented_requirement_ids:
+        if not typed_verification and not record.value.grades and represented_requirement_ids:
             return f"verification record at index {index} missing grades"
         for grade in record.value.grades:
             if grade.requirement_id not in represented_requirement_ids:
@@ -2875,9 +2939,13 @@ def _evaluated_record_citations(
     node_id: str,
 ) -> dict[str, list[str]]:
     node = node_payload_view(projection, node_id) or {}
+    # Only decision-v1 narrows final-audit authority to the exact acceptance
+    # candidate. Legacy callbacks retain their historical transitive citations.
     consumer = (
         "final_audit"
         if node.get("semantic_stage") == "final_audit"
+        and (applicability := resolve_decision_applicability(projection, node_id)) is not None
+        and applicability.family == "verification_decision"
         else "check"
         if node.get("kind") == "check"
         else "verifier"

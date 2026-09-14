@@ -42,6 +42,7 @@ from orchestrator.graph.projection_queries import (
     leases_view,
     node_attempts_view,
     node_max_attempts_view,
+    node_payload_view,
 )
 from orchestrator.graph.retry_policy import effective_node_attempt_number
 from orchestrator.graph.projection_queries import (
@@ -110,6 +111,20 @@ def _decision_staleness_reason(
 
 def _conflict(make_event: Any, command: str, reason: str) -> list[EventEnvelope]:
     return [make_event("command_rejected", {"command_type": command, "reason": reason})]
+
+
+def _work_result_failure_reason(answer: object) -> str | None:
+    """Extract the typed blocker reason for the authoritative failed transition."""
+    if not isinstance(answer, dict):
+        return None
+    typed_answer = cast(dict[str, object], answer)
+    if typed_answer.get("status") != "blocked":
+        return None
+    blocker = typed_answer.get("blocker")
+    if not isinstance(blocker, dict):
+        return None
+    reason = cast(dict[str, object], blocker).get("reason")
+    return reason if isinstance(reason, str) else None
 
 
 def _same_identity(attempt: Any, payload: Any) -> bool:
@@ -312,6 +327,8 @@ def handle_stage_runner_submission(
                 "implementation_plan",
                 "batch_decision",
                 "correction_decision",
+                "verification_decision",
+                "work_result",
             }:
                 raise ValueError("decision family is not activated")
             resolved = resolve_decision_context(projection, payload.node_id)
@@ -326,7 +343,10 @@ def handle_stage_runner_submission(
                 or request.answer_schema_version != schema_version
                 or request.answer_schema_sha256 != schema_sha256
                 or request.bound_inputs != resolved.bound_inputs
-                or set(decision_envelope.answer) != {applicability.output_port}
+                or (
+                    set(decision_envelope.answer) != {applicability.output_port}
+                    and applicability.family != "work_result"
+                )
             ):
                 authority = (
                     "exact successor authority"
@@ -335,7 +355,77 @@ def handle_stage_runner_submission(
                 )
                 raise ValueError(f"decision request does not match {authority}")
             thawed_answer = cast(dict[str, Any], thaw_json(decision_envelope.answer))
-            if applicability.family == "implementation_plan":
+            if applicability.family == "work_result":
+                if payload.controller_output_records is None:
+                    raise ValueError("worker result is missing controller-owned output records")
+                compilation = compile_decision(
+                    projection,
+                    node_id=payload.node_id,
+                    decision_request_id=request.decision_request_id,
+                    base_graph_position=payload.observed_graph_position,
+                    answer=cast(dict[str, Any], thawed_answer.get("decision")),
+                )
+                if stale := _decision_staleness_reason(
+                    events,
+                    base_graph_position=payload.observed_graph_position,
+                    read_set=compilation.read_set,
+                ):
+                    raise ValueError(stale)
+                raw_outputs = thawed_answer
+                node_outputs = (node_payload_view(projection, payload.node_id) or {}).get("outputs")
+                declared_semantic_ports: set[str] = set()
+                if isinstance(node_outputs, list):
+                    for raw_output in cast(list[Any], node_outputs):
+                        if not isinstance(raw_output, dict):
+                            continue
+                        output = cast(dict[str, Any], raw_output)
+                        port = output.get("port")
+                        if output.get("schema") == "SemanticArtifact" and isinstance(port, str):
+                            declared_semantic_ports.add(port)
+                allowed_answer_ports = {"decision", *declared_semantic_ports}
+                if set(raw_outputs) - allowed_answer_ports:
+                    raise ValueError("worker result answer contains an undeclared output")
+                missing_semantic_ports: set[str] = set()
+                if isinstance(node_outputs, list):
+                    for raw_output in cast(list[Any], node_outputs):
+                        if not isinstance(raw_output, dict):
+                            continue
+                        output = cast(dict[str, Any], raw_output)
+                        port = output.get("port")
+                        if (
+                            output.get("schema") == "SemanticArtifact"
+                            and output.get("required") is not False
+                            and isinstance(port, str)
+                            and port not in raw_outputs
+                        ):
+                            missing_semantic_ports.add(port)
+                if missing_semantic_ports:
+                    raise ValueError(
+                        "worker result answer is missing required semantic outputs "
+                        f"{sorted(missing_semantic_ports)}"
+                    )
+                validation_payload = payload.model_copy(
+                    update={"payload": {"output_records": payload.controller_output_records}}
+                )
+                validation = apply_callback_command(
+                    projection,
+                    events,
+                    validation_payload,
+                    context.run_id,
+                    make_event,
+                    allow_recorded_runner_execution=True,
+                )
+                if not validation or validation[0].event_type != "callback_accepted":
+                    detail = (
+                        f"{validation[0].event_type}: {validation[0].payload}"
+                        if validation
+                        else "empty callback plan"
+                    )
+                    raise ValueError(f"worker result callback is not admissible: {detail}")
+                owns_file_state_snapshot = _accepted_file_state_owns_staged_snapshot(
+                    validation, payload
+                )
+            elif applicability.family == "implementation_plan":
                 plan_compilation = compile_implementation_plan(
                     projection,
                     node_id=payload.node_id,
@@ -419,25 +509,55 @@ def handle_stage_runner_submission(
                     read_set=compilation.read_set,
                 ):
                     raise ValueError(stale)
-                patch_plan = apply_patch_command(
-                    projection,
-                    events,
-                    SubmitPatchCommand(
-                        patch_id=compilation.patch_id,
-                        base_graph_position=compilation.base_graph_position,
-                        ops=list(compilation.ops),
-                    ),
-                    PatchCommandContext(
-                        run_id=context.run_id,
-                        current_graph_position=context.current_graph_position,
-                        proposed_by_node_id=payload.node_id,
-                        actor_role="planner",
-                    ),
-                    make_event,
-                )
-                if not patch_plan or patch_plan[0].event_type != "graph_patch_accepted":
-                    raise ValueError("decision consequence patch is not admissible")
+                patch_plan = []
+                if applicability.family != "verification_decision":
+                    patch_plan = apply_patch_command(
+                        projection,
+                        events,
+                        SubmitPatchCommand(
+                            patch_id=compilation.patch_id,
+                            base_graph_position=compilation.base_graph_position,
+                            ops=list(compilation.ops),
+                        ),
+                        PatchCommandContext(
+                            run_id=context.run_id,
+                            current_graph_position=context.current_graph_position,
+                            proposed_by_node_id=payload.node_id,
+                            actor_role="planner",
+                        ),
+                        make_event,
+                    )
+                    if not patch_plan or patch_plan[0].event_type != "graph_patch_accepted":
+                        raise ValueError("decision consequence patch is not admissible")
                 validation = []
+                if applicability.family == "verification_decision":
+                    validation_payload = payload.model_copy(
+                        update={
+                            "payload": {
+                                "output_records": [
+                                    record.model_dump(mode="json", by_alias=True)
+                                    for record in compilation.output_records
+                                ]
+                            }
+                        }
+                    )
+                    validation = apply_callback_command(
+                        projection,
+                        [],
+                        validation_payload,
+                        context.run_id,
+                        make_event,
+                        allow_recorded_runner_execution=True,
+                    )
+                    if not validation or validation[0].event_type != "callback_accepted":
+                        detail = (
+                            f"{validation[0].event_type}: {validation[0].payload}"
+                            if validation
+                            else "empty callback plan"
+                        )
+                        raise ValueError(
+                            f"verification decision callback is not admissible: {detail}"
+                        )
                 owns_file_state_snapshot = False
         except (TypeError, ValueError) as exc:
             return _conflict(
@@ -596,6 +716,8 @@ def handle_finalize_runner_execution(
                 "implementation_plan",
                 "batch_decision",
                 "correction_decision",
+                "verification_decision",
+                "work_result",
             }:
                 raise ValueError("decision family is not activated")
             resolved = resolve_decision_context(projection, attempt.node_id)
@@ -625,10 +747,116 @@ def handle_finalize_runner_execution(
             ):
                 raise ValueError("protected decision question context is stale or corrupt")
             thawed_answer = thaw_json(decision_envelope.answer)
-            if not isinstance(thawed_answer, dict) or set(thawed_answer) != {
-                applicability.output_port
-            }:
+            if not isinstance(thawed_answer, dict) or (
+                applicability.family != "work_result"
+                and set(thawed_answer) != {applicability.output_port}
+            ):
                 raise ValueError("staged decision answer is malformed")
+            if applicability.family == "work_result":
+                if payload.controller_output_records is None:
+                    raise ValueError("worker result is missing controller-owned output records")
+                compilation = compile_decision(
+                    projection,
+                    node_id=attempt.node_id,
+                    decision_request_id=request.decision_request_id,
+                    base_graph_position=cast(int, attempt.observed_graph_position),
+                    answer=cast(dict[str, Any], thawed_answer.get("decision")),
+                )
+                if stale := _decision_staleness_reason(
+                    events,
+                    base_graph_position=cast(int, attempt.observed_graph_position),
+                    read_set=compilation.read_set,
+                ):
+                    raise ValueError(stale)
+                callback = {
+                    "node_id": attempt.node_id,
+                    "execution_id": attempt.execution_id,
+                    "lease_id": attempt.lease_id,
+                    "lease_generation": attempt.lease_generation,
+                    "base_snapshot_id": (
+                        attempt.callback_base_snapshot_id or attempt.baseline_snapshot_id
+                    ),
+                    "observed_graph_position": attempt.observed_graph_position,
+                    "idempotency_key": attempt.idempotency_key,
+                    "payload": {"output_records": payload.controller_output_records},
+                    "is_mutating": attempt.is_mutating,
+                    "complete_node": attempt.complete_node,
+                    "new_state": attempt.new_state,
+                }
+                callback_plan = apply_callback_command(
+                    projection,
+                    events,
+                    StageRunnerSubmissionCommand.model_validate(
+                        {
+                            **callback,
+                            "staged_snapshot_id": attempt.staged_snapshot_id,
+                            "staged_snapshot_ref": attempt.staged_snapshot_ref,
+                            "staged_commit_sha": attempt.staged_commit_sha,
+                            "staged_tree_sha": attempt.staged_tree_sha,
+                            "boundary_hash": attempt.staged_boundary_hash,
+                            "boundary_entries": [
+                                entry.model_dump(mode="json")
+                                for entry in attempt.staged_boundary_entries
+                            ],
+                            "cache_authority_hash": attempt.cache_authority_hash,
+                            "cache_roots": [
+                                RunnerCacheRoot.model_validate(root).model_dump(mode="json")
+                                for root in attempt.staged_cache_roots
+                                if not isinstance(root, str)
+                            ],
+                            "cache_status_evidence": [
+                                item.model_dump(mode="json")
+                                for item in attempt.staged_cache_status_evidence
+                            ],
+                        }
+                    ),
+                    context.run_id,
+                    make_event,
+                    allow_recorded_runner_execution=True,
+                )
+                if not callback_plan or callback_plan[0].event_type != "callback_accepted":
+                    return [make_event(item.event_type, item.payload) for item in callback_plan]
+                failure_reason = _work_result_failure_reason(thawed_answer.get("decision"))
+                if failure_reason is not None:
+                    callback_plan = [
+                        item.model_copy(
+                            update={"payload": {**item.payload, "reason": failure_reason}}
+                        )
+                        if item.event_type == "node_state_changed"
+                        and item.payload.get("node_id") == attempt.node_id
+                        and item.payload.get("new_state") == "failed"
+                        else item
+                        for item in callback_plan
+                    ]
+                final_payload = payload.model_dump(
+                    mode="json",
+                    exclude={
+                        "callback_payload",
+                        "cache_roots",
+                        "decision_base_graph_position",
+                        "decision_question_context",
+                        "controller_output_records",
+                    },
+                )
+                final_payload.pop("controller_output_records", None)
+                final_payload["disposition"] = "finalized_accepted"
+                return [
+                    make_event("runner_execution_finalized", final_payload),
+                    *(make_event(item.event_type, item.payload) for item in callback_plan),
+                    *_snapshot_cleanup_events(
+                        make_event,
+                        attempt,
+                        final_snapshot=(
+                            payload.final_snapshot_id,
+                            payload.final_snapshot_ref,
+                            payload.final_tree_sha,
+                            payload.final_commit_sha,
+                        ),
+                        retain_staged_snapshot=_accepted_file_state_owns_staged_snapshot(
+                            callback_plan, attempt
+                        ),
+                    ),
+                ]
             if applicability.family == "implementation_plan":
                 plan_compilation = compile_implementation_plan(
                     projection,
@@ -728,6 +956,7 @@ def handle_finalize_runner_execution(
                         "cache_roots",
                         "decision_base_graph_position",
                         "decision_question_context",
+                        "controller_output_records",
                     },
                 )
                 final_payload["disposition"] = "finalized_accepted"
@@ -760,24 +989,26 @@ def handle_finalize_runner_execution(
                 read_set=compilation.read_set,
             ):
                 raise ValueError(stale)
-            patch_plan = apply_patch_command(
-                projection,
-                events,
-                SubmitPatchCommand(
-                    patch_id=compilation.patch_id,
-                    base_graph_position=compilation.base_graph_position,
-                    ops=list(compilation.ops),
-                ),
-                PatchCommandContext(
-                    run_id=context.run_id,
-                    current_graph_position=context.current_graph_position,
-                    proposed_by_node_id=attempt.node_id,
-                    actor_role="planner",
-                ),
-                make_event,
-            )
-            if not patch_plan or patch_plan[0].event_type != "graph_patch_accepted":
-                raise ValueError("decision consequence patch is no longer admissible")
+            patch_plan = []
+            if applicability.family != "verification_decision":
+                patch_plan = apply_patch_command(
+                    projection,
+                    events,
+                    SubmitPatchCommand(
+                        patch_id=compilation.patch_id,
+                        base_graph_position=compilation.base_graph_position,
+                        ops=list(compilation.ops),
+                    ),
+                    PatchCommandContext(
+                        run_id=context.run_id,
+                        current_graph_position=context.current_graph_position,
+                        proposed_by_node_id=attempt.node_id,
+                        actor_role="planner",
+                    ),
+                    make_event,
+                )
+                if not patch_plan or patch_plan[0].event_type != "graph_patch_accepted":
+                    raise ValueError("decision consequence patch is no longer admissible")
             prospective = projection
             positioned_patch: list[EventEnvelope] = []
             for offset, item in enumerate(patch_plan, start=1):
@@ -870,8 +1101,10 @@ def handle_finalize_runner_execution(
                     "cache_roots",
                     "decision_base_graph_position",
                     "decision_question_context",
+                    "controller_output_records",
                 },
             )
+            final_payload.pop("controller_output_records", None)
             final_payload["disposition"] = "finalized_accepted"
             return [
                 make_event("runner_execution_finalized", final_payload),
@@ -950,8 +1183,10 @@ def handle_finalize_runner_execution(
             "cache_roots",
             "decision_base_graph_position",
             "decision_question_context",
+            "controller_output_records",
         },
     )
+    final_payload.pop("controller_output_records", None)
     final_payload["disposition"] = "finalized_accepted"
     staged_snapshot_transferred = _accepted_file_state_owns_staged_snapshot(callback_plan, attempt)
     return [
@@ -1040,8 +1275,10 @@ def handle_witness_runner_completion(
             "cache_roots",
             "decision_base_graph_position",
             "decision_question_context",
+            "controller_output_records",
         },
     )
+    witness_payload.pop("controller_output_records", None)
     witness_payload["disposition"] = "completion_witnessed"
     witnessed = make_event("runner_completion_witnessed", witness_payload)
     if attempt.staged_boundary_hash == payload.boundary_hash:

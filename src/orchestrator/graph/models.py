@@ -845,6 +845,7 @@ class VerificationReportValue(StrictNestedModel):
     outcome: Literal["passed", "failed"]
     grades: list[GradeRow] = Field(default_factory=_empty_verification_grades)
     reason: str | None = None
+    judgment_artifact_record_id: str | None = None
 
 
 class VerificationReportRecord(TypedRecordBase):
@@ -2541,7 +2542,13 @@ class DecisionAnswerValue(StrictNestedModel):
     """Canonical accepted judgment and the runtime request it answered."""
 
     interaction_contract: Literal["decision-v1"]
-    family: Literal["discovery_brief", "batch_decision", "correction_decision"]
+    family: Literal[
+        "discovery_brief",
+        "batch_decision",
+        "correction_decision",
+        "verification_decision",
+        "work_result",
+    ]
     decision_request_id: str
     answer_schema_id: str
     answer_schema_version: StrictInt = Field(ge=1)

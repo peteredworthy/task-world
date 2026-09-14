@@ -30,7 +30,10 @@ from orchestrator.config.models import (
 )
 from orchestrator.config.template_vars import resolve_plain_variables
 from orchestrator.graph.commands import Clock, IdGenerator
-from orchestrator.graph.decisions import decision_plan_declaration
+from orchestrator.graph.decisions import (
+    decision_plan_declaration,
+    verification_judgment_declaration,
+)
 from orchestrator.graph.reliable_plan_evaluation import ReliablePlanRuntimeLimits
 from orchestrator.graph.cache_authority import (
     CacheAuthorityDeclaration,
@@ -1402,27 +1405,28 @@ def _routine_content_hash(routine: RoutineConfig) -> str:
 def _snapshot_semantic_declarations(
     routine: RoutineConfig,
 ) -> list[SemanticArtifactSchemaConfig]:
-    """Add the generated decision plan exactly once and reject identity conflicts."""
+    """Add generated decision artifacts exactly once and reject identity conflicts."""
     declarations = list(routine.semantic_artifact_schemas)
     if routine.agent_interaction_contract != "decision-v1":
         return declarations
-    builtin = decision_plan_declaration()
-    identity = (builtin.schema_id, builtin.version)
-    claimed = [
-        declaration
-        for declaration in declarations
-        if (declaration.schema_id, declaration.version) == identity
-    ]
-    if not claimed:
-        return [*declarations, builtin]
-    if any(
-        declaration.model_dump(mode="json") != builtin.model_dump(mode="json")
-        for declaration in claimed
-    ):
-        raise ValueError(
-            "routine semantic schema conflicts with generated built-in "
-            f"{builtin.schema_id}@{builtin.version}"
-        )
+    for builtin in (decision_plan_declaration(), verification_judgment_declaration()):
+        identity = (builtin.schema_id, builtin.version)
+        claimed = [
+            declaration
+            for declaration in declarations
+            if (declaration.schema_id, declaration.version) == identity
+        ]
+        if not claimed:
+            declarations.append(builtin)
+            continue
+        if any(
+            declaration.model_dump(mode="json") != builtin.model_dump(mode="json")
+            for declaration in claimed
+        ):
+            raise ValueError(
+                "routine semantic schema conflicts with generated built-in "
+                f"{builtin.schema_id}@{builtin.version}"
+            )
     return declarations
 
 
