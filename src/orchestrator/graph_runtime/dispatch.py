@@ -72,6 +72,8 @@ from orchestrator.graph import (
     PatchEnvelope,
     SubmitPatchCommand,
     RequirementRecord,
+    RecoveryPlanRecord,
+    RecoveryPlanValue,
     ReliablePlanAssignmentCarrier,
     ReliablePlanModelAssignment,
     SemanticArtifactRecord,
@@ -113,6 +115,7 @@ from orchestrator.graph import (
     resolve_decision_applicability,
 )
 from orchestrator.graph_runtime import prompts as _prompts
+from orchestrator.runners.submission import is_advisory_submission
 from orchestrator.graph_runtime.controller import (
     GraphController,
     RuntimeBoundaryCapability,
@@ -481,34 +484,101 @@ def _submission_contract(context: GraphDispatchContext) -> SubmissionContract | 
         "implementation_plan",
         "batch_decision",
         "correction_decision",
+        "verification_decision",
+        "work_result",
     }:
         resolve_decision_context(context.graph_projection, context.node_id)
         schema_id, schema_version, _schema_sha256, schema = decision_answer_schema(
             cast(Any, applicability.family)
         )
-        return SubmissionContract(
-            interaction_contract="decision-v1",
-            outputs=(
-                SubmissionOutputContract(
-                    port=applicability.output_port,
-                    schema_name=(
-                        "SemanticArtifact"
-                        if applicability.family == "implementation_plan"
-                        else "DecisionAnswer"
-                    ),
-                    required=True,
-                    record_type=(
-                        "semantic_artifact"
-                        if applicability.family == "implementation_plan"
-                        else "decision_answer"
-                    ),
-                    semantic_schema_id=schema_id,
-                    semantic_schema_version=schema_version,
-                    semantic_role=applicability.family,
-                    content_json_schema=schema,
+        outputs = [
+            SubmissionOutputContract(
+                port=applicability.output_port,
+                schema_name=(
+                    "SemanticArtifact"
+                    if applicability.family == "implementation_plan"
+                    else "DecisionAnswer"
                 ),
-            ),
-        )
+                required=True,
+                record_type=(
+                    "semantic_artifact"
+                    if applicability.family == "implementation_plan"
+                    else "decision_answer"
+                ),
+                semantic_schema_id=schema_id,
+                semantic_schema_version=schema_version,
+                semantic_role=applicability.family,
+                content_json_schema=schema,
+            )
+        ]
+        if applicability.family == "work_result":
+            # Candidate and file-state outputs are controller-owned. Only
+            # concrete semantic-artifact siblings remain model-authored.
+            raw_outputs = context.node_payload.get("outputs")
+            if isinstance(raw_outputs, list):
+                declarations = semantic_schema_declarations_view(context.graph_projection)
+                for raw_output in cast(list[object], raw_outputs):
+                    if not isinstance(raw_output, dict):
+                        continue
+                    output = cast(dict[str, object], raw_output)
+                    port = output.get("port")
+                    raw_schema = output.get("schema")
+                    if (
+                        not isinstance(port, str)
+                        or port == applicability.output_port
+                        or raw_schema != "SemanticArtifact"
+                    ):
+                        continue
+                    raw_schema_id = context.node_payload.get("semantic_schema_id")
+                    raw_schema_version = context.node_payload.get("semantic_schema_version")
+                    if not isinstance(raw_schema_id, str) or not isinstance(
+                        raw_schema_version, int
+                    ):
+                        raise ValueError(
+                            f"node {context.node_id} output {port} has no semantic schema identity"
+                        )
+                    declaration = declarations.get((raw_schema_id, raw_schema_version))
+                    if declaration is None:
+                        raise ValueError(
+                            f"node {context.node_id} output {port} references undeclared semantic "
+                            f"schema {raw_schema_id}@{raw_schema_version}"
+                        )
+                    outputs.append(
+                        SubmissionOutputContract(
+                            port=port,
+                            schema_name="SemanticArtifact",
+                            required=output.get("required") is not False,
+                            record_type="semantic_artifact",
+                            semantic_schema_id=raw_schema_id,
+                            semantic_schema_version=raw_schema_version,
+                            semantic_role=declaration.value.semantic_role,
+                            content_json_schema=cast(
+                                dict[str, Any], thaw_json(declaration.value.json_schema)
+                            ),
+                        )
+                    )
+        return SubmissionContract(interaction_contract="decision-v1", outputs=tuple(outputs))
+    if context.node_kind in {"appeal", "oversight", "recovery"}:
+        raw_outputs = context.node_payload.get("outputs")
+        if not isinstance(raw_outputs, list):
+            return None
+        for raw_output in cast(list[object], raw_outputs):
+            if not isinstance(raw_output, dict):
+                continue
+            output = cast(dict[str, object], raw_output)
+            if output.get("port") == "recovery_plan" and output.get("schema") == "RecoveryPlan":
+                return SubmissionContract(
+                    outputs=(
+                        SubmissionOutputContract(
+                            port="recovery_plan",
+                            schema_name="RecoveryPlan",
+                            required=output.get("required") is not False,
+                            record_type="recovery_plan",
+                            content_json_schema=RecoveryPlanValue.model_json_schema(),
+                        ),
+                    )
+                )
+        return None
     raw_outputs = context.node_payload.get("outputs")
     if not isinstance(raw_outputs, list):
         return None
@@ -598,7 +668,40 @@ def _semantic_output_records_from_submit_args(
     if not isinstance(raw_outputs, dict):
         raise ValueError(f"node {context.node_id} submit missing required object field outputs")
     authored = cast(dict[str, Any], raw_outputs)
-    declared_ports = {output.port for output in contract.outputs if output.content_json_schema}
+    if is_advisory_submission(contract):
+        if set(authored) != {"recovery_plan"}:
+            raise ValueError(
+                f"node {context.node_id} advisory submit requires exactly outputs.recovery_plan"
+            )
+        plan = RecoveryPlanValue.model_validate(authored["recovery_plan"])
+        record = RecoveryPlanRecord.model_validate(
+            {
+                "record_id": f"recovery-plan-{context.execution_id}",
+                "record_kind": "output",
+                "record_type": "recovery_plan",
+                "producer_node_id": context.node_id,
+                "port": "recovery_plan",
+                "schema": "RecoveryPlan",
+                "value": plan.model_dump(mode="json"),
+                "provenance": {
+                    "source": "agent_submit",
+                    "execution_id": context.execution_id,
+                },
+            }
+        )
+        return [cast(dict[str, object], record.model_dump(mode="json", by_alias=True))]
+    if applicability is not None and applicability.family == "work_result":
+        authored = {port: value for port, value in authored.items() if port != "decision"}
+    declared_ports = {
+        output.port
+        for output in contract.outputs
+        if output.content_json_schema
+        and not (
+            applicability is not None
+            and applicability.family == "work_result"
+            and output.port == "decision"
+        )
+    }
     unknown_ports = sorted(set(authored) - declared_ports)
     if unknown_ports:
         raise ValueError(
@@ -622,6 +725,12 @@ def _semantic_output_records_from_submit_args(
     authored_records: list[dict[str, object]] = []
     for output in contract.outputs:
         if output.content_json_schema is None:
+            continue
+        if (
+            applicability is not None
+            and applicability.family == "work_result"
+            and output.port == "decision"
+        ):
             continue
         if output.port not in authored:
             if output.required:
@@ -718,6 +827,65 @@ def _semantic_output_records_from_submit_args(
             continue
         controller_records.append(record)
     return [*controller_records, *authored_records]
+
+
+def _work_result_controller_records(
+    context: GraphDispatchContext,
+    *,
+    answer: dict[str, Any],
+    decision_request_id: str,
+    snapshot_id: str,
+    snapshot_ref: str | None,
+    commit_sha: str | None,
+    tree_sha: str,
+    boundary_entries: list[RunnerBoundaryEntry] | tuple[RunnerBoundaryEntry, ...],
+) -> list[dict[str, Any]]:
+    """Rebuild runtime-owned worker records from durable snapshot facts."""
+    compilation = compile_decision(
+        context.graph_projection,
+        node_id=context.node_id,
+        decision_request_id=decision_request_id,
+        base_graph_position=context.graph_position,
+        answer=answer["decision"],
+    )
+    records = [
+        record.model_dump(mode="json", by_alias=True) for record in compilation.output_records
+    ]
+    records.extend(_semantic_output_records_from_submit_args(context, {"outputs": answer}))
+    if answer["decision"].get("status") != "ready":
+        return records
+    candidate_records = _output_records_for_submit(context, [])
+    for record in candidate_records:
+        if record.get("record_type") == "candidate":
+            value = record.get("value")
+            if isinstance(value, dict):
+                value["summary"] = answer["decision"]["summary"]
+    records.extend(candidate_records)
+    records.append(
+        {
+            "record_id": f"file-state-{context.execution_id}",
+            "record_kind": "file_state",
+            "record_type": "file_state",
+            "producer_node_id": context.node_id,
+            "port": "file_state",
+            "schema": "FileStateRecord",
+            "snapshot_id": snapshot_id,
+            "base_snapshot_id": context.base_snapshot_id,
+            "verdict": "captured",
+            "git": {
+                "commit_sha": commit_sha,
+                "tree_sha": tree_sha,
+                "ref": snapshot_ref,
+                "no_commit_reason": None,
+            },
+            "paths": [
+                {"path": entry.path, "source": entry.kind, "status": entry.status}
+                for entry in boundary_entries
+                if entry.status != "tool_cache"
+            ],
+        }
+    )
+    return records
 
 
 def _empty_event_list() -> list[EventEnvelope]:
@@ -2042,7 +2210,15 @@ class GraphDispatchExecutor(SideEffectExecutor):
         decision_submission_execution = (
             dispatch_applicability is not None
             and dispatch_applicability.family
-            in {"discovery_brief", "implementation_plan", "batch_decision", "correction_decision"}
+            in {
+                "discovery_brief",
+                "implementation_plan",
+                "batch_decision",
+                "correction_decision",
+                "verification_decision",
+                "work_result",
+            }
+            or is_advisory_submission(_submission_contract(context))
         )
         try:
             await self._acknowledge_start(context)
@@ -2063,6 +2239,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             graph_successor_accepted = False
             graph_finalization_accepted = False
             submitted_callback = False
+            terminal_typed_submission_accepted = False
             submission_acknowledgement: SubmissionAcknowledgement | None = None
             first_submission_rejection_category: SubmissionRejectionCategory | None = None
             first_submission_rejection_detail: str | None = None
@@ -2080,6 +2257,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 submit_args: dict[str, Any] | SubmissionInvocation | None = None,
             ) -> SubmissionAcknowledgement:
                 nonlocal submitted_callback, submission_acknowledgement
+                nonlocal terminal_typed_submission_accepted
                 nonlocal first_submission_rejection_category, latest_submission_rejection
                 nonlocal first_submission_rejection_detail
                 decision_applicability = resolve_decision_applicability(
@@ -2093,9 +2271,17 @@ class GraphDispatchExecutor(SideEffectExecutor):
                         "implementation_plan",
                         "batch_decision",
                         "correction_decision",
+                        "verification_decision",
+                        "work_result",
                     }
                 )
-                first_decision_submission = decision_submission and not submitted_callback
+                advisory_submission = is_advisory_submission(_submission_contract(context))
+                terminal_typed_submission = decision_submission or (
+                    advisory_submission and submit_args is not None
+                )
+                first_terminal_typed_submission = (
+                    terminal_typed_submission and not submitted_callback
+                )
                 if submitted_callback and not decision_submission:
                     # Managed callbacks must re-read canonical attempt state so
                     # reconnect delivery can observe later finalization or
@@ -2194,7 +2380,9 @@ class GraphDispatchExecutor(SideEffectExecutor):
                                 context,
                                 authored_args if authored_args is not None else {"outputs": {}},
                             )
-                            if contract is not None and contract.requires_arguments
+                            if contract is not None
+                            and contract.requires_arguments
+                            and submit_args is not None
                             else None
                         )
                         if output_records is None:
@@ -2263,6 +2451,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     latest_submission_rejection = acknowledgement
                     raise SubmissionRejectedError(acknowledgement) from None
                 submitted_callback = True
+                terminal_typed_submission_accepted = terminal_typed_submission
                 submission_acknowledgement = acknowledgement or SubmissionAcknowledgement(
                     disposition="durably_staged",
                     message=(
@@ -2271,7 +2460,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     ),
                     execution_id=context.execution_id,
                 )
-                if first_decision_submission:
+                if first_terminal_typed_submission:
                     close_phase = getattr(runner, "request_terminal_answer_completion", None)
                     if callable(close_phase):
                         close_result = close_phase()
@@ -2521,7 +2710,10 @@ class GraphDispatchExecutor(SideEffectExecutor):
                         "implementation_plan",
                         "batch_decision",
                         "correction_decision",
+                        "verification_decision",
+                        "work_result",
                     }
+                    or terminal_typed_submission_accepted
                 )
                 if expected_terminal and result.completion_cause != "terminal_answer_completed":
                     await self._request_runner_recovery(
@@ -3106,16 +3298,34 @@ class GraphDispatchExecutor(SideEffectExecutor):
         if not isinstance(raw_outputs, dict):
             raise ValueError("decision submit requires exactly one typed output")
         typed_outputs = cast(dict[str, Any], raw_outputs)
+        semantic_records: list[dict[str, object]] = []
         applicability = resolve_decision_applicability(context.graph_projection, context.node_id)
         if applicability is None or applicability.family not in {
             "discovery_brief",
             "implementation_plan",
             "batch_decision",
             "correction_decision",
+            "verification_decision",
+            "work_result",
         }:
             raise ValueError("decision submit family is not activated")
         output_port = applicability.output_port
-        if set(typed_outputs) != {output_port}:
+        if applicability.family == "work_result":
+            contract = _submission_contract(context)
+            if contract is None:
+                raise ValueError("worker result has no typed submission contract")
+            declared = {item.port for item in contract.outputs if item.content_json_schema}
+            unknown = sorted(set(typed_outputs) - declared)
+            missing = sorted(
+                item.port
+                for item in contract.outputs
+                if item.required and item.content_json_schema and item.port not in typed_outputs
+            )
+            if unknown:
+                raise ValueError(f"decision submit has unknown output ports={unknown}")
+            if missing:
+                raise ValueError(f"decision submit missing required output ports={missing}")
+        elif set(typed_outputs) != {output_port}:
             raise ValueError(f"decision submit requires exactly outputs.{output_port}")
         raw_decision = typed_outputs[output_port]
         if not isinstance(raw_decision, dict):
@@ -3124,8 +3334,16 @@ class GraphDispatchExecutor(SideEffectExecutor):
             cast(Any, applicability.family), cast(dict[str, Any], raw_decision)
         )
         answer = {output_port: canonical}
+        if applicability.family == "work_result":
+            answer.update(
+                {port: value for port, value in typed_outputs.items() if port != output_port}
+            )
         if applicability.family == "implementation_plan":
             _semantic_output_records_from_submit_args(context, {"outputs": answer})
+        elif applicability.family == "work_result":
+            semantic_records = _semantic_output_records_from_submit_args(
+                context, {"outputs": answer}
+            )
         answer_hash = canonical_decision_answer_hash(answer)
 
         existing_ack = await self._read_submission_acknowledgement(context)
@@ -3172,27 +3390,28 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 base_graph_position=observed_position,
                 answer=canonical,
             )
-            dry_run = apply_command(
-                projection,
-                [],
-                "submit_patch",
-                {
-                    "patch_id": compilation.patch_id,
-                    "base_graph_position": compilation.base_graph_position,
-                    "ops": list(compilation.ops),
-                },
-                PatchCommandContext(
-                    run_id=context.run_id,
-                    current_graph_position=observed_position,
-                    proposed_by_node_id=context.node_id,
-                    actor_role="planner",
-                ),
-                FakeClock(),
-                SequentialIdGenerator(),
-            )
-            if not dry_run or dry_run[0].event_type != "graph_patch_accepted":
-                reason = dry_run[0].payload.get("reason") if dry_run else "empty patch plan"
-                raise ValueError(f"decision consequence validation failed: {reason}")
+            if applicability.family not in {"verification_decision", "work_result"}:
+                dry_run = apply_command(
+                    projection,
+                    [],
+                    "submit_patch",
+                    {
+                        "patch_id": compilation.patch_id,
+                        "base_graph_position": compilation.base_graph_position,
+                        "ops": list(compilation.ops),
+                    },
+                    PatchCommandContext(
+                        run_id=context.run_id,
+                        current_graph_position=observed_position,
+                        proposed_by_node_id=context.node_id,
+                        actor_role="planner",
+                    ),
+                    FakeClock(),
+                    SequentialIdGenerator(),
+                )
+                if not dry_run or dry_run[0].event_type != "graph_patch_accepted":
+                    reason = dry_run[0].payload.get("reason") if dry_run else "empty patch plan"
+                    raise ValueError(f"decision consequence validation failed: {reason}")
 
         context_payload = resolved.protected_question_context()
         context_bytes = canonical_callback_payload_bytes(context_payload)
@@ -3220,6 +3439,91 @@ class GraphDispatchExecutor(SideEffectExecutor):
             force_include_paths=list(boundary.force_include_paths),
             lock_held=True,
         )
+
+        controller_output_records: list[dict[str, Any]] | None = None
+        validation_witness: dict[str, Any] | None = None
+        if applicability.family == "work_result":
+            compilation = compile_decision(
+                projection,
+                node_id=context.node_id,
+                decision_request_id=decision_request_id,
+                base_graph_position=observed_position,
+                answer=canonical,
+            )
+            controller_output_records = [
+                record.model_dump(mode="json", by_alias=True)
+                for record in compilation.output_records
+            ]
+            controller_output_records.extend(semantic_records)
+            if canonical.get("status") == "ready":
+                candidate_records = _output_records_for_submit(context, [])
+                for record in candidate_records:
+                    if record.get("record_type") == "candidate":
+                        value = record.get("value")
+                        if isinstance(value, dict):
+                            value["summary"] = canonical["summary"]
+                controller_output_records.extend(candidate_records)
+                submission_gate_report: SubmissionGateReport | None = None
+                submission_gate_baseline: SubmissionGateBaseline | None = None
+                if _requires_submission_quality_gate(context):
+                    submission_gate_baseline = await self._load_submission_gate_baseline(context)
+                    try:
+                        submission_gate_report = await enforce_submission_quality_gate(
+                            run_id=context.run_id,
+                            node_id=context.node_id,
+                            execution_id=context.execution_id,
+                            lease_id=context.lease_id,
+                            lease_generation=context.lease_generation,
+                            base_snapshot_id=context.base_snapshot_id,
+                            base_tree_sha=submission_gate_baseline.base_tree_sha,
+                            node_payload=context.node_payload,
+                            dynamic_feature=routine_snapshot_dynamic_feature_view(
+                                context.graph_projection
+                            ),
+                            worktree_path=context.worktree_path,
+                            baseline=submission_gate_baseline,
+                            candidate_tree_sha=staged.snapshot.tree_sha,
+                            snapshot_commit_sha=staged.snapshot.commit_sha,
+                            resolved_commands=submission_gate_commands_from_baseline(
+                                submission_gate_baseline
+                            ),
+                        )
+                    except SubmissionQualityGateError as exc:
+                        durable_audit_reference = await self._persist_submission_gate_failure(
+                            context,
+                            baseline=submission_gate_baseline,
+                            candidate_tree_sha=staged.snapshot.tree_sha,
+                            error=exc,
+                        )
+                        setattr(exc, "durable_audit_reference", durable_audit_reference)
+                        raise
+                    await self._persist_submission_gate_audit(
+                        context,
+                        phase="submission",
+                        base_tree_sha=submission_gate_baseline.base_tree_sha,
+                        candidate_tree_sha=staged.snapshot.tree_sha,
+                        status=submission_gate_report.status,
+                        failure_fingerprint=None,
+                        report=submission_gate_report.model_dump(mode="json"),
+                    )
+                    validation_witness = bind_submission_gate_witness(
+                        submission_gate_report,
+                        snapshot_id=staged.snapshot.id,
+                        snapshot_ref=staged.snapshot.ref,
+                        commit_sha=staged.snapshot.commit_sha,
+                        tree_sha=staged.snapshot.tree_sha,
+                        boundary_hash=staged.boundary_hash,
+                        baseline=submission_gate_baseline,
+                    ).model_dump(mode="json")
+                controller_output_records.append(
+                    file_state_output_record(
+                        boundary,
+                        staged.snapshot,
+                        node_id=context.node_id,
+                        execution_id=context.execution_id,
+                        base_snapshot_id=context.base_snapshot_id,
+                    )
+                )
 
         async def publish_decision_artifacts_and_stage() -> Any:
             async with self._artifact_store.publication():
@@ -3282,6 +3586,12 @@ class GraphDispatchExecutor(SideEffectExecutor):
                         "cache_authority_hash": context.cache_authority_hash,
                         "cache_roots": staged.cache_roots,
                         "cache_status_evidence": staged.cache_status_evidence,
+                        "controller_output_records": controller_output_records,
+                        "validation_witness": validation_witness,
+                        "complete_node": True,
+                        "new_state": (
+                            "failed" if canonical.get("status") == "blocked" else "completed"
+                        ),
                     },
                     preserve_observed_graph_position=True,
                 )
@@ -3972,6 +4282,25 @@ class GraphDispatchExecutor(SideEffectExecutor):
         )
         if not all(isinstance(value, str) and value for value in exact_identity):
             raise ValueError("durable completion witness has incomplete snapshot identity")
+        controller_output_records: list[dict[str, Any]] | None = None
+        if (
+            isinstance(decoded_submission, DecisionSubmissionEnvelope)
+            and applicability is not None
+            and applicability.family == "work_result"
+        ):
+            thawed_answer = thaw_json(decoded_submission.answer)
+            if not isinstance(thawed_answer, dict) or "decision" not in thawed_answer:
+                raise ValueError("staged worker result answer is malformed")
+            controller_output_records = _work_result_controller_records(
+                context,
+                answer=thawed_answer,
+                decision_request_id=decoded_submission.request.decision_request_id,
+                snapshot_id=cast(str, attempt.staged_snapshot_id),
+                snapshot_ref=attempt.staged_snapshot_ref,
+                commit_sha=attempt.staged_commit_sha,
+                tree_sha=cast(str, attempt.staged_tree_sha),
+                boundary_entries=attempt.staged_boundary_entries,
+            )
         await self._run_worktree_boundary(
             verify_snapshot_ref,
             context.worktree_path,
@@ -4023,6 +4352,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     else None
                 ),
                 "decision_question_context": decision_question_context,
+                "controller_output_records": controller_output_records,
             },
         )
         reason = _callback_conflict_reason(result.events)
@@ -5442,6 +5772,7 @@ async def _execute_check_command(
                 for result in dependency_provisioning
             ],
         },
+        "source": command_definition.get("source") or "node_command_definition",
     }
     record_payload = _add_evaluated_record_citations(
         {

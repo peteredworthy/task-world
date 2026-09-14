@@ -285,6 +285,10 @@ class StageRunnerSubmissionCommand(SubmitCallbackCommand):
         default_factory=_empty_cache_status_evidence
     )
     validation_witness: dict[str, Any] | None = None
+    # Runtime-owned records for a typed worker result. They are transient
+    # validation input; the durable callback payload remains model-authored
+    # decision-v1 content only.
+    controller_output_records: list[dict[str, Any]] | None = None
 
     @field_validator("payload_hash", "boundary_hash")
     @classmethod
@@ -417,6 +421,9 @@ class FinalizeRunnerExecutionCommand(StrictCommandPayload):
     # Runtime-resolved CAS bytes for the protected decision question.  This is
     # transient command authority and is never persisted in the final event.
     decision_question_context: dict[str, Any] | None = None
+    # Reconstructed by the runtime from the staged worker answer and boundary.
+    # This is deliberately excluded from the finalized event payload.
+    controller_output_records: list[dict[str, Any]] | None = None
 
     @field_validator("boundary_hash")
     @classmethod

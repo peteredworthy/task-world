@@ -31,6 +31,7 @@ from orchestrator.runners import (
     SubmissionContract,
     SubmissionInvocation,
     SubmitCallback,
+    is_advisory_submission,
     is_decision_submission,
     route_graph_tool_call,
     submission_tool_input_schema,
@@ -137,14 +138,18 @@ def build_graph_mcp_server(
             not registered at all).
     """
     decision_submission = is_decision_submission(submission_contract)
+    advisory_submission = is_advisory_submission(submission_contract)
     instructions = (
         "Decision answer tools for this single execution. Use submit once with "
         "the answer matching the supplied schema."
         if decision_submission
+        else "Advisory submission tools for this single execution. Use submit once "
+        "with the supplied recovery-plan schema."
+        if advisory_submission
         else "Graph tools for this single execution. Use submit_graph_patch "
         "or one of the macro tools to propose graph mutations."
     )
-    if decision_submission and submission_contract is not None:
+    if (decision_submission or advisory_submission) and submission_contract is not None:
         mcp: FastMCP = _DecisionSubmissionFastMCP(
             submission_contract,
             name="orchestrator-graph-exec",
@@ -161,14 +166,16 @@ def build_graph_mcp_server(
     # restate controller-owned topology and identities.  Gap planners retain
     # their corrective catalog because they do not carry this required-tool
     # preflight marker.
-    if decision_submission:
+    if decision_submission or advisory_submission:
         enabled_tools = frozenset()
     elif required_tools:
         enabled_tools = enabled_tools & frozenset(required_tools)
     concrete_specs: list[dict[str, Any]] = []
 
     def _add_tool(function: Any, *, name: str, description: str) -> None:
-        if name in enabled_tools or name == "graph_grade":
+        if name in enabled_tools or (
+            name == "graph_grade" and not decision_submission and not advisory_submission
+        ):
             mcp.add_tool(function, name=name, description=description)
             concrete_specs.append(
                 {

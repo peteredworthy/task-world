@@ -192,7 +192,8 @@ def test_plan_verifier_preserves_an_authored_rubric_exactly() -> None:
     assert packet["rubric"] == authored
 
 
-def test_final_audit_citations_preserve_bound_batch_order() -> None:
+@pytest.mark.parametrize("with_final_acceptance", [False, True])
+def test_final_audit_citations_preserve_bound_batch_order(with_final_acceptance: bool) -> None:
     def candidate(batch: int) -> dict[str, Any]:
         return {
             "record_id": f"candidate-batch-{batch}",
@@ -261,6 +262,31 @@ def test_final_audit_citations_preserve_bound_batch_order() -> None:
             8,
         ),
     ]
+    if with_final_acceptance:
+        events.extend(
+            [
+                _event(
+                    "output_record_accepted",
+                    {
+                        "record_id": "final-acceptance-report",
+                        "record_type": "check_result",
+                        "producer_node_id": "final-acceptance",
+                        "candidate_id": "candidate-batch-2",
+                        "value": {"status": "passed"},
+                    },
+                    9,
+                ),
+                _event(
+                    "input_bound",
+                    {
+                        "to_node_id": "final-audit",
+                        "to_port": "dynamic_feature_acceptance",
+                        "record_ids": ["final-acceptance-report"],
+                    },
+                    10,
+                ),
+            ]
+        )
     context = GraphDispatchContext(
         run_id="run-final-audit-order",
         node_id="final-audit",
@@ -291,6 +317,7 @@ def test_final_audit_citations_preserve_bound_batch_order() -> None:
     citations = packet["evaluated_record_citations"]
 
     assert citations["verification_report_record_ids"] == [
+        *(["final-acceptance-report"] if with_final_acceptance else []),
         "verification-batch-1",
         "verification-batch-2",
     ]

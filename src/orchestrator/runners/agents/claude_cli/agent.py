@@ -33,6 +33,7 @@ from orchestrator.runners.mcp_scope import (
     scope_mcp_servers_to_available_tools,
 )
 from orchestrator.runners.submission import (
+    is_advisory_submission,
     is_decision_submission,
     submission_prompt_instruction,
 )
@@ -290,8 +291,13 @@ class CLIAgent:
                 )
 
         decision_submission = is_decision_submission(context.submission_contract)
+        advisory_submission = is_advisory_submission(context.submission_contract)
         graph_tools_section = ""
-        if context.graph_mcp_url is not None and not decision_submission:
+        if (
+            context.graph_mcp_url is not None
+            and not decision_submission
+            and not advisory_submission
+        ):
             graph_tool_names = ", ".join(
                 name
                 for name in GRAPH_PLANNER_TOOL_ORDER
@@ -317,6 +323,16 @@ class CLIAgent:
                 + submission_prompt_instruction(context.submission_contract)
                 + "\nUse the orchestrator-graph MCP submit tool with exactly this payload shape. "
                 "A bare submit() cannot complete this node."
+            )
+
+        if advisory_submission:
+            return (
+                prompt
+                + "\n\n## Required Advisory Submission\n"
+                + "Review the supplied failure or appeal evidence and return only an advisory recovery plan. "
+                + "The runtime owns lifecycle state and graph changes; do not call checklist, recovery, or graph-mutation tools.\n"
+                + submission_prompt_instruction(context.submission_contract)
+                + "\nUse the orchestrator-graph MCP submit tool once."
             )
 
         if decision_submission:

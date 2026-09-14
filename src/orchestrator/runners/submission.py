@@ -11,6 +11,21 @@ from jsonschema import ValidationError as JsonSchemaValidationError, validators
 from orchestrator.runners.types import SubmissionContract
 
 
+def is_advisory_submission(contract: SubmissionContract | None) -> bool:
+    """Return whether a typed contract carries an advisory recovery plan."""
+    return bool(
+        contract is not None
+        and contract.requires_arguments
+        and contract.outputs
+        and all(
+            output.port == "recovery_plan"
+            and output.schema_name == "RecoveryPlan"
+            and output.record_type == "recovery_plan"
+            for output in contract.outputs
+        )
+    )
+
+
 def is_decision_submission(contract: SubmissionContract | None) -> bool:
     """Return whether runtime explicitly selected the decision-v1 interaction."""
     return contract is not None and contract.interaction_contract == "decision-v1"
@@ -125,6 +140,7 @@ def submission_prompt_instruction(contract: SubmissionContract | None) -> str:
 
 
 __all__ = [
+    "is_advisory_submission",
     "is_decision_submission",
     "submission_prompt_instruction",
     "submission_tool_input_schema",

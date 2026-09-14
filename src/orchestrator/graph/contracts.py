@@ -787,6 +787,12 @@ DEFAULT_NODE_CONTRACTS = _registry(
                     schemas=("SemanticArtifact",),
                     required=False,
                 ),
+                _port(
+                    "decision",
+                    "decision_answer",
+                    schemas=("DecisionAnswer",),
+                    required=False,
+                ),
                 _port("completion", "completion", schemas=("NodeCompletion",), required=False),
             ),
             tools=(
@@ -982,6 +988,12 @@ DEFAULT_NODE_CONTRACTS = _registry(
                     schemas=("SemanticArtifact",),
                     required=False,
                 ),
+                _port(
+                    "decision",
+                    "decision_answer",
+                    schemas=("DecisionAnswer",),
+                    required=False,
+                ),
                 _port("completion", "completion", schemas=("NodeCompletion",), required=False),
             ),
             fulfillment="task_acceptance",
@@ -1007,9 +1019,21 @@ DEFAULT_NODE_CONTRACTS = _registry(
             ),
             outputs=(
                 _port(
+                    "decision",
+                    "decision_answer",
+                    schemas=("DecisionAnswer",),
+                    required=False,
+                ),
+                _port(
                     "verification_report",
                     "verification_report",
                     schemas=("VerificationReport",),
+                ),
+                _port(
+                    "semantic_artifact",
+                    "semantic_artifact",
+                    schemas=("SemanticArtifact",),
+                    required=False,
                 ),
                 _port(
                     "file_state",

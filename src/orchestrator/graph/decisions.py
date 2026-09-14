@@ -17,6 +17,7 @@ from pydantic import (
     ConfigDict,
     Field,
     GetJsonSchemaHandler,
+    StrictFloat,
     StrictInt,
     TypeAdapter,
     field_serializer,
@@ -40,6 +41,7 @@ from orchestrator.graph.contracts import (
     validate_node_payload,
 )
 from orchestrator.graph.models import (
+    CandidateRecord,
     CheckResultRecord,
     DecisionAnswerRecord,
     DecisionAnswerValue,
@@ -53,7 +55,10 @@ from orchestrator.graph.models import (
     record_selector_matches,
 )
 from orchestrator.graph.projection_queries import (
+    check_results_view,
     edges_view,
+    evidence_closure_for_node,
+    file_state_records_view,
     input_bindings_view,
     leases_view,
     node_payload_view,
@@ -76,6 +81,12 @@ BATCH_DECISION_SCHEMA_ID = "orchestrator.reliable-plan.batch-decision"
 BATCH_DECISION_SCHEMA_VERSION = 1
 CORRECTION_DECISION_SCHEMA_ID = "orchestrator.reliable-plan.correction-decision"
 CORRECTION_DECISION_SCHEMA_VERSION = 1
+VERIFICATION_DECISION_SCHEMA_ID = "orchestrator.reliable-plan.verification-decision"
+VERIFICATION_DECISION_SCHEMA_VERSION = 1
+VERIFICATION_JUDGMENT_SCHEMA_ID = "orchestrator.reliable-plan.verification-judgment"
+VERIFICATION_JUDGMENT_SCHEMA_VERSION = 1
+WORK_RESULT_SCHEMA_ID = "orchestrator.reliable-plan.work-result"
+WORK_RESULT_SCHEMA_VERSION = 1
 DECISION_COMPILER_CONTRACT_VERSION = 1
 
 RequirementAlias: TypeAlias = Annotated[str, Field(pattern=r"^r[1-9][0-9]*$")]
@@ -473,6 +484,190 @@ class VerificationDecision(_DecisionModel):
         return self
 
 
+class VerificationObligation(_DecisionModel):
+    """One ordered, runtime-owned obligation in a verifier request."""
+
+    alias: ObligationAlias
+    source_record_or_node_identity: str = Field(min_length=1)
+    source_field: str = Field(min_length=1)
+    index: StrictInt = Field(ge=0)
+    text: NonEmptyText
+    minimum_grade: Literal["A", "B", "C", "D", "F"]
+
+    @field_validator("source_record_or_node_identity", "source_field", "text")
+    @classmethod
+    def obligation_text_is_substantive(cls, value: str, info: Any) -> str:
+        return _require_non_whitespace(value, info.field_name)
+
+
+class MandatoryCheckReceipt(_DecisionModel):
+    """Frozen exact mechanical evidence bound to one verifier request."""
+
+    input_port: str = Field(min_length=1)
+    record_id: str = Field(min_length=1)
+    producer_node_id: str = Field(min_length=1)
+    candidate_record_id: str = Field(min_length=1)
+    command_id: str = Field(min_length=1)
+    command_binding: str | None = None
+    command_sha256: str
+    command_text: str = Field(min_length=1)
+    timeout_seconds: StrictFloat = Field(gt=0)
+    base_snapshot_id: str = Field(min_length=1)
+    execution_snapshot_id: str = Field(min_length=1)
+    execution_snapshot_ref: str = Field(min_length=1)
+    environment_policy_sha256: str
+    source_policy: str = Field(min_length=1)
+    status: Literal["passed", "failed", "timeout"]
+
+    @field_validator(
+        "input_port",
+        "record_id",
+        "producer_node_id",
+        "candidate_record_id",
+        "command_id",
+        "command_text",
+        "base_snapshot_id",
+        "execution_snapshot_id",
+        "execution_snapshot_ref",
+        "source_policy",
+    )
+    @classmethod
+    def receipt_identity_is_substantive(cls, value: str, info: Any) -> str:
+        return _require_non_whitespace(value, info.field_name)
+
+    @field_validator("command_sha256", "environment_policy_sha256")
+    @classmethod
+    def receipt_hash_is_valid(cls, value: str) -> str:
+        validate_sha256(value)
+        return value
+
+
+class ResolvedVerificationDecisionContext(_DecisionModel):
+    """Frozen authority and ordered inputs for one typed verifier judgment."""
+
+    node_id: str
+    routine_snapshot_record_id: str
+    candidate_record_ids: tuple[str, ...]
+    obligation_table: tuple[VerificationObligation, ...]
+    mandatory_check_receipts: tuple[MandatoryCheckReceipt, ...] = ()
+    evidence_aliases: FrozenMap[str, str]
+    bound_inputs: tuple[DecisionBoundInput, ...]
+    semantic_stage: Literal[
+        "plan_verification", "effectful_batch", "corrective_work", "final_audit"
+    ]
+
+    @field_validator(
+        "candidate_record_ids",
+        "obligation_table",
+        "mandatory_check_receipts",
+        "bound_inputs",
+        mode="before",
+    )
+    @classmethod
+    def freeze_verification_sequences(cls, value: object) -> object:
+        return tuple(cast(list[object], value)) if isinstance(value, list) else value
+
+    @field_validator("evidence_aliases", mode="before")
+    @classmethod
+    def freeze_verification_evidence(cls, value: object) -> FrozenMap[str, str]:
+        if isinstance(value, FrozenMap):
+            return cast(FrozenMap[str, str], value)
+        if not isinstance(value, dict):
+            raise ValueError("evidence_aliases must be an object")
+        return FrozenMap(cast(dict[str, str], value))
+
+    @model_validator(mode="after")
+    def verifier_has_one_candidate_and_obligations(self) -> "ResolvedVerificationDecisionContext":
+        if len(self.candidate_record_ids) != 1:
+            raise DecisionContractResolutionError(
+                "verification request must bind exactly one candidate"
+            )
+        if not self.obligation_table:
+            raise DecisionContractResolutionError("verification request has no obligations")
+        return self
+
+    def protected_question_context(self) -> dict[str, Any]:
+        return {
+            "question": "How does the exact candidate satisfy each bound obligation?",
+            "answer_family": "verification_decision",
+            "semantic_stage": self.semantic_stage,
+            "obligations": [item.model_dump(mode="json") for item in self.obligation_table],
+            "mandatory_check_receipts": [
+                item.model_dump(mode="json") for item in self.mandatory_check_receipts
+            ],
+            "evidence_aliases": dict(self.evidence_aliases.object_items()),
+            "candidate_record_ids": list(self.candidate_record_ids),
+            "source_references": {
+                "routine_snapshot_record_id": self.routine_snapshot_record_id,
+                "bound_input_record_ids": [item.record_id for item in self.bound_inputs],
+            },
+        }
+
+
+class ResolvedWorkResultContext(_DecisionModel):
+    """Exact frozen authority for one effectful worker result."""
+
+    node_id: str
+    routine_snapshot_record_id: str
+    bound_inputs: tuple[DecisionBoundInput, ...]
+    evidence_aliases: FrozenMap[str, str]
+    task_region_id: str
+    semantic_stage: Literal["effectful_batch", "corrective_work"]
+
+    @field_validator("bound_inputs", mode="before")
+    @classmethod
+    def freeze_work_result_inputs(cls, value: object) -> object:
+        return tuple(cast(list[object], value)) if isinstance(value, list) else value
+
+    @field_validator("evidence_aliases", mode="before")
+    @classmethod
+    def freeze_work_result_evidence(cls, value: object) -> FrozenMap[str, str]:
+        if isinstance(value, FrozenMap):
+            return cast(FrozenMap[str, str], value)
+        if not isinstance(value, dict):
+            raise ValueError("evidence_aliases must be an object")
+        return FrozenMap(cast(dict[str, str], value))
+
+    def protected_question_context(self) -> dict[str, Any]:
+        return {
+            "question": "Is the implemented work ready for validation, or is it blocked?",
+            "answer_family": "work_result",
+            "evidence_aliases": dict(self.evidence_aliases.object_items()),
+            "semantic_stage": self.semantic_stage,
+            "task_region_id": self.task_region_id,
+            "source_references": {
+                "routine_snapshot_record_id": self.routine_snapshot_record_id,
+                "bound_input_record_ids": [item.record_id for item in self.bound_inputs],
+            },
+        }
+
+
+class VerificationJudgmentArtifact(_DecisionModel):
+    """Versioned public evidence joining frozen obligations to authored findings."""
+
+    decision_request_id: str = Field(min_length=1)
+    semantic_stage: Literal[
+        "plan_verification", "effectful_batch", "corrective_work", "final_audit"
+    ]
+    candidate_record_ids: tuple[str, ...]
+    obligations: tuple[VerificationObligation, ...]
+    mandatory_check_receipts: tuple[MandatoryCheckReceipt, ...]
+    evidence_aliases: dict[str, str]
+    findings: tuple[Finding, ...]
+    outcome: Literal["passed", "failed"]
+
+    @field_validator(
+        "candidate_record_ids",
+        "obligations",
+        "mandatory_check_receipts",
+        "findings",
+        mode="before",
+    )
+    @classmethod
+    def freeze_judgment_sequences(cls, value: object) -> object:
+        return tuple(cast(list[object], value)) if isinstance(value, list) else value
+
+
 class ReadyWorkResult(_DecisionModel):
     status: Literal["ready"]
     summary: NonEmptyText
@@ -523,6 +718,16 @@ def decision_plan_declaration() -> SemanticArtifactSchemaConfig:
     )
 
 
+def verification_judgment_declaration() -> SemanticArtifactSchemaConfig:
+    """Build the generated declaration for public typed-verifier evidence."""
+    return SemanticArtifactSchemaConfig(
+        schema_id=VERIFICATION_JUDGMENT_SCHEMA_ID,
+        version=VERIFICATION_JUDGMENT_SCHEMA_VERSION,
+        semantic_role="verification_judgment",
+        json_schema=VerificationJudgmentArtifact.model_json_schema(mode="validation"),
+    )
+
+
 DISCOVERY_BRIEF_SCHEMA_ID = "orchestrator.reliable-plan.discovery-brief"
 DISCOVERY_BRIEF_SCHEMA_VERSION = 1
 
@@ -563,9 +768,38 @@ def correction_decision_schema_sha256() -> str:
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
+def verification_decision_schema() -> dict[str, Any]:
+    """Return the schema generated from the canonical verifier answer owner."""
+    return VerificationDecision.model_json_schema(mode="validation")
+
+
+def verification_decision_schema_sha256() -> str:
+    encoded = json.dumps(
+        verification_decision_schema(), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def work_result_schema() -> dict[str, Any]:
+    """Return the schema generated by the canonical worker result owner."""
+    return TypeAdapter(WorkResult).json_schema(mode="validation")
+
+
+def work_result_schema_sha256() -> str:
+    encoded = json.dumps(
+        work_result_schema(), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
 def decision_answer_schema(
     family: Literal[
-        "discovery_brief", "implementation_plan", "batch_decision", "correction_decision"
+        "discovery_brief",
+        "implementation_plan",
+        "batch_decision",
+        "correction_decision",
+        "verification_decision",
+        "work_result",
     ],
 ) -> tuple[str, int, str, dict[str, Any]]:
     """Resolve the activated answer contract from the graph-owned family."""
@@ -589,6 +823,20 @@ def decision_answer_schema(
             CORRECTION_DECISION_SCHEMA_VERSION,
             correction_decision_schema_sha256(),
             correction_decision_schema(),
+        )
+    if family == "verification_decision":
+        return (
+            VERIFICATION_DECISION_SCHEMA_ID,
+            VERIFICATION_DECISION_SCHEMA_VERSION,
+            verification_decision_schema_sha256(),
+            verification_decision_schema(),
+        )
+    if family == "work_result":
+        return (
+            WORK_RESULT_SCHEMA_ID,
+            WORK_RESULT_SCHEMA_VERSION,
+            work_result_schema_sha256(),
+            work_result_schema(),
         )
     return (
         BATCH_DECISION_SCHEMA_ID,
@@ -956,6 +1204,7 @@ class DecisionCompilation(_DecisionModel):
     read_set: tuple[str, ...]
     disposition: Literal[
         "discovery_brief",
+        "verification_decision",
         "proceed",
         "revise_plan",
         "blocked",
@@ -966,6 +1215,7 @@ class DecisionCompilation(_DecisionModel):
     ] = "proceed"
     completion_state: Literal["completed", "failed"] = "completed"
     failure_reason: str | None = None
+    verification_record: VerificationReportRecord | None = None
 
     @field_validator(
         "ops", "gap_records", "semantic_records", "bound_inputs", "read_set", mode="before"
@@ -977,8 +1227,19 @@ class DecisionCompilation(_DecisionModel):
     @property
     def output_records(
         self,
-    ) -> tuple[DecisionAnswerRecord | GapClassificationRecord | SemanticArtifactRecord, ...]:
-        return (self.decision_record, *self.gap_records, *self.semantic_records)
+    ) -> tuple[
+        DecisionAnswerRecord
+        | GapClassificationRecord
+        | SemanticArtifactRecord
+        | VerificationReportRecord,
+        ...,
+    ]:
+        return (
+            self.decision_record,
+            *self.gap_records,
+            *self.semantic_records,
+            *((self.verification_record,) if self.verification_record is not None else ()),
+        )
 
 
 class ImplementationPlanCompilation(_DecisionModel):
@@ -1052,6 +1313,396 @@ def _bound_requirement_rows(
             raise DecisionContractResolutionError("bound requirement has invalid record type")
         rows.append((port, record, record_id))
     return rows
+
+
+def _decision_value_sha256(value: object) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _verification_candidate_ids(
+    records: Mapping[str, object], bindings: Mapping[str, object], semantic_stage: str
+) -> list[str]:
+    candidate_ids: list[str] = []
+    for port, raw_binding in bindings.items():
+        record_ids = getattr(raw_binding, "record_ids", ())
+        for record_id in record_ids:
+            record = records.get(record_id)
+            if port in {"candidate", "candidate_under_test", "semantic_artifact"} and isinstance(
+                record, (CandidateRecord, SemanticArtifactRecord)
+            ):
+                candidate_ids.append(record_id)
+            elif (
+                semantic_stage == "final_audit"
+                and port == "dynamic_feature_acceptance"
+                and isinstance(record, CheckResultRecord)
+            ):
+                candidate_ids.append(record.candidate_id)
+    return list(dict.fromkeys(candidate_ids))
+
+
+def _requirement_minimum_grade(requirement: RequirementRecord) -> Literal["A", "B", "F"]:
+    """Apply the existing grade-threshold defaults to one frozen requirement."""
+    if requirement.value.priority == "critical":
+        return "A"
+    if requirement.value.priority == "expected":
+        return "B"
+    return "F"
+
+
+def _exact_candidate_file_state(
+    projection: GraphProjection, candidate_record_id: str
+) -> tuple[str, str, str]:
+    candidate = output_record_payloads_view(projection).get(candidate_record_id)
+    if not isinstance(candidate, CandidateRecord):
+        raise DecisionContractResolutionError(
+            "mandatory runtime checks require an exact implementation candidate"
+        )
+    file_state_ids: list[str] = list(
+        dict.fromkeys([*candidate.file_state_record_ids, *candidate.value.file_state_record_ids])
+    )
+    for singular_id in (candidate.file_state_record_id, candidate.value.file_state_record_id):
+        if isinstance(singular_id, str) and singular_id not in file_state_ids:
+            file_state_ids.append(singular_id)
+    if len(file_state_ids) != 1:
+        raise DecisionContractResolutionError(
+            "mandatory runtime checks require the candidate's exact file-state record"
+        )
+    file_state = file_state_records_view(projection).get(file_state_ids[0])
+    if (
+        file_state is None
+        or file_state.verdict != "captured"
+        or file_state.compromised is True
+        or file_state.candidate_id not in {None, candidate_record_id, candidate.candidate_id}
+        or not file_state.snapshot_id
+        or file_state.git is None
+        or not file_state.git.ref
+    ):
+        raise DecisionContractResolutionError(
+            "mandatory runtime checks require an eligible exact candidate file state"
+        )
+    return file_state_ids[0], file_state.snapshot_id, file_state.git.ref
+
+
+def _mandatory_check_ports(node: Mapping[str, Any]) -> tuple[str, ...]:
+    raw_inputs = node.get("inputs")
+    if not isinstance(raw_inputs, list):
+        return ()
+    ports: list[str] = []
+    for raw_input in cast(list[Any], raw_inputs):
+        if not isinstance(raw_input, dict):
+            continue
+        item = cast(dict[str, Any], raw_input)
+        port = item.get("port")
+        if (
+            item.get("direction") == "input"
+            and item.get("schema") == "CheckResult"
+            and item.get("required") is not False
+            and isinstance(port, str)
+        ):
+            ports.append(port)
+    return tuple(ports)
+
+
+def _validated_mandatory_check_receipts(
+    projection: GraphProjection,
+    *,
+    node_id: str,
+    semantic_stage: str,
+    candidate_record_id: str,
+) -> tuple[MandatoryCheckReceipt, ...]:
+    node = node_payload_view(projection, node_id) or {}
+    bindings = input_bindings_view(projection).get(node_id, {})
+    records = output_record_payloads_view(projection)
+    edges = edges_view(projection)
+    latest = check_results_view(projection)
+    receipts: list[MandatoryCheckReceipt] = []
+    mandatory_ports = _mandatory_check_ports(node)
+    candidate_file_state: tuple[str, str, str] | None = None
+    if mandatory_ports:
+        candidate_file_state = _exact_candidate_file_state(projection, candidate_record_id)
+    for port in mandatory_ports:
+        binding = bindings.get(port)
+        if binding is None or len(binding.record_ids) != 1:
+            raise DecisionContractResolutionError(
+                f"verification request is missing mandatory check receipt for {port!r}"
+            )
+        record_id = binding.record_ids[0]
+        record = records.get(record_id)
+        if not isinstance(record, CheckResultRecord):
+            raise DecisionContractResolutionError(
+                f"verification mandatory input {port!r} is not a CheckResult receipt"
+            )
+        edge = edges.get(binding.edge_id or "")
+        if (
+            edge is None
+            or edge.to_node_id != node_id
+            or edge.to_port != port
+            or edge.from_port != "check_result"
+            or not edge.required
+            or record.producer_node_id != edge.from_node_id
+        ):
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has a foreign producer"
+            )
+        producer = node_payload_view(projection, record.producer_node_id) or {}
+        if producer.get("kind") != "check":
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} producer is not a check node"
+            )
+        expected_stage = "final_acceptance" if semantic_stage == "final_audit" else semantic_stage
+        if producer.get("semantic_stage") != expected_stage:
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has foreign phase policy"
+            )
+        latest_for_producer = latest.get(record.producer_node_id)
+        if latest_for_producer is None or latest_for_producer.record_id != record_id:
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} is stale"
+            )
+        cited_candidate_ids = list(
+            dict.fromkeys(record.candidate_record_ids or record.value.candidate_record_ids)
+        )
+        expected_check_closure = evidence_closure_for_node(
+            projection, record.producer_node_id, consumer="check"
+        )
+        expected_check_candidate_ids = list(expected_check_closure.candidate_record_ids) or [
+            candidate_record_id
+        ]
+        candidate_matches = (
+            record.candidate_id == candidate_record_id
+            and record.candidate_record_id in {None, candidate_record_id}
+            and (
+                cited_candidate_ids
+                == (
+                    expected_check_candidate_ids
+                    if semantic_stage == "final_audit"
+                    else [candidate_record_id]
+                )
+            )
+        )
+        if not candidate_matches:
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has mismatched candidate"
+            )
+        assert candidate_file_state is not None
+        file_state_id, candidate_snapshot_id, candidate_snapshot_ref = candidate_file_state
+        receipt_file_state_ids = list(
+            dict.fromkeys([*record.file_state_record_ids, *record.value.file_state_record_ids])
+        )
+        expected_receipt_file_state_ids = (
+            list(expected_check_closure.file_state_record_ids) or [file_state_id]
+            if semantic_stage == "final_audit"
+            else [file_state_id]
+        )
+        if (
+            receipt_file_state_ids != expected_receipt_file_state_ids
+            or file_state_id not in receipt_file_state_ids
+        ):
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has mismatched file-state evidence"
+            )
+        command = producer.get("command_definition")
+        if not isinstance(command, dict):
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has no executable command"
+            )
+        typed_command = dict(cast(dict[str, Any], command))
+        invocation = check_command_invocation(typed_command)
+        if invocation is None:
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has no executable command"
+            )
+        _invocation, expected_text, expected_shell = invocation
+        expected_id = str(typed_command.get("id") or record.producer_node_id)
+        expected_timeout = typed_command.get("timeout_seconds", 300.0)
+        if not isinstance(expected_timeout, int | float) or isinstance(expected_timeout, bool):
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has invalid check timeout policy"
+            )
+        expected_binding = typed_command.get("command_binding") or producer.get("command_binding")
+        if record.value.command_id != expected_id:
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has mismatched command identity"
+            )
+        if record.value.command != typed_command:
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has mismatched command definition"
+            )
+        if record.value.command_binding != expected_binding:
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has mismatched command binding"
+            )
+        if record.value.command_text != expected_text:
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has mismatched command text"
+            )
+        if record.value.timeout_seconds != float(expected_timeout):
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has mismatched timeout"
+            )
+        snapshot_id = record.value.execution_snapshot_id
+        snapshot_ref = record.value.execution_snapshot_ref
+        if not snapshot_id or not snapshot_ref:
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has incomplete snapshot evidence"
+            )
+        if snapshot_id != candidate_snapshot_id:
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has mismatched candidate snapshot"
+            )
+        if snapshot_ref != candidate_snapshot_ref:
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has mismatched snapshot ref"
+            )
+        environment = record.value.environment_policy
+        if (
+            environment.get("cwd") != record.value.execution_worktree_path
+            or environment.get("source_worktree_path") != record.value.source_worktree_path
+            or environment.get("snapshot_id") != snapshot_id
+            or environment.get("env") != "inherited"
+            or environment.get("shell") is not expected_shell
+            or not isinstance(environment.get("dependency_provisioning"), list)
+        ):
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has mismatched environment policy"
+            )
+        raw_source = typed_command.get("source")
+        expected_source = (
+            raw_source
+            if isinstance(raw_source, str) and raw_source.strip()
+            else "node_command_definition"
+        )
+        if record.value.source != expected_source:
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has mismatched source policy"
+            )
+        if (record.value.status == "passed") != (record.value.classification == "passed"):
+            raise DecisionContractResolutionError(
+                f"verification mandatory receipt {record_id!r} has inconsistent completion"
+            )
+        receipts.append(
+            MandatoryCheckReceipt(
+                input_port=port,
+                record_id=record_id,
+                producer_node_id=record.producer_node_id,
+                candidate_record_id=candidate_record_id,
+                command_id=expected_id,
+                command_binding=cast(str | None, expected_binding),
+                command_sha256=_decision_value_sha256(typed_command),
+                command_text=expected_text,
+                timeout_seconds=float(expected_timeout),
+                base_snapshot_id=record.value.base_snapshot_id,
+                execution_snapshot_id=snapshot_id,
+                execution_snapshot_ref=snapshot_ref,
+                environment_policy_sha256=_decision_value_sha256(environment),
+                source_policy=expected_source,
+                status=record.value.status,
+            )
+        )
+    return tuple(receipts)
+
+
+def resolve_verification_decision_context(
+    projection: GraphProjection,
+    node_id: str,
+) -> ResolvedVerificationDecisionContext:
+    """Resolve verifier obligations and evidence from exact graph bindings."""
+    applicability = resolve_decision_applicability(projection, node_id)
+    if applicability is None or applicability.family != "verification_decision":
+        raise DecisionContractResolutionError("node is not a decision-v1 verifier")
+    node = node_payload_view(projection, node_id) or {}
+    stage = node.get("semantic_stage")
+    if stage not in {"plan_verification", "effectful_batch", "corrective_work", "final_audit"}:
+        raise DecisionContractResolutionError("verifier has an unsupported semantic stage")
+    bindings = input_bindings_view(projection).get(node_id, {})
+    records = output_record_payloads_view(projection)
+    bound_inputs: list[DecisionBoundInput] = []
+    for port, binding in sorted(bindings.items()):
+        for record_id in binding.record_ids:
+            record = records.get(record_id)
+            if record is None:
+                raise DecisionContractResolutionError(
+                    f"verification input {port!r} references missing record {record_id!r}"
+                )
+            bound_inputs.append(
+                _bound_input(projection, node_id=node_id, port=port, record_id=record_id)
+            )
+    candidate_ids = _verification_candidate_ids(records, bindings, stage)
+    if not candidate_ids:
+        raise DecisionContractResolutionError("verification request requires a bound candidate")
+    if len(candidate_ids) != 1:
+        raise DecisionContractResolutionError(
+            "verification request must bind exactly one candidate"
+        )
+    receipts = _validated_mandatory_check_receipts(
+        projection,
+        node_id=node_id,
+        semantic_stage=stage,
+        candidate_record_id=candidate_ids[0],
+    )
+    requirements = _bound_requirement_rows(projection, node_id)
+    obligations: list[VerificationObligation] = []
+    ordinal = 0
+    for port, requirement, record_id in requirements:
+        obligations.append(
+            VerificationObligation(
+                alias=f"o{ordinal + 1}",
+                source_record_or_node_identity=record_id,
+                source_field="value.text",
+                index=ordinal,
+                text=requirement.value.text,
+                minimum_grade=_requirement_minimum_grade(requirement),
+            )
+        )
+        ordinal += 1
+    for field_name in ("acceptance", "rubric"):
+        values = node.get(field_name)
+        if not isinstance(values, list):
+            continue
+        for index, value in enumerate(cast(list[Any], values)):
+            if not isinstance(value, str) or not value.strip():
+                raise DecisionContractResolutionError(
+                    f"verifier {field_name} contains an empty obligation"
+                )
+            obligations.append(
+                VerificationObligation(
+                    alias=f"o{ordinal + 1}",
+                    source_record_or_node_identity=node_id,
+                    source_field=field_name,
+                    index=index,
+                    text=value,
+                    minimum_grade="A",
+                )
+            )
+            ordinal += 1
+    evidence_ids = sorted(
+        record_id
+        for _port, binding in bindings.items()
+        for record_id in binding.record_ids
+        if isinstance(
+            records.get(record_id),
+            (CandidateRecord, SemanticArtifactRecord, CheckResultRecord, VerificationReportRecord),
+        )
+    )
+    evidence_aliases = FrozenMap(
+        {f"e{index}": record_id for index, record_id in enumerate(evidence_ids, 1)}
+    )
+    snapshot = records.get(applicability.routine_snapshot_record_id)
+    if not isinstance(snapshot, RoutineSnapshotRecord):
+        raise DecisionContractResolutionError("verification snapshot is unavailable")
+    return ResolvedVerificationDecisionContext(
+        node_id=node_id,
+        routine_snapshot_record_id=applicability.routine_snapshot_record_id,
+        candidate_record_ids=tuple(candidate_ids),
+        obligation_table=tuple(obligations),
+        mandatory_check_receipts=receipts,
+        evidence_aliases=evidence_aliases,
+        bound_inputs=tuple(bound_inputs),
+        semantic_stage=stage,
+    )
 
 
 def resolve_discovery_brief_context(
@@ -2724,12 +3375,361 @@ def compile_implementation_plan(
     )
 
 
+def compile_verification_decision(
+    projection: GraphProjection,
+    *,
+    node_id: str,
+    decision_request_id: str,
+    base_graph_position: int,
+    answer: Mapping[str, Any],
+) -> DecisionCompilation:
+    """Compile one exact typed verifier answer into its canonical report."""
+    resolved = resolve_verification_decision_context(projection, node_id)
+    parsed = VerificationDecision.model_validate(dict(answer))
+    expected = {item.alias: item for item in resolved.obligation_table}
+    findings = {finding.obligation: finding for finding in parsed.findings}
+    unknown = sorted(set(findings) - set(expected))
+    missing = [item.alias for item in resolved.obligation_table if item.alias not in findings]
+    if unknown:
+        raise ValueError(f"verification answer contains unknown obligation aliases: {unknown}")
+    if missing:
+        raise ValueError(f"verification answer omits obligation aliases: {missing}")
+    evidence = cast(dict[str, str], dict(resolved.evidence_aliases.object_items()))
+    for finding in parsed.findings:
+        unknown_evidence = sorted(set(finding.evidence) - set(evidence))
+        if unknown_evidence:
+            raise ValueError(
+                f"verification answer contains unknown evidence aliases: {unknown_evidence}"
+            )
+        for alias in finding.evidence:
+            record = output_record_payloads_view(projection).get(evidence[alias])
+            candidate_id = getattr(record, "candidate_id", None)
+            prior_batch_report = resolved.semantic_stage == "final_audit" and isinstance(
+                record, VerificationReportRecord
+            )
+            if (
+                candidate_id is not None
+                and candidate_id not in resolved.candidate_record_ids
+                and not prior_batch_report
+            ):
+                raise ValueError("verification evidence cites a different candidate")
+    rank = {"F": 0, "D": 1, "C": 2, "B": 3, "A": 4}
+    outcome = (
+        "passed"
+        if (
+            all(
+                rank[finding.grade] >= rank[expected[alias].minimum_grade]
+                for alias, finding in findings.items()
+            )
+            and all(receipt.status == "passed" for receipt in resolved.mandatory_check_receipts)
+        )
+        else "failed"
+    )
+    report_grades: list[dict[str, Any]] = []
+    requirement_ids = {
+        item.alias: item.source_record_or_node_identity
+        for item in resolved.obligation_table
+        if item.source_field == "value.text"
+    }
+    for alias, record_id in requirement_ids.items():
+        finding = findings[alias]
+        requirement = output_record_payloads_view(projection).get(record_id)
+        requirement_id = getattr(getattr(requirement, "value", None), "id", record_id)
+        report_grades.append(
+            {"requirement_id": requirement_id, "grade": finding.grade, "reason": finding.reason}
+        )
+    canonical_answer = parsed.model_dump(mode="json")
+    answer_hash = canonical_decision_answer_hash(canonical_answer)
+    digest = hashlib.sha256(
+        "\x00".join((decision_request_id, node_id, answer_hash)).encode("utf-8")
+    ).hexdigest()
+    patch_id = f"decision-patch-{digest[:24]}"
+    records = output_record_payloads_view(projection)
+    candidate = records.get(resolved.candidate_record_ids[0])
+    candidate_file_state_ids = (
+        list(
+            dict.fromkeys(
+                [
+                    *candidate.file_state_record_ids,
+                    *candidate.value.file_state_record_ids,
+                    *([candidate.file_state_record_id] if candidate.file_state_record_id else []),
+                    *(
+                        [candidate.value.file_state_record_id]
+                        if candidate.value.file_state_record_id
+                        else []
+                    ),
+                ]
+            )
+        )
+        if isinstance(candidate, CandidateRecord)
+        else []
+    )
+    evaluated_record_ids = list(
+        evidence_closure_for_node(
+            projection,
+            node_id,
+            consumer="final_audit" if resolved.semantic_stage == "final_audit" else "verifier",
+        ).evaluated_record_ids
+    )
+    judgment_content = VerificationJudgmentArtifact(
+        decision_request_id=decision_request_id,
+        semantic_stage=resolved.semantic_stage,
+        candidate_record_ids=resolved.candidate_record_ids,
+        obligations=resolved.obligation_table,
+        mandatory_check_receipts=resolved.mandatory_check_receipts,
+        evidence_aliases=evidence,
+        findings=tuple(parsed.findings),
+        outcome=outcome,
+    )
+    judgment_record_id = f"verification-judgment-{digest[:24]}"
+    judgment_record = SemanticArtifactRecord.model_validate(
+        {
+            "record_id": judgment_record_id,
+            "record_kind": "graph_record",
+            "record_type": "semantic_artifact",
+            "schema_version": VERIFICATION_JUDGMENT_SCHEMA_VERSION,
+            "producer_node_id": node_id,
+            "port": "semantic_artifact",
+            "schema": "SemanticArtifact",
+            "value": {
+                "semantic_role": "verification_judgment",
+                "schema_id": VERIFICATION_JUDGMENT_SCHEMA_ID,
+                "schema_version": VERIFICATION_JUDGMENT_SCHEMA_VERSION,
+                "content": judgment_content.model_dump(mode="json"),
+                "provenance": {
+                    "source": "decision_compiler",
+                    "decision_request_id": decision_request_id,
+                },
+                "source_record_ids": list(
+                    dict.fromkeys(
+                        [
+                            *(item.record_id for item in resolved.bound_inputs),
+                            *evaluated_record_ids,
+                        ]
+                    )
+                ),
+                "requirement_ids": [row["requirement_id"] for row in report_grades],
+                "task_region_id": (node_payload_view(projection, node_id) or {}).get(
+                    "task_region_id"
+                ),
+                "validation_status": "validated",
+                "authority_status": "accepted",
+            },
+        }
+    )
+    report = VerificationReportRecord.model_validate(
+        {
+            "record_id": f"verification-{digest[:24]}",
+            "record_kind": "verification",
+            "record_type": "verification_report",
+            "producer_node_id": node_id,
+            "port": "verification_report",
+            "schema": "VerificationReport",
+            "candidate_id": resolved.candidate_record_ids[0],
+            "outcome": outcome,
+            "value": {
+                "outcome": outcome,
+                "grades": report_grades,
+                "reason": "typed verifier judgment",
+                "judgment_artifact_record_id": judgment_record_id,
+            },
+            "candidate_record_id": resolved.candidate_record_ids[0],
+            "candidate_record_ids": list(resolved.candidate_record_ids),
+            "file_state_record_ids": candidate_file_state_ids,
+            "evaluated_record_ids": evaluated_record_ids,
+            "evidence": {"judgment_artifact_record_id": judgment_record_id},
+        }
+    )
+    record = DecisionAnswerRecord(
+        record_id=f"decision-answer-{digest[:24]}",
+        record_kind="graph_record",
+        record_type="decision_answer",
+        producer_node_id=node_id,
+        producer_port="decision",
+        port="decision",
+        schema="DecisionAnswer",
+        schema_version=VERIFICATION_DECISION_SCHEMA_VERSION,
+        value=DecisionAnswerValue(
+            interaction_contract="decision-v1",
+            family="verification_decision",
+            decision_request_id=decision_request_id,
+            answer_schema_id=VERIFICATION_DECISION_SCHEMA_ID,
+            answer_schema_version=VERIFICATION_DECISION_SCHEMA_VERSION,
+            answer_schema_sha256=verification_decision_schema_sha256(),
+            compiler_contract_version=DECISION_COMPILER_CONTRACT_VERSION,
+            answer_sha256=answer_hash,
+            answer=canonical_answer,
+            consequence_patch_id=patch_id,
+            bound_input_record_ids=[item.record_id for item in resolved.bound_inputs],
+        ),
+    )
+    return DecisionCompilation(
+        patch_id=patch_id,
+        base_graph_position=base_graph_position,
+        ops=(),
+        decision_record=record,
+        semantic_records=(judgment_record,),
+        verification_record=report,
+        bound_inputs=resolved.bound_inputs,
+        read_set=_bound_decision_read_set(projection, node_id, resolved.bound_inputs),
+        disposition="verification_decision",
+        completion_state="completed",
+    )
+
+
+def _bound_decision_read_set(
+    projection: GraphProjection,
+    node_id: str,
+    bound_inputs: tuple[DecisionBoundInput, ...],
+) -> tuple[str, ...]:
+    """Bind record and domain identities used by requirement authority events."""
+    authority = [node_id, *(item.record_id for item in bound_inputs)]
+    records = output_record_payloads_view(projection)
+    for item in bound_inputs:
+        record = records.get(item.record_id)
+        if isinstance(record, RequirementRecord):
+            authority.extend(
+                value
+                for value in (record.value.id, record.value.version, record.producer_node_id)
+                if value is not None
+            )
+    return tuple(dict.fromkeys(authority))
+
+
+def compile_work_result(
+    projection: GraphProjection,
+    *,
+    node_id: str,
+    decision_request_id: str,
+    base_graph_position: int,
+    answer: Mapping[str, Any],
+) -> DecisionCompilation:
+    """Compile a worker result without granting it graph-mutation authority."""
+    resolved = resolve_work_result_context(projection, node_id)
+    parsed = cast(WorkResult, TypeAdapter(WorkResult).validate_python(dict(answer)))
+    if isinstance(parsed, BlockedWorkResult):
+        unknown_evidence = sorted(set(parsed.blocker.evidence) - set(resolved.evidence_aliases))
+        if unknown_evidence:
+            raise ValueError(f"blocker contains unknown evidence alias: {unknown_evidence}")
+    canonical_answer = parsed.model_dump(mode="json")
+    answer_hash = canonical_decision_answer_hash(canonical_answer)
+    digest = hashlib.sha256(
+        "\x00".join(
+            (
+                decision_request_id,
+                node_id,
+                WORK_RESULT_SCHEMA_ID,
+                str(WORK_RESULT_SCHEMA_VERSION),
+                str(DECISION_COMPILER_CONTRACT_VERSION),
+                answer_hash,
+            )
+        ).encode("utf-8")
+    ).hexdigest()
+    patch_id = f"work-result-{digest[:24]}"
+    record = DecisionAnswerRecord(
+        record_id=f"decision-answer-{digest[:24]}",
+        record_kind="graph_record",
+        record_type="decision_answer",
+        producer_node_id=node_id,
+        producer_port="decision",
+        port="decision",
+        schema="DecisionAnswer",
+        schema_version=WORK_RESULT_SCHEMA_VERSION,
+        value=DecisionAnswerValue(
+            interaction_contract="decision-v1",
+            family="work_result",
+            decision_request_id=decision_request_id,
+            answer_schema_id=WORK_RESULT_SCHEMA_ID,
+            answer_schema_version=WORK_RESULT_SCHEMA_VERSION,
+            answer_schema_sha256=work_result_schema_sha256(),
+            compiler_contract_version=DECISION_COMPILER_CONTRACT_VERSION,
+            answer_sha256=answer_hash,
+            answer=canonical_answer,
+            consequence_patch_id=patch_id,
+            bound_input_record_ids=[item.record_id for item in resolved.bound_inputs],
+        ),
+    )
+    blocked = isinstance(parsed, BlockedWorkResult)
+    return DecisionCompilation(
+        patch_id=patch_id,
+        base_graph_position=base_graph_position,
+        ops=(),
+        decision_record=record,
+        bound_inputs=resolved.bound_inputs,
+        read_set=_bound_decision_read_set(projection, node_id, resolved.bound_inputs),
+        disposition="blocked" if blocked else "proceed",
+        completion_state="failed" if blocked else "completed",
+        failure_reason=parsed.blocker.reason if blocked else None,
+    )
+
+
 ResolvedDecisionContext: TypeAlias = (
     ResolvedDiscoveryBriefContext
     | ResolvedImplementationPlanContext
     | ResolvedBatchDecisionContext
     | ResolvedCorrectionDecisionContext
+    | ResolvedVerificationDecisionContext
+    | ResolvedWorkResultContext
 )
+
+
+def resolve_work_result_context(
+    projection: GraphProjection,
+    node_id: str,
+) -> ResolvedWorkResultContext:
+    """Resolve the worker's exact snapshot and input authority."""
+    applicability = resolve_decision_applicability(projection, node_id)
+    if applicability is None or applicability.family != "work_result":
+        raise DecisionContractResolutionError("node is not a decision-v1 worker")
+    node = node_payload_view(projection, node_id) or {}
+    stage = node.get("semantic_stage")
+    if stage not in {"effectful_batch", "corrective_work"}:
+        raise DecisionContractResolutionError("worker has an unsupported semantic stage")
+    bindings = input_bindings_view(projection).get(node_id, {})
+    bound_inputs = [
+        _bound_input(projection, node_id=node_id, port=port, record_id=record_id)
+        for port, binding in sorted(bindings.items())
+        for record_id in binding.record_ids
+    ]
+    task_region_id = node.get("task_region_id")
+    if not isinstance(task_region_id, str) or not task_region_id.strip():
+        raise DecisionContractResolutionError("worker result requires a task region")
+    records = output_record_payloads_view(projection)
+    baseline_candidate_id = node.get("base_snapshot_candidate_id")
+    evidence_ids: set[str] = set()
+    for item in bound_inputs:
+        record = records.get(item.record_id)
+        if not isinstance(
+            record,
+            (
+                CandidateRecord,
+                SemanticArtifactRecord,
+                CheckResultRecord,
+                VerificationReportRecord,
+                GapClassificationRecord,
+            ),
+        ):
+            continue
+        # Correction evidence must concern its frozen rejected candidate.
+        # Ordinary workers may cite bound verification of earlier dependencies.
+        if (
+            stage == "corrective_work"
+            and isinstance(baseline_candidate_id, str)
+            and isinstance(record, (CandidateRecord, CheckResultRecord, VerificationReportRecord))
+            and record.candidate_id != baseline_candidate_id
+        ):
+            continue
+        evidence_ids.add(item.record_id)
+    return ResolvedWorkResultContext(
+        node_id=node_id,
+        routine_snapshot_record_id=applicability.routine_snapshot_record_id,
+        bound_inputs=tuple(bound_inputs),
+        evidence_aliases=FrozenMap(
+            {f"e{index}": record_id for index, record_id in enumerate(sorted(evidence_ids), 1)}
+        ),
+        task_region_id=task_region_id,
+        semantic_stage=cast(Literal["effectful_batch", "corrective_work"], stage),
+    )
 
 
 def resolve_decision_context(
@@ -2747,6 +3747,10 @@ def resolve_decision_context(
         return resolve_batch_decision_context(projection, node_id)
     if applicability.family == "correction_decision":
         return resolve_correction_decision_context(projection, node_id)
+    if applicability.family == "verification_decision":
+        return resolve_verification_decision_context(projection, node_id)
+    if applicability.family == "work_result":
+        return resolve_work_result_context(projection, node_id)
     raise DecisionContractResolutionError(
         f"decision family {applicability.family!r} is not activated"
     )
@@ -2754,7 +3758,12 @@ def resolve_decision_context(
 
 def canonical_decision_answer(
     family: Literal[
-        "discovery_brief", "implementation_plan", "batch_decision", "correction_decision"
+        "discovery_brief",
+        "implementation_plan",
+        "batch_decision",
+        "correction_decision",
+        "verification_decision",
+        "work_result",
     ],
     answer: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -2767,6 +3776,12 @@ def canonical_decision_answer(
         return cast(
             BaseModel, TypeAdapter(CorrectionDecision).validate_python(dict(answer))
         ).model_dump(mode="json")
+    if family == "verification_decision":
+        return VerificationDecision.model_validate(dict(answer)).model_dump(mode="json")
+    if family == "work_result":
+        return cast(BaseModel, TypeAdapter(WorkResult).validate_python(dict(answer))).model_dump(
+            mode="json"
+        )
     parsed = cast(BatchDecision, TypeAdapter(BatchDecision).validate_python(dict(answer)))
     return parsed.model_dump(mode="json")
 
@@ -2801,6 +3816,22 @@ def compile_decision(
         )
     if applicability.family == "correction_decision":
         return compile_correction_decision(
+            projection,
+            node_id=node_id,
+            decision_request_id=decision_request_id,
+            base_graph_position=base_graph_position,
+            answer=answer,
+        )
+    if applicability.family == "verification_decision":
+        return compile_verification_decision(
+            projection,
+            node_id=node_id,
+            decision_request_id=decision_request_id,
+            base_graph_position=base_graph_position,
+            answer=answer,
+        )
+    if applicability.family == "work_result":
+        return compile_work_result(
             projection,
             node_id=node_id,
             decision_request_id=decision_request_id,
@@ -2866,6 +3897,7 @@ def _decision_answer_target(
         in {
             "plan_verification",
             "effectful_batch",
+            "corrective_work",
             "final_audit",
         }
     ):
@@ -3399,6 +4431,12 @@ __all__ = [
     "DECISION_PLAN_SCHEMA_VERSION",
     "DISCOVERY_BRIEF_SCHEMA_ID",
     "DISCOVERY_BRIEF_SCHEMA_VERSION",
+    "VERIFICATION_DECISION_SCHEMA_ID",
+    "VERIFICATION_DECISION_SCHEMA_VERSION",
+    "VERIFICATION_JUDGMENT_SCHEMA_ID",
+    "VERIFICATION_JUDGMENT_SCHEMA_VERSION",
+    "WORK_RESULT_SCHEMA_ID",
+    "WORK_RESULT_SCHEMA_VERSION",
     "DecisionApplicability",
     "DecisionCompilation",
     "DecisionBoundInput",
@@ -3418,8 +4456,11 @@ __all__ = [
     "ResolvedCorrectionDecisionContext",
     "ResolvedDiscoveryBriefContext",
     "ResolvedImplementationPlanContext",
+    "ResolvedWorkResultContext",
     "RequirementAlias",
     "VerificationDecision",
+    "VerificationJudgmentArtifact",
+    "VerificationObligation",
     "WorkResult",
     "batch_decision_schema",
     "batch_decision_schema_sha256",
@@ -3432,6 +4473,7 @@ __all__ = [
     "compile_decision",
     "compile_discovery_brief",
     "compile_implementation_plan",
+    "compile_work_result",
     "decision_answer_schema",
     "decision_plan_declaration",
     "decision_plan_schema",
@@ -3446,4 +4488,11 @@ __all__ = [
     "resolve_decision_context",
     "resolve_discovery_brief_context",
     "resolve_implementation_plan_context",
+    "resolve_verification_decision_context",
+    "verification_decision_schema",
+    "verification_decision_schema_sha256",
+    "verification_judgment_declaration",
+    "work_result_schema",
+    "work_result_schema_sha256",
+    "resolve_work_result_context",
 ]

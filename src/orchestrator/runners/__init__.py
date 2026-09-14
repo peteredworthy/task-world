@@ -35,6 +35,7 @@ from orchestrator.runners.types import (
     SubmitCallback,
 )
 from orchestrator.runners.submission import (
+    is_advisory_submission,
     is_decision_submission,
     submission_prompt_instruction,
     submission_tool_input_schema,
@@ -301,6 +302,7 @@ __all__ = [
     "SubmissionOutputContract",
     "SubmissionInvocation",
     "is_decision_submission",
+    "is_advisory_submission",
     "submission_prompt_instruction",
     "submission_tool_input_schema",
     "validate_submission_arguments",

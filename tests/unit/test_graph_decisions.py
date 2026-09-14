@@ -9,6 +9,14 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from orchestrator.config import RoutineConfig
+from orchestrator.graph_runtime import GraphDispatchContext, render_graph_node_prompt
+from tests.unit.graph_test_utils import event as graph_event
+from orchestrator.runners import (
+    SubmissionContract,
+    SubmissionInvocation,
+    SubmissionOutputContract,
+    submission_tool_input_schema,
+)
 from orchestrator.graph import (
     BatchDecision,
     CorrectionDecision,
@@ -23,6 +31,8 @@ from orchestrator.graph import (
     PatchCommandContext,
     SequentialIdGenerator,
     VerificationDecision,
+    verification_decision_schema,
+    verification_decision_schema_sha256,
     WorkResult,
     apply_command,
     batch_decision_schema_sha256,
@@ -31,6 +41,8 @@ from orchestrator.graph import (
     callback_payload_identity,
     canonical_decision_answer_hash,
     compile_batch_decision,
+    compile_work_result,
+    compile_verification_decision,
     compile_routine,
     decision_plan_declaration,
     decode_submission_payload,
@@ -41,15 +53,39 @@ from orchestrator.graph import (
     recovery_proof_hash,
     resolve_decision_applicability,
     resolve_batch_decision_context,
+    resolve_work_result_context,
+    resolve_verification_decision_context,
     semantic_schema_declarations_view,
+    work_result_schema,
+    work_result_schema_sha256,
 )
-from tests.unit.graph_test_utils import event as graph_event
-from orchestrator.runners import (
-    SubmissionContract,
-    SubmissionInvocation,
-    SubmissionOutputContract,
-    submission_tool_input_schema,
-)
+
+
+def test_verification_decision_schema_is_strict_and_requires_one_finding_per_alias() -> None:
+    schema = verification_decision_schema()
+    assert schema["additionalProperties"] is False
+    assert verification_decision_schema_sha256().startswith("sha256:")
+    answer = {
+        "findings": [{"obligation": "o1", "grade": "A", "reason": "satisfied", "evidence": []}]
+    }
+    VerificationDecision.model_validate(answer)
+    with pytest.raises(ValidationError):
+        VerificationDecision.model_validate({**answer, "unexpected": True})
+    with pytest.raises(ValidationError):
+        VerificationDecision.model_validate(
+            {"findings": [answer["findings"][0], answer["findings"][0]]}
+        )
+
+
+def test_verification_decision_rejects_unknown_aliases_and_empty_reasons() -> None:
+    with pytest.raises(ValidationError):
+        VerificationDecision.model_validate(
+            {"findings": [{"obligation": "x1", "grade": "A", "reason": "ok", "evidence": []}]}
+        )
+    with pytest.raises(ValidationError):
+        VerificationDecision.model_validate(
+            {"findings": [{"obligation": "o1", "grade": "A", "reason": " ", "evidence": []}]}
+        )
 
 
 def _planner_routine(*, interaction: str | None = None) -> RoutineConfig:
@@ -460,6 +496,640 @@ def decision_successor_events(requirement_count: int = 1) -> list[Any]:
 
 def _decision_successor_projection(requirement_count: int = 1):
     return build_projection(decision_successor_events(requirement_count))
+
+
+def _work_result_projection(
+    *,
+    node_id: str = "worker-core",
+    node_overrides: dict[str, Any] | None = None,
+    bind_evidence: bool = True,
+):
+    events = []
+    for event in decision_successor_events():
+        payload = dict(event.payload)
+        if event.event_type == "node_created" and payload.get("node_id") == "planner-plan":
+            payload["node_id"] = node_id
+            payload.update(
+                {
+                    "kind": "worker",
+                    "role": "implementer",
+                    "semantic_stage": "effectful_batch",
+                    "task_region_id": "batch-core",
+                    "access_mode": "write",
+                    "effect_contract": "effectful_write",
+                    "outputs": [
+                        {
+                            "port": "candidate",
+                            "direction": "output",
+                            "schema": "ImplementationCandidate",
+                            "required": True,
+                        },
+                        {
+                            "port": "file_state",
+                            "direction": "output",
+                            "schema": "FileStateRecord",
+                            "required": True,
+                        },
+                        {
+                            "port": "decision",
+                            "direction": "output",
+                            "schema": "DecisionAnswer",
+                            "required": True,
+                        },
+                    ],
+                }
+            )
+            payload.update(node_overrides or {})
+        if event.event_type in {"edge_created", "input_bound"}:
+            if payload.get("to_node_id") == "planner-plan":
+                if not bind_evidence and payload.get("to_port") in {
+                    "semantic_artifact",
+                    "verification_report",
+                }:
+                    continue
+                payload["to_node_id"] = node_id
+        events.append(event.model_copy(update={"payload": payload}))
+    return build_projection(events)
+
+
+def test_work_result_schema_and_canonical_answers_are_strict() -> None:
+    schema = work_result_schema()
+    assert schema["discriminator"]["propertyName"] == "status"
+    assert work_result_schema_sha256().startswith("sha256:")
+    assert (
+        TypeAdapter(WorkResult)
+        .validate_python({"status": "ready", "summary": "Committed candidate is ready."})
+        .status
+        == "ready"
+    )
+    assert (
+        TypeAdapter(WorkResult)
+        .validate_python(
+            {
+                "status": "blocked",
+                "blocker": {
+                    "reason": "Missing credentials.",
+                    "needed_information": ["A test credential"],
+                    "evidence": [],
+                },
+            }
+        )
+        .status
+        == "blocked"
+    )
+    with pytest.raises(ValidationError, match="non-whitespace"):
+        TypeAdapter(WorkResult).validate_python({"status": "ready", "summary": "  "})
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        TypeAdapter(WorkResult).validate_python(
+            {"status": "ready", "summary": "ready", "candidate_id": "model-owned"}
+        )
+
+
+@pytest.mark.parametrize(
+    ("answer", "disposition", "completion_state"),
+    [
+        (
+            {"status": "ready", "summary": "Implemented and ready for checks."},
+            "proceed",
+            "completed",
+        ),
+        (
+            {
+                "status": "blocked",
+                "blocker": {
+                    "reason": "The required fixture is unavailable.",
+                    "needed_information": ["Fixture path"],
+                    "evidence": [],
+                },
+            },
+            "blocked",
+            "failed",
+        ),
+    ],
+)
+def test_compile_work_result_owns_only_answer_and_runtime_disposition(
+    answer: dict[str, Any],
+    disposition: str,
+    completion_state: str,
+) -> None:
+    projection = _work_result_projection()
+    resolved = resolve_work_result_context(projection, "worker-core")
+    assert resolved.task_region_id == "batch-core"
+    compiled = compile_work_result(
+        projection,
+        node_id="worker-core",
+        decision_request_id="request-work-result",
+        base_graph_position=100,
+        answer=answer,
+    )
+    assert compiled.ops == ()
+    assert compiled.disposition == disposition
+    assert compiled.completion_state == completion_state
+    assert compiled.decision_record.value.family == "work_result"
+    assert compiled.decision_record.value.answer == answer
+    assert compiled.decision_record.value.bound_input_record_ids
+    assert compiled.decision_record.value.consequence_patch_id.startswith("work-result-")
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"status": "ready", "summary": "Implemented and ready for checks."},
+        {
+            "status": "blocked",
+            "blocker": {
+                "reason": "The required fixture is unavailable.",
+                "needed_information": ["Fixture path"],
+                "evidence": [],
+            },
+        },
+    ],
+)
+def test_work_result_identity_is_scoped_and_stable_across_redelivery_and_replay(
+    answer: dict[str, Any],
+) -> None:
+    projection = _work_result_projection()
+    first = compile_work_result(
+        projection,
+        node_id="worker-core",
+        decision_request_id="request-first-execution",
+        base_graph_position=100,
+        answer=answer,
+    )
+    another_execution = compile_work_result(
+        projection,
+        node_id="worker-core",
+        decision_request_id="request-another-execution",
+        base_graph_position=100,
+        answer=answer,
+    )
+    another_worker = compile_work_result(
+        _work_result_projection(node_id="worker-other"),
+        node_id="worker-other",
+        decision_request_id="request-first-execution",
+        base_graph_position=100,
+        answer=answer,
+    )
+    compilations = (first, another_execution, another_worker)
+    assert len({item.patch_id for item in compilations}) == 3
+    assert len({item.decision_record.record_id for item in compilations}) == 3
+    assert len({item.decision_record.value.answer_sha256 for item in compilations}) == 1
+
+    # Delivery order, graph position, and reconstructing the same durable graph
+    # do not create a new logical answer or a new consequence identity.
+    reordered_answer = dict(reversed(list(answer.items())))
+    for repeated_projection in (projection, _work_result_projection()):
+        repeated = compile_work_result(
+            repeated_projection,
+            node_id="worker-core",
+            decision_request_id="request-first-execution",
+            base_graph_position=200,
+            answer=reordered_answer,
+        )
+        assert repeated.patch_id == first.patch_id
+        assert repeated.decision_record == first.decision_record
+        assert repeated.bound_inputs == first.bound_inputs
+        assert repeated.read_set == first.read_set
+
+
+def _blocked_work_answer(evidence: list[str]) -> dict[str, Any]:
+    return {
+        "status": "blocked",
+        "blocker": {
+            "reason": "The bound evidence leaves a required fixture unresolved.",
+            "needed_information": ["Fixture path"],
+            "evidence": evidence,
+        },
+    }
+
+
+def test_worker_blocker_uses_only_offered_frozen_evidence() -> None:
+    projection = _work_result_projection()
+    resolved = resolve_work_result_context(projection, "worker-core")
+    expected = {"e1": "accepted-decision-plan", "e2": "plan-passed"}
+    assert dict(resolved.evidence_aliases.object_items()) == expected
+    assert resolved.protected_question_context()["evidence_aliases"] == expected
+    compiled = compile_work_result(
+        projection,
+        node_id="worker-core",
+        decision_request_id="blocked-evidence-request",
+        base_graph_position=100,
+        answer=_blocked_work_answer(["e1", "e2"]),
+    )
+    assert compiled.disposition == "blocked"
+    assert compiled.decision_record.value.answer == _blocked_work_answer(["e1", "e2"])
+    node = node_payload_view(projection, "worker-core")
+    assert node is not None
+    prompt = render_graph_node_prompt(
+        GraphDispatchContext(
+            run_id="run-1",
+            node_id="worker-core",
+            node_kind="worker",
+            node_role="implementer",
+            node_payload=dict(node),
+            requirements=[],
+            worktree_path="/tmp/work-result-prompt",
+            lease_id="work-lease",
+            lease_generation=1,
+            execution_id="work-execution",
+            base_snapshot_id="work-base",
+            dispatch_event_id="dispatch-work",
+            graph_projection=projection,
+            graph_events=[],
+        )
+    )
+    assert '"evidence_aliases": {"e1": "accepted-decision-plan", "e2": "plan-passed"}' in prompt
+
+
+@pytest.mark.parametrize("evidence", [["e999"], ["e3"]])
+def test_worker_blocker_rejects_unknown_or_unbound_evidence(evidence: list[str]) -> None:
+    projection = _work_result_projection()
+    # A globally accepted report for a different candidate is not an offered
+    # input to this worker, even though it exists in the same graph.
+    unbound_report = next(
+        item
+        for item in decision_successor_events()
+        if item.event_type == "output_record_accepted"
+        and item.payload.get("record_id") == "plan-passed"
+    )
+    payload = dict(unbound_report.payload)
+    payload.update(
+        {
+            "record_id": "unbound-foreign-report",
+            "candidate_id": "foreign-candidate",
+            "candidate_record_id": "foreign-candidate",
+            "candidate_record_ids": ["foreign-candidate"],
+            "graph_position": 100,
+        }
+    )
+    projection = reduce_event(
+        projection, unbound_report.model_copy(update={"position": 100, "payload": payload})
+    )
+    with pytest.raises(ValueError, match="unknown evidence alias"):
+        compile_work_result(
+            projection,
+            node_id="worker-core",
+            decision_request_id="blocked-evidence-request",
+            base_graph_position=100,
+            answer=_blocked_work_answer(evidence),
+        )
+
+
+def test_corrective_worker_does_not_offer_evidence_for_another_candidate() -> None:
+    projection = _work_result_projection(
+        node_overrides={
+            "semantic_stage": "corrective_work",
+            "base_snapshot_selection": "rejected_candidate",
+            "base_snapshot_candidate_id": "rejected-candidate",
+        }
+    )
+    resolved = resolve_work_result_context(projection, "worker-core")
+    assert "plan-passed" not in resolved.evidence_aliases.values()
+    with pytest.raises(ValueError, match="unknown evidence alias"):
+        compile_work_result(
+            projection,
+            node_id="worker-core",
+            decision_request_id="blocked-evidence-request",
+            base_graph_position=100,
+            answer=_blocked_work_answer(["e2"]),
+        )
+
+
+def test_worker_without_offered_evidence_requires_empty_blocker_evidence() -> None:
+    projection = _work_result_projection(bind_evidence=False)
+    resolved = resolve_work_result_context(projection, "worker-core")
+    assert not resolved.evidence_aliases
+    for evidence in ([], ["e1"]):
+        if evidence:
+            with pytest.raises(ValueError, match="unknown evidence alias"):
+                compile_work_result(
+                    projection,
+                    node_id="worker-core",
+                    decision_request_id="blocked-without-evidence",
+                    base_graph_position=100,
+                    answer=_blocked_work_answer(evidence),
+                )
+        else:
+            compiled = compile_work_result(
+                projection,
+                node_id="worker-core",
+                decision_request_id="blocked-without-evidence",
+                base_graph_position=100,
+                answer=_blocked_work_answer(evidence),
+            )
+            assert compiled.disposition == "blocked"
+
+
+def _verification_events(
+    *,
+    receipt_statuses: tuple[str, ...] = ("passed",),
+    receipt_mutations: dict[int, dict[str, Any]] | None = None,
+    declare_extra_check: bool = False,
+) -> list[Any]:
+    """Build one exact decision-v1 verifier request from public graph events."""
+    events: list[Any] = []
+    for item in _compile(_planner_routine(interaction="decision-v1")):
+        payload = dict(item.payload)
+        if item.event_type == "node_created" and payload.get("node_id") == "planner-plan":
+            payload.update(
+                {
+                    "kind": "verifier",
+                    "role": "verifier",
+                    "semantic_stage": "effectful_batch",
+                    "task_region_id": "batch-core",
+                    "acceptance": ["The exact candidate passes acceptance."],
+                    "rubric": ["The implementation is maintainable."],
+                    "inputs": [
+                        {
+                            "port": "routine_snapshot",
+                            "direction": "input",
+                            "schema": "RoutineSnapshot",
+                            "required": True,
+                        },
+                        {
+                            "port": "candidate_under_test",
+                            "direction": "input",
+                            "schema": "ImplementationCandidate",
+                            "required": True,
+                        },
+                        *[
+                            {
+                                "port": f"check_result_{index}",
+                                "direction": "input",
+                                "schema": "CheckResult",
+                                "required": True,
+                            }
+                            for index in range(
+                                1,
+                                len(receipt_statuses) + 1 + int(declare_extra_check),
+                            )
+                        ],
+                        {
+                            "port": "requirement_1",
+                            "direction": "input",
+                            "schema": "Requirement",
+                            "required": True,
+                        },
+                    ],
+                    "outputs": [
+                        {
+                            "port": "decision",
+                            "direction": "output",
+                            "schema": "DecisionAnswer",
+                            "record_layers": ["graph_record"],
+                            "required": True,
+                        },
+                        {
+                            "port": "verification_report",
+                            "direction": "output",
+                            "schema": "VerificationReport",
+                            "required": True,
+                        },
+                        {
+                            "port": "semantic_artifact",
+                            "direction": "output",
+                            "schema": "SemanticArtifact",
+                            "record_layers": ["graph_record"],
+                            "required": True,
+                        },
+                    ],
+                }
+            )
+        if item.event_type == "input_bound":
+            record_ids = cast(list[str], payload["record_ids"])
+            payload["bound_at_position"] = len(events) + 1
+            payload["record_bound_positions"] = {
+                record_id: len(events) + 1 for record_id in record_ids
+            }
+        if item.event_type == "output_record_accepted":
+            payload["graph_position"] = len(events) + 1
+        events.append(item.model_copy(update={"position": len(events) + 1, "payload": payload}))
+
+    def append(kind: str, payload: dict[str, Any]) -> int:
+        position = len(events) + 1
+        if kind == "output_record_accepted":
+            payload = {**payload, "graph_position": position}
+        events.append(graph_event(kind, payload, position=position))
+        return position
+
+    append(
+        "node_created",
+        {"node_id": "requirement-core", "kind": "requirement", "role": "requirement"},
+    )
+    append("node_created", {"node_id": "worker-core", "kind": "worker", "role": "implementer"})
+    requirement_position = append(
+        "output_record_accepted",
+        {
+            "record_id": "requirement-core-record",
+            "record_kind": "graph_record",
+            "record_type": "requirement_record",
+            "producer_node_id": "requirement-core",
+            "port": "requirement",
+            "schema": "RequirementRecord",
+            "value": {
+                "id": "REQ-CORE",
+                "text": "Implement the exact behavior.",
+                "priority": "critical",
+                "source": "routine",
+                "version": "v1",
+                "must": True,
+            },
+        },
+    )
+    append(
+        "file_state_accepted",
+        {
+            "record_id": "file-state-core-record",
+            "record_kind": "file_state",
+            "record_type": "file_state",
+            "producer_node_id": "worker-core",
+            "port": "file_state",
+            "schema": "FileStateRecord",
+            "snapshot_id": "candidate-snapshot",
+            "candidate_id": "candidate-core-record",
+            "task_region_id": "batch-core",
+            "verdict": "captured",
+            "git": {
+                "commit_sha": "a" * 40,
+                "tree_sha": "b" * 40,
+                "ref": "refs/orchestrator/snapshots/candidate-snapshot",
+            },
+        },
+    )
+    candidate_position = append(
+        "output_record_accepted",
+        {
+            "record_id": "candidate-core-record",
+            "record_kind": "output",
+            "record_type": "candidate",
+            "producer_node_id": "worker-core",
+            "port": "candidate",
+            "schema": "ImplementationCandidate",
+            "candidate_id": "candidate-core-record",
+            "task_region_id": "batch-core",
+            "attempt_number": 1,
+            "file_state_record_id": "file-state-core-record",
+            "file_state_record_ids": ["file-state-core-record"],
+            "value": {
+                "summary": "candidate",
+                "changed_paths": ["src/core.py"],
+                "requirements_addressed": ["REQ-CORE"],
+                "file_state_record_id": "file-state-core-record",
+                "file_state_record_ids": ["file-state-core-record"],
+            },
+        },
+    )
+    mutations = receipt_mutations or {}
+    receipt_rows: list[tuple[int, str, str]] = []
+    for index, status in enumerate(receipt_statuses, 1):
+        check_id = f"check-core-{index}"
+        command = {
+            "id": f"command-core-{index}",
+            "argv": ["true"],
+            "timeout_seconds": 5.0,
+        }
+        append(
+            "node_created",
+            {
+                "node_id": check_id,
+                "kind": "check",
+                "role": "batch_check",
+                "semantic_stage": "effectful_batch",
+                "task_region_id": "batch-core",
+                "command_definition": command,
+                "base_snapshot_selection": "candidate_under_test",
+            },
+        )
+        receipt_id = f"check-core-record-{index}"
+        receipt = {
+            "record_id": receipt_id,
+            "record_kind": "output",
+            "record_type": "check_result",
+            "producer_node_id": check_id,
+            "port": "check_result",
+            "schema": "CheckResult",
+            "candidate_id": "candidate-core-record",
+            "task_region_id": "batch-core",
+            "attempt_number": 1,
+            "candidate_record_id": "candidate-core-record",
+            "candidate_record_ids": ["candidate-core-record"],
+            "file_state_record_ids": ["file-state-core-record"],
+            "evaluated_record_ids": ["candidate-core-record"],
+            "value": {
+                "status": status,
+                "classification": status,
+                "command_id": f"command-core-{index}",
+                "command_text": "true",
+                "command": command,
+                "worktree_path": "/tmp/source-worktree",
+                "source_worktree_path": "/tmp/source-worktree",
+                "execution_worktree_path": "/tmp/check-worktree",
+                "base_snapshot_id": "candidate-snapshot",
+                "execution_snapshot_id": "candidate-snapshot",
+                "execution_snapshot_ref": "refs/orchestrator/snapshots/candidate-snapshot",
+                "execution_id": f"check-execution-{index}",
+                "exit_code": 0 if status == "passed" else 1 if status == "failed" else None,
+                "duration_ms": 1,
+                "stdout_tail": "",
+                "stderr_tail": "",
+                "stdout_truncated": False,
+                "stderr_truncated": False,
+                "timeout_seconds": 5.0,
+                "environment_policy": {
+                    "cwd": "/tmp/check-worktree",
+                    "env": "inherited",
+                    "shell": False,
+                    "source_worktree_path": "/tmp/source-worktree",
+                    "snapshot_id": "candidate-snapshot",
+                    "dependency_provisioning": [],
+                },
+                "source": "node_command_definition",
+                "candidate_record_ids": ["candidate-core-record"],
+                "file_state_record_ids": ["file-state-core-record"],
+                "evaluated_record_ids": ["candidate-core-record"],
+            },
+        }
+        mutation = mutations.get(index)
+        if mutation:
+            receipt = deepcopy(receipt)
+            for path, value in mutation.items():
+                target = receipt
+                parts = path.split(".")
+                for part in parts[:-1]:
+                    target = cast(dict[str, Any], target[part])
+                target[parts[-1]] = value
+        receipt_position = append("output_record_accepted", receipt)
+        receipt_rows.append((receipt_position, check_id, receipt_id))
+
+    edge_rows = [
+        (
+            "edge-worker-candidate-to-verifier",
+            "worker-core",
+            "candidate",
+            "candidate_under_test",
+            "candidate-core-record",
+            candidate_position,
+        ),
+        (
+            "edge-requirement-to-verifier",
+            "requirement-core",
+            "requirement",
+            "requirement_1",
+            "requirement-core-record",
+            requirement_position,
+        ),
+        *[
+            (
+                f"edge-{check_id}-to-verifier",
+                check_id,
+                "check_result",
+                f"check_result_{index}",
+                receipt_id,
+                receipt_position,
+            )
+            for index, (receipt_position, check_id, receipt_id) in enumerate(receipt_rows, 1)
+        ],
+    ]
+    for edge_id, source, source_port, target_port, record_id, record_position in edge_rows:
+        append(
+            "edge_created",
+            {
+                "edge_id": edge_id,
+                "from_node_id": source,
+                "from_port": source_port,
+                "to_node_id": "planner-plan",
+                "to_port": target_port,
+                "required": True,
+                "dependency_type": "input_binding",
+            },
+        )
+        bound_position = len(events) + 1
+        append(
+            "input_bound",
+            {
+                "edge_id": edge_id,
+                "to_node_id": "planner-plan",
+                "to_port": target_port,
+                "record_ids": [record_id],
+                "record_bound_positions": {record_id: record_position},
+                "bound_at_position": bound_position,
+            },
+        )
+    return events
+
+
+def _all_a_answer(obligation_count: int, evidence: list[str] | None = None) -> dict[str, Any]:
+    return {
+        "findings": [
+            {
+                "obligation": f"o{index}",
+                "grade": "A",
+                "reason": "Satisfied.",
+                "evidence": list(evidence or []),
+            }
+            for index in range(1, obligation_count + 1)
+        ]
+    }
 
 
 def _decision_envelope() -> dict[str, Any]:
@@ -1436,7 +2106,334 @@ def test_successor_context_and_compiler_bind_exact_inputs_deterministically() ->
         if node.get("kind") == "worker" and node.get("semantic_stage") == "effectful_batch"
     )
     assert implementation_worker["implementation_notes"] == "Keep scope exact."
+    generated_verifiers = [node for node in created if node.get("kind") == "verifier"]
+    assert generated_verifiers
+    for verifier in generated_verifiers:
+        assert verifier["acceptance"] == ["The core works."]
+        assert any(item["port"] == "routine_snapshot" for item in verifier["inputs"])
+        assert any(item["port"] == "decision" for item in verifier["outputs"])
     assert {"planner-plan", "REQ-1", "v1"} <= set(first.read_set)
+
+
+def test_typed_verifier_requires_exact_passing_mandatory_receipts() -> None:
+    projection = build_projection(_verification_events())
+    resolved = resolve_verification_decision_context(projection, "planner-plan")
+
+    assert [item.source_field for item in resolved.obligation_table] == [
+        "value.text",
+        "acceptance",
+        "rubric",
+    ]
+    assert dict(resolved.evidence_aliases.object_items()) == {
+        "e1": "candidate-core-record",
+        "e2": "check-core-record-1",
+    }
+    assert [item.record_id for item in resolved.mandatory_check_receipts] == ["check-core-record-1"]
+
+    compiled = compile_verification_decision(
+        projection,
+        node_id="planner-plan",
+        decision_request_id="verification-request",
+        base_graph_position=max(item.position for item in _verification_events()),
+        answer=_all_a_answer(len(resolved.obligation_table), ["e1", "e2"]),
+    )
+
+    assert compiled.verification_record is not None
+    assert compiled.verification_record.outcome == "passed"
+    assert compiled.verification_record.evaluated_record_ids == [
+        "check-core-record-1",
+        "requirement-core-record",
+        "candidate-core-record",
+        "file-state-core-record",
+    ]
+    assert {"requirement-core-record", "REQ-CORE", "v1", "requirement-core"} <= set(
+        compiled.read_set
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ({"candidate_id": "foreign-candidate"}, "candidate"),
+        ({"producer_node_id": "foreign-check"}, "producer"),
+        ({"value.command_id": "different-command"}, "command identity"),
+        ({"value.command": {"id": "command-core-1", "argv": ["false"]}}, "command definition"),
+        ({"value.command_binding": "dynamic_feature_hidden_oracle"}, "command binding"),
+        ({"value.timeout_seconds": 6.0}, "timeout"),
+        ({"value.execution_snapshot_id": "other-snapshot"}, "snapshot"),
+        ({"value.execution_snapshot_ref": "refs/orchestrator/snapshots/other"}, "snapshot ref"),
+        (
+            {
+                "value.environment_policy": {
+                    "cwd": "/tmp/check-worktree",
+                    "env": "custom",
+                    "shell": False,
+                    "source_worktree_path": "/tmp/source-worktree",
+                    "snapshot_id": "candidate-snapshot",
+                    "dependency_provisioning": [],
+                }
+            },
+            "environment policy",
+        ),
+        ({"value.source": "foreign_policy"}, "source policy"),
+    ],
+)
+def test_typed_verifier_rejects_foreign_or_mismatched_receipt(
+    mutation: dict[str, Any], message: str
+) -> None:
+    projection = build_projection(_verification_events(receipt_mutations={1: mutation}))
+
+    with pytest.raises(DecisionContractResolutionError, match=message):
+        resolve_verification_decision_context(projection, "planner-plan")
+
+
+@pytest.mark.parametrize("status", ["failed", "timeout"])
+def test_all_a_verifier_answer_cannot_override_nonpassing_receipt(status: str) -> None:
+    projection = build_projection(_verification_events(receipt_statuses=(status,)))
+    resolved = resolve_verification_decision_context(projection, "planner-plan")
+
+    compiled = compile_verification_decision(
+        projection,
+        node_id="planner-plan",
+        decision_request_id=f"verification-{status}",
+        base_graph_position=999,
+        answer=_all_a_answer(len(resolved.obligation_table)),
+    )
+
+    assert compiled.verification_record is not None
+    assert compiled.verification_record.outcome == "failed"
+    assert compiled.verification_record.evaluated_record_ids == [
+        "check-core-record-1",
+        "requirement-core-record",
+        "candidate-core-record",
+        "file-state-core-record",
+    ]
+
+
+def test_verifier_rejects_incomplete_or_stale_mandatory_receipt_coverage() -> None:
+    incomplete = build_projection(_verification_events(declare_extra_check=True))
+    with pytest.raises(DecisionContractResolutionError, match="missing mandatory check receipt"):
+        resolve_verification_decision_context(incomplete, "planner-plan")
+
+    events = _verification_events()
+    stale = deepcopy(
+        next(
+            item
+            for item in events
+            if item.event_type == "output_record_accepted"
+            and item.payload.get("record_id") == "check-core-record-1"
+        )
+    )
+    stale_payload = deepcopy(stale.payload)
+    stale_payload["record_id"] = "check-core-record-newer"
+    stale_payload["graph_position"] = len(events) + 1
+    events.append(stale.model_copy(update={"position": len(events) + 1, "payload": stale_payload}))
+    with pytest.raises(DecisionContractResolutionError, match="stale"):
+        resolve_verification_decision_context(build_projection(events), "planner-plan")
+
+
+def test_failed_report_preserves_every_mandatory_receipt_across_replay() -> None:
+    events = _verification_events(receipt_statuses=("failed", "timeout"))
+    projection = build_projection(events)
+    resolved = resolve_verification_decision_context(projection, "planner-plan")
+    compiled = compile_verification_decision(
+        projection,
+        node_id="planner-plan",
+        decision_request_id="verification-multiple-failures",
+        base_graph_position=len(events),
+        answer=_all_a_answer(len(resolved.obligation_table)),
+    )
+
+    assert compiled.verification_record is not None
+    assert compiled.verification_record.outcome == "failed"
+    assert compiled.verification_record.evaluated_record_ids == [
+        "check-core-record-1",
+        "check-core-record-2",
+        "requirement-core-record",
+        "candidate-core-record",
+        "file-state-core-record",
+    ]
+    replayed = build_projection(events)
+    assert resolve_verification_decision_context(replayed, "planner-plan") == resolved
+
+
+def test_final_audit_uses_acceptance_receipt_candidate_not_all_prior_batch_candidates() -> None:
+    raw_events = _verification_events()
+    events: list[Any] = []
+    for item in raw_events:
+        payload = deepcopy(item.payload)
+        if item.event_type == "node_created" and payload.get("node_id") == "planner-plan":
+            payload["semantic_stage"] = "final_audit"
+            payload["inputs"] = [
+                {
+                    "port": "routine_snapshot",
+                    "direction": "input",
+                    "schema": "RoutineSnapshot",
+                    "required": True,
+                },
+                {
+                    "port": "verification_report_batch_1",
+                    "direction": "input",
+                    "schema": "VerificationReport",
+                    "required": True,
+                },
+                {
+                    "port": "verification_report_batch_2",
+                    "direction": "input",
+                    "schema": "VerificationReport",
+                    "required": True,
+                },
+                {
+                    "port": "dynamic_feature_acceptance",
+                    "direction": "input",
+                    "schema": "CheckResult",
+                    "required": True,
+                },
+            ]
+        if item.event_type == "node_created" and payload.get("node_id") == "check-core-1":
+            payload["semantic_stage"] = "final_acceptance"
+        if payload.get("edge_id") in {
+            "edge-worker-candidate-to-verifier",
+            "edge-requirement-to-verifier",
+        }:
+            continue
+        if payload.get("to_node_id") == "planner-plan" and payload.get("to_port") in {
+            "candidate_under_test",
+            "requirement_1",
+        }:
+            continue
+        if payload.get("edge_id") == "edge-check-core-1-to-verifier":
+            payload["to_port"] = "dynamic_feature_acceptance"
+        events.append(item.model_copy(update={"position": len(events) + 1, "payload": payload}))
+
+    def append(kind: str, payload: dict[str, Any]) -> int:
+        position = len(events) + 1
+        if kind == "output_record_accepted":
+            payload = {**payload, "graph_position": position}
+        events.append(graph_event(kind, payload, position=position))
+        return position
+
+    for index, candidate_id in enumerate(("candidate-old", "candidate-core-record"), 1):
+        verifier_id = f"verifier-batch-{index}"
+        record_id = f"verification-batch-{index}"
+        append(
+            "node_created",
+            {
+                "node_id": verifier_id,
+                "kind": "verifier",
+                "role": "verifier",
+                "semantic_stage": "effectful_batch",
+            },
+        )
+        record_position = append(
+            "output_record_accepted",
+            {
+                "record_id": record_id,
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": verifier_id,
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": candidate_id,
+                "candidate_record_id": candidate_id,
+                "candidate_record_ids": [candidate_id],
+                "outcome": "passed",
+                "value": {"outcome": "passed", "grades": []},
+                "evaluated_record_ids": [candidate_id],
+            },
+        )
+        edge_id = f"edge-{verifier_id}-to-final-audit"
+        target_port = f"verification_report_batch_{index}"
+        append(
+            "edge_created",
+            {
+                "edge_id": edge_id,
+                "from_node_id": verifier_id,
+                "from_port": "verification_report",
+                "to_node_id": "planner-plan",
+                "to_port": target_port,
+                "required": True,
+            },
+        )
+        append(
+            "input_bound",
+            {
+                "edge_id": edge_id,
+                "to_node_id": "planner-plan",
+                "to_port": target_port,
+                "record_ids": [record_id],
+                "record_bound_positions": {record_id: record_position},
+                "bound_at_position": len(events) + 1,
+            },
+        )
+
+    projection = build_projection(events)
+    resolved = resolve_verification_decision_context(projection, "planner-plan")
+
+    assert resolved.semantic_stage == "final_audit"
+    assert resolved.candidate_record_ids == ("candidate-core-record",)
+    assert resolved.mandatory_check_receipts[0].record_id == "check-core-record-1"
+    compiled = compile_verification_decision(
+        projection,
+        node_id="planner-plan",
+        decision_request_id="final-audit-request",
+        base_graph_position=len(events),
+        answer=_all_a_answer(len(resolved.obligation_table), ["e1", "e2", "e3"]),
+    )
+    assert compiled.verification_record is not None
+    assert compiled.verification_record.candidate_record_ids == ["candidate-core-record"]
+    assert {
+        "verification-batch-1",
+        "verification-batch-2",
+        "check-core-record-1",
+    }.issubset(compiled.verification_record.evaluated_record_ids)
+
+
+def test_verifier_minimum_grades_follow_bound_requirement_and_review_policy() -> None:
+    events = _verification_events()
+    projection = build_projection(events)
+    resolved = resolve_verification_decision_context(projection, "planner-plan")
+
+    assert [item.minimum_grade for item in resolved.obligation_table] == ["A", "A", "A"]
+    answer = _all_a_answer(len(resolved.obligation_table))
+    answer["findings"][0]["grade"] = "C"
+    compiled = compile_verification_decision(
+        projection,
+        node_id="planner-plan",
+        decision_request_id="critical-cannot-pass-with-c",
+        base_graph_position=len(events),
+        answer=answer,
+    )
+    assert compiled.verification_record is not None
+    assert compiled.verification_record.outcome == "failed"
+
+
+def test_verification_report_links_separate_versioned_judgment_artifact() -> None:
+    events = _verification_events()
+    projection = build_projection(events)
+    resolved = resolve_verification_decision_context(projection, "planner-plan")
+    compiled = compile_verification_decision(
+        projection,
+        node_id="planner-plan",
+        decision_request_id="judgment-artifact-request",
+        base_graph_position=len(events),
+        answer=_all_a_answer(len(resolved.obligation_table), ["e1"]),
+    )
+
+    assert len(compiled.semantic_records) == 1
+    judgment = compiled.semantic_records[0]
+    assert judgment.value.semantic_role == "verification_judgment"
+    assert judgment.value.schema_id == "orchestrator.reliable-plan.verification-judgment"
+    assert judgment.value.schema_version == 1
+    assert judgment.value.content is not None
+    assert judgment.value.content["obligations"] == [
+        item.model_dump(mode="json") for item in resolved.obligation_table
+    ]
+    assert compiled.verification_record is not None
+    assert compiled.verification_record.value.judgment_artifact_record_id == judgment.record_id
+    assert compiled.verification_record.evidence == {
+        "judgment_artifact_record_id": judgment.record_id
+    }
 
 
 def test_successor_requirement_aliases_keep_numeric_order_past_nine() -> None:
@@ -1560,6 +2557,188 @@ def _reduce_planned_events(projection: Any, planned: list[Any], start: int) -> A
             item.model_copy(update={"position": start + offset}),
         )
     return projection
+
+
+@pytest.mark.parametrize("phase", ["stage", "finalize"])
+@pytest.mark.parametrize("requirement_id", ["REQ-1", "requirement-record-1", "REQ-UNRELATED"])
+def test_work_result_boundaries_reject_changed_read_authority(
+    phase: str, requirement_id: str
+) -> None:
+    projection = _work_result_projection()
+    root = node_payload_view(projection, "root")
+    assert root is not None
+    cache_hash = cast(str, root["cache_authority_hash"])
+    boundary_hash = boundary_manifest_hash("a" * 40, [], cache_authority_hash=cache_hash)
+    identity = {
+        "execution_id": "work-execution",
+        "node_id": "worker-core",
+        "lease_id": "work-lease",
+        "lease_generation": 1,
+    }
+    projection = reduce_event(
+        projection,
+        graph_event(
+            "lease_granted",
+            {
+                "execution_id": "work-execution",
+                "node_id": "worker-core",
+                "lease_id": "work-lease",
+                "generation": 1,
+                "base_snapshot_id": "work-base",
+                "cache_authority_hash": cache_hash,
+            },
+            position=100,
+        ),
+    )
+    baseline = _apply_decision_boundary(
+        projection,
+        "record_runner_baseline",
+        {
+            **identity,
+            "lease_base_snapshot_id": "work-base",
+            "baseline_snapshot_id": "work-base",
+            "baseline_snapshot_ref": "refs/orchestrator/snapshots/work-base",
+            "baseline_commit_sha": "a" * 40,
+            "baseline_tree_sha": "a" * 40,
+            "entries": [],
+            "boundary_hash": boundary_hash,
+            "cache_authority_hash": cache_hash,
+        },
+        position=100,
+    )
+    assert baseline[0].event_type == "runner_baseline_recorded", baseline
+    projection = _reduce_planned_events(projection, baseline, 100)
+    resolved = resolve_work_result_context(projection, "worker-core")
+    question_context = resolved.protected_question_context()
+    context_hash, context_size = callback_payload_identity(question_context)
+    answer = {
+        "decision": {
+            "status": "blocked",
+            "blocker": {
+                "reason": "Fixture unavailable.",
+                "needed_information": ["Fixture path"],
+                "evidence": [],
+            },
+        }
+    }
+    compiled = compile_work_result(
+        projection,
+        node_id="worker-core",
+        decision_request_id="work-request",
+        base_graph_position=101,
+        answer=answer["decision"],
+    )
+    records = [compiled.decision_record.model_dump(mode="json", by_alias=True)]
+    request = DecisionSubmissionRequest(
+        decision_request_id="work-request",
+        execution_id="work-execution",
+        routine_snapshot_record_id=resolved.routine_snapshot_record_id,
+        interaction_contract="decision-v1",
+        answer_schema_id="orchestrator.reliable-plan.work-result",
+        answer_schema_version=1,
+        answer_schema_sha256=work_result_schema_sha256(),
+        compiler_contract_version=1,
+        question_context_ref={**_context_ref(context_hash), "size_bytes": context_size},
+        question_context_sha256=context_hash,
+        bound_inputs=resolved.bound_inputs,
+    )
+    envelope = DecisionSubmissionEnvelope(
+        format="decision-submission-v1",
+        request=request,
+        answer_attempt_id="work-delivery",
+        answer=answer,
+        answer_sha256=canonical_decision_answer_hash(answer),
+    ).model_dump(mode="json", by_alias=True)
+    stage_payload = {
+        **identity,
+        "base_snapshot_id": "work-base",
+        "observed_graph_position": 101,
+        "idempotency_key": "work-request:submit",
+        "payload": envelope,
+        "payload_hash": callback_payload_identity(envelope)[0],
+        "is_mutating": True,
+        "complete_node": True,
+        "new_state": "failed",
+        "staged_snapshot_id": "work-staged",
+        "staged_snapshot_ref": "refs/orchestrator/snapshots/work-staged",
+        "staged_commit_sha": "a" * 40,
+        "staged_tree_sha": "a" * 40,
+        "boundary_hash": boundary_hash,
+        "boundary_entries": [],
+        "cache_authority_hash": cache_hash,
+        "controller_output_records": records,
+    }
+    revision = graph_event(
+        "requirement_revision_recorded",
+        {
+            "requirement_id": requirement_id,
+            "version_id": "revised-v2",
+            "node_id": "requirement-1" if requirement_id != "REQ-UNRELATED" else "other-node",
+        },
+        position=102 if phase == "stage" else 104,
+    )
+    if phase == "stage":
+        result = _apply_decision_boundary(
+            projection,
+            "stage_runner_submission",
+            stage_payload,
+            position=102,
+            events=[revision],
+        )
+    else:
+        staged_events = _apply_decision_boundary(
+            projection, "stage_runner_submission", stage_payload, position=101
+        )
+        assert staged_events[0].event_type == "runner_submission_staged", staged_events
+        projection = _reduce_planned_events(projection, staged_events, 101)
+        final_payload = {
+            **identity,
+            "final_snapshot_id": "work-final",
+            "final_snapshot_ref": "refs/orchestrator/snapshots/work-final",
+            "final_commit_sha": "a" * 40,
+            "final_tree_sha": "a" * 40,
+            "boundary_hash": boundary_hash,
+            "boundary_entries": [],
+            "cache_authority_hash": cache_hash,
+        }
+        attempt = execution_attempts_view(projection)["work-execution"]
+        witness = _apply_decision_boundary(
+            projection,
+            "witness_runner_completion",
+            {
+                **final_payload,
+                "staged_payload_hash": attempt.payload_hash,
+                "staged_payload_size_bytes": attempt.payload_size_bytes,
+                "staged_snapshot_id": attempt.staged_snapshot_id,
+                "staged_snapshot_ref": attempt.staged_snapshot_ref,
+                "staged_commit_sha": attempt.staged_commit_sha,
+                "staged_tree_sha": attempt.staged_tree_sha,
+                "staged_boundary_hash": attempt.staged_boundary_hash,
+                "runner_return_kind": "terminal_answer_completed",
+            },
+            position=102,
+        )
+        assert witness[0].event_type == "runner_completion_witnessed", witness
+        projection = _reduce_planned_events(projection, witness, 102)
+        result = _apply_decision_boundary(
+            projection,
+            "finalize_runner_execution",
+            {
+                **final_payload,
+                "callback_payload": envelope,
+                "decision_base_graph_position": 101,
+                "decision_question_context": question_context,
+                "controller_output_records": records,
+            },
+            position=104,
+            events=[revision],
+        )
+    if requirement_id == "REQ-UNRELATED":
+        expected = "runner_submission_staged" if phase == "stage" else "runner_execution_finalized"
+        assert result[0].event_type == expected, result
+    else:
+        assert [item.event_type for item in result] == ["command_rejected"], result
+        assert "read authority changed" in str(result[0].payload["reason"])
 
 
 def test_decision_stage_is_effect_free_and_finalization_is_terminal_and_atomic() -> None:

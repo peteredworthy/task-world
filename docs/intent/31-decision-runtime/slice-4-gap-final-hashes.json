@@ -1,0 +1,38 @@
+{
+  "scope": "Slice 4A-4C cleanup; existing implementation preserved",
+  "changed_files": {
+    "src/orchestrator/graph/_commands.py": {
+      "starting_sha256": "791ced0ee36e8406cdde4a630fea1aca6b687510ec8b6a42baf0d1b943721939",
+      "final_sha256": "c79470611dea482afd55dbf006ecf1033205ea476046c0ba7d56ef4bacc29942"
+    },
+    "src/orchestrator/graph/commands/boundary.py": {
+      "starting_sha256": "5db438336fd2f6fc0a2e15d4474ff92ef26552172a3d9fec0ee02845d83bd616",
+      "final_sha256": "afd728a5099b4fe204ed55f4b625da29bbc3b2db2d71684366360e7d449f82fb"
+    },
+    "src/orchestrator/graph/decisions.py": {
+      "starting_sha256": "936a57a081522358e280ff004def27c52e2da109c11665d3423dd9dd5ef88302",
+      "final_sha256": "a9ee74e57dabcea7c0262ad9761184fdc91c3d701249ffec4ae0e3888772d9f3"
+    },
+    "src/orchestrator/graph_runtime/prompts.py": {
+      "starting_sha256": "846d5555e7e0421da57409eb4bb438dcebac1990f5e52674b6f6eca489622b97",
+      "final_sha256": "cfb4e6ed7fe22c620f6accc8de130678bcc795cce2133396332536448dc42941"
+    },
+    "tests/integration/test_graph_decision_runtime.py": {
+      "starting_sha256": "3a8766fc99ccf0f2113ee0711b003790e80466d3640a73dd2dea280a102ed4f1",
+      "final_sha256": "35bf75d72b4894a73768e954712047b568e9cf5e7dd4de779cbc6a8d1e9d4966"
+    },
+    "tests/integration/test_reliable_plan_product_path_qualification.py": {
+      "starting_sha256": "eb34788442cdf373c7db49d78fa26b145171107f495ed902a4af62dd33a033f8",
+      "final_sha256": "f64722e283221bfe0be121ef603624bbbd33f00f3caffc6bedbecb8f0ea5ac89"
+    },
+    "tests/unit/test_graph_decisions.py": {
+      "starting_sha256": "8bbf36f3db3bc9c2e18181d5ea9bc669eb0d86c7add9bbf1379f635e4890333f",
+      "final_sha256": "0929264724d0ccb54aef9a8cc416cf584e7f24eb7179785aeb575f572cd7c82c"
+    },
+    "tests/unit/test_graph_verifier_prompt.py": {
+      "starting_sha256": "479499439f9b0cbfede8f20e1cca40ef27999bc578df5be1021ac7fe7faf6fc7",
+      "final_sha256": "0b69e6ae1ab23f4f41040fc31b7522628e7f5e4fec17f94bb469c4cf4416a7b8"
+    }
+  },
+  "historical_4a_4b_4c_ledgers_preserved": true
+}

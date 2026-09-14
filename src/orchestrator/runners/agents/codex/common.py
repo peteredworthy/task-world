@@ -40,6 +40,7 @@ from orchestrator.runners.planner_tools import (
     validate_reliable_plan_tool_specs,
 )
 from orchestrator.runners.submission import (
+    is_advisory_submission,
     is_decision_submission,
     submission_prompt_instruction,
     submission_tool_input_schema,
@@ -946,7 +947,8 @@ def build_dynamic_tool_specs(
 
     reliable_plan = bool(context is not None and context.required_tools)
     decision_submission = is_decision_submission(submission_contract)
-    if decision_submission:
+    advisory_submission = is_advisory_submission(submission_contract)
+    if decision_submission or advisory_submission:
         specs: list[dict[str, Any]] = [submit_spec]
     elif is_verifier:
         specs = [
@@ -963,7 +965,12 @@ def build_dynamic_tool_specs(
             request_clarification_spec,
         ]
 
-    if not is_verifier and context is not None and not decision_submission:
+    if (
+        not is_verifier
+        and context is not None
+        and not decision_submission
+        and not advisory_submission
+    ):
         graph_tool_specs = {
             **planner_macro_specs,
             "attach_verifier": attach_verifier_spec,
@@ -982,7 +989,7 @@ def build_dynamic_tool_specs(
                 specs.append(spec)
 
     # Add step-level tools from context.available_tools
-    if context and context.available_tools and not decision_submission:
+    if context and context.available_tools and not decision_submission and not advisory_submission:
         existing_names = {s["name"] for s in specs}
         for tool_name in context.available_tools:
             if tool_name in existing_names:
@@ -1410,8 +1417,21 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
     )
     submit_instruction = submission_prompt_instruction(context.submission_contract)
     decision_submission = is_decision_submission(context.submission_contract)
+    advisory_submission = is_advisory_submission(context.submission_contract)
 
-    if decision_submission:
+    if advisory_submission:
+        tool_section = (
+            "## Orchestrator Integration (Advisory)\n"
+            "Review the supplied failure or appeal evidence and return one advisory recovery plan. "
+            "The runtime owns lifecycle state and graph changes.\n\n"
+            "### Required Workflow\n"
+            "1. Assess the supplied evidence.\n"
+            "2. Call **submit** once with the typed recovery plan.\n\n"
+            "### Available Callback Tools\n"
+            f"{submit_instruction}\n"
+            "  No checklist, recovery, grading, or graph-mutation call is required.\n"
+        )
+    elif decision_submission:
         tool_section = (
             "## Orchestrator Integration (Decision Answer)\n"
             "Answer the substantive question using only the bounded evidence and choices "

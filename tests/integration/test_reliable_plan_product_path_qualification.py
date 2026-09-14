@@ -2192,9 +2192,12 @@ async def test_run_api_consumes_server_qualification_once_and_rejects_forgery(
     )
     assert any(
         event.event_type == "graph_patch_rejected"
-        and "cannot advance without materializing its bounded effectful batch"
+        and "must atomically create exactly one complete effectful batch region"
         in event.payload["reason"]
         for event in second.events
+    ), [(event.event_type, event.payload.get("reason")) for event in second.events]
+    assert (
+        node_payload_view(await controller.read_projection(run_id), "planner-successor-two") is None
     )
 
     copied = await client.post(

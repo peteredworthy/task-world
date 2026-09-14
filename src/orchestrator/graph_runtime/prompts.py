@@ -291,6 +291,23 @@ def _decision_packet(context: GraphDispatchContext) -> dict[str, Any]:
             "available_choices": protected["available_dispositions"],
             "answer_schema": schema,
         }
+    if applicability.family == "verification_decision":
+        return {
+            "question": protected["question"],
+            "bound_evidence": {
+                "semantic_stage": protected["semantic_stage"],
+                "candidate_record_ids": protected["candidate_record_ids"],
+                "obligations": protected["obligations"],
+                "mandatory_check_receipts": protected["mandatory_check_receipts"],
+                "evidence_aliases": protected["evidence_aliases"],
+                "bound_records": _planner_evidence(context, context.graph_projection)[
+                    "bound_records"
+                ],
+                "source_references": protected["source_references"],
+            },
+            "available_choices": ["A", "B", "C", "D", "F"],
+            "answer_schema": schema,
+        }
     aliases = list(cast(dict[str, str], protected["requirement_aliases"]))
     requirements = [
         {"alias": alias, "text": _bounded_text(context.requirements[index])}
@@ -316,6 +333,20 @@ def _decision_packet(context: GraphDispatchContext) -> dict[str, Any]:
 def _prompt_for_node(context: GraphDispatchContext) -> str:
     node = context.node_payload
     if context.node_kind == "verifier":
+        applicability = resolve_decision_applicability(context.graph_projection, context.node_id)
+        if applicability is not None and applicability.family == "verification_decision":
+            packet = _decision_packet(context)
+            return _bounded_prompt(
+                "\n".join(
+                    [
+                        "Verification decision packet:",
+                        _bounded_json(packet),
+                        "",
+                        "Return exactly one finding for every obligation through submit(outputs={decision: ...}).",
+                        "Use only the supplied obligation and evidence aliases; the runtime derives outcome, candidate identity, and report provenance.",
+                    ]
+                )
+            )
         packet = _verifier_packet(context)
         return _bounded_prompt(
             "\n".join(
@@ -524,6 +555,7 @@ def _packet_type_for_context(context: GraphDispatchContext) -> str:
         "discovery_brief",
         "batch_decision",
         "correction_decision",
+        "verification_decision",
     }:
         return "decision_packet"
     if context.node_kind == "planner" and context.node_role == "gap_planner":
@@ -669,6 +701,22 @@ def _worker_like_prompt(context: GraphDispatchContext) -> str:
             "bound_evidence: "
             + _bounded_json(_planner_evidence(context, context.graph_projection)["bound_records"])
         )
+        applicability = resolve_decision_applicability(context.graph_projection, context.node_id)
+        if applicability is not None and applicability.family == "work_result":
+            protected = resolve_decision_context(
+                context.graph_projection, context.node_id
+            ).protected_question_context()
+            context_lines.append(
+                "worker_result_evidence: "
+                + _bounded_json({"evidence_aliases": protected["evidence_aliases"]})
+            )
+            context_lines.append(
+                "worker_result_contract: finish by submitting outputs.decision with "
+                "status=ready and a substantive summary, or status=blocked with a concrete "
+                "blocker. Blocker evidence must use only the offered evidence aliases; "
+                "use an empty evidence list when none apply. "
+                "The runtime owns candidate, file-state, checks, commits, and completion."
+            )
 
     authority_packet = _worker_authority_packet(context)
     if authority_packet:
@@ -2246,9 +2294,18 @@ def _patch_payload_creates_finalization(patch_payload: dict[str, Any]) -> bool:
 
 
 def _evaluated_record_citations(context: GraphDispatchContext) -> dict[str, list[str]]:
+    # Match callback validation: legacy audits keep the complete historical
+    # candidate closure; only decision-v1 uses final-acceptance authority.
     consumer = (
         "final_audit"
         if context.node_payload.get("semantic_stage") == "final_audit"
+        and (
+            applicability := resolve_decision_applicability(
+                context.graph_projection, context.node_id
+            )
+        )
+        is not None
+        and applicability.family == "verification_decision"
         else "check"
         if context.node_kind == "check"
         else "verifier"
