@@ -58,6 +58,7 @@ from orchestrator.runners.types import (
     QuotaBucket,
     SubmitCallback,
     SubmitCallbackResult,
+    submission_rejection_requires_stop,
 )
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.state import ActionLog
@@ -1059,6 +1060,8 @@ class CLIAgent:
             raise
         except AgentRateLimitError:
             raise
+        except SubmissionRejectedError:
+            raise
         except AgentExecutionError:
             raise
         except AgentNotAvailableError:
@@ -1200,6 +1203,8 @@ class CLIAgent:
                 rejection = exc
             except SubmissionRejectedError as exc:
                 rejection = exc
+                if submission_rejection_requires_stop(exc.acknowledgement):
+                    raise
             if attempts >= self._max_commit_fix_attempts:
                 raise rejection
             attempts += 1
@@ -1234,6 +1239,16 @@ class CLIAgent:
             self._terminal_answer_stop_task = asyncio.create_task(
                 self._watch_terminal_answer_stop(self._process)
             )
+
+    async def request_submission_rejection_stop(self) -> None:
+        """Stop the exact CLI process after a non-correctable MCP rejection.
+
+        Unlike terminal-answer completion, this stop never becomes a success
+        witness.  The graph executor observes the durable rejection and owns
+        deterministic recovery.
+        """
+        if self._process is not None and self._process.returncode is None:
+            self._process.terminate()
 
 
 class ClaudeCliQuotaAgent:

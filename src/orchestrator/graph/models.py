@@ -17,6 +17,7 @@ from pydantic import (
     model_validator,
     field_validator,
 )
+from orchestrator.config import FailureDiagnostic
 from orchestrator.graph.boundary_types import (
     BoundaryValidationError,
     boundary_manifest_hash,
@@ -1175,6 +1176,7 @@ class RunnerSubmissionStagedPayload(StrictEventPayload):
     # replaying historical staged submissions written before CAS ownership.
     payload: dict[str, Any] | None = None
     payload_ref: StoredArtifactRef | None = None
+    decision_answer_receipt_ref: StoredArtifactRef | None = None
     payload_hash: str
     # Schema-13/early-schema-14 streams omitted this metadata; zero makes the
     # absence explicit while new command emission always supplies the size.
@@ -1253,6 +1255,60 @@ class RunnerSubmissionStagedPayload(StrictEventPayload):
             if witness.get("validated_boundary") != boundary:
                 raise ValueError("validation_witness boundary identity conflicts")
         return self
+
+
+class DecisionAnswerRejectionPayload(StrictEventPayload):
+    """A received decision answer that failed authoritative ingress validation.
+
+    This is deliberately separate from runner creation and execution usage.  A
+    transport redelivery reuses ``delivery_id`` and is idempotent; a new
+    trusted delivery identity is a new authored attempt even when its answer
+    hash is identical.
+    """
+
+    execution_id: str
+    node_id: str
+    lease_id: str
+    lease_generation: StrictInt
+    answer_attempt_id: str
+    delivery_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    transport_channel: str
+    transport_session_id: str
+    transport_request_id: str
+    answer_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    failure_diagnostic: FailureDiagnostic
+    decision_answer_receipt_ref: StoredArtifactRef | None = None
+
+    @field_validator(
+        "execution_id",
+        "node_id",
+        "lease_id",
+        "answer_attempt_id",
+        "transport_channel",
+        "transport_session_id",
+        "transport_request_id",
+    )
+    @classmethod
+    def identity_fields_are_substantive(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("decision answer rejection identity must contain text")
+        return value
+
+    @field_validator("failure_diagnostic", mode="before")
+    @classmethod
+    def accept_json_diagnostic(cls, value: object) -> object:
+        if isinstance(value, dict):
+            diagnostic = cast(dict[str, Any], value)
+        else:
+            return value
+        if isinstance(diagnostic.get("protected_evidence_refs"), list):
+            refs = cast(list[str], diagnostic["protected_evidence_refs"])
+            normalized: dict[str, Any] = {
+                **diagnostic,
+                "protected_evidence_refs": tuple(refs),
+            }
+            return normalized
+        return diagnostic
 
 
 class RunnerBoundaryMismatchPayload(StrictEventPayload):

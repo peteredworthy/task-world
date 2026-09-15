@@ -111,6 +111,55 @@ async def test_exact_scoped_barrier_is_observable_releasable_and_one_shot(
     )
 
 
+@pytest.mark.parametrize(
+    ("point", "attempt_state"),
+    [
+        ("pre_stage", "baseline_captured"),
+        ("after_commit_pre_ack", "finalized"),
+    ],
+)
+async def test_schema_one_supports_the_outer_decision_crash_boundaries(
+    tmp_path: Path,
+    point: str,
+    attempt_state: str,
+) -> None:
+    barrier = FileCrashBarrier(
+        CrashBarrierConfig(
+            authorization=CRASH_BARRIER_AUTHORIZATION,
+            run_id="run-outer-boundary",
+            execution_id="exec-outer-boundary",
+            point=point,
+        ),
+        state_dir=tmp_path,
+        poll_seconds=0.01,
+    )
+    waiter = asyncio.create_task(
+        barrier.wait_if_armed(
+            run_id="run-outer-boundary",
+            execution_id="exec-outer-boundary",
+            point=point,
+            observation=CrashBarrierObservation(
+                run_id="run-outer-boundary",
+                node_id="worker-1",
+                execution_id="exec-outer-boundary",
+                lease_id="lease-1",
+                lease_generation=1,
+                node_kind="worker",
+                node_role="builder",
+                semantic_stage="effectful_batch",
+                point=point,
+                attempt_state=attempt_state,
+            ),
+        )
+    )
+    while barrier.read_status() is None:
+        await asyncio.sleep(0.01)
+    barrier.release()
+    await asyncio.wait_for(waiter, timeout=1)
+    state = barrier.read_status()
+    assert state is not None and state.status == "released"
+
+
 def _plan_config(run_id: str = "run-1") -> CrashBarrierPlanConfig:
     return CrashBarrierPlanConfig(
         schema_version=2,

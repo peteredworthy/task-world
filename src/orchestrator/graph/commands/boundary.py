@@ -13,6 +13,7 @@ from orchestrator.graph._commands import (
 from orchestrator.graph.command_models import (
     CompleteValidationEnvironmentBlockageResolutionCommand,
     CompleteRunnerRecoveryCommand,
+    RecordDecisionAnswerRejectionCommand,
     FinalizeRunnerExecutionCommand,
     GraphCommandContext,
     RecordRunnerBaselineCommand,
@@ -32,6 +33,7 @@ from orchestrator.graph.decisions import (
     decode_submission_payload,
     resolve_decision_context,
     resolve_decision_applicability,
+    decision_recovery_uses_legacy_contract,
 )
 from orchestrator.graph.models import EventEnvelope, FileStateRecord, LeaseRevokedPayload
 from orchestrator.graph.projection_collections import thaw_json
@@ -227,6 +229,59 @@ def handle_record_runner_baseline(
             make_event, "record_runner_baseline", "unknown or incompatible active lease"
         )
     return [make_event("runner_baseline_recorded", event_payload)]
+
+
+def handle_record_decision_answer_rejection(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    command_type: str,
+    payload: RecordDecisionAnswerRejectionCommand,
+    context: GraphCommandContext,
+    make_event: Any,
+    clock: Any,
+    id_gen: Any,
+) -> list[EventEnvelope]:
+    """Persist one received invalid answer without consuming execution budget."""
+    del events, command_type, context, clock, id_gen
+    attempt = execution_attempts_view(projection).get(payload.execution_id)
+    if attempt is None or not _same_identity(attempt, payload):
+        return _conflict(
+            make_event,
+            "record_decision_answer_rejection",
+            "unknown or incompatible execution baseline",
+        )
+    existing = next(
+        (
+            item
+            for item in attempt.decision_answer_rejections
+            if item.delivery_id == payload.delivery_id
+        ),
+        None,
+    )
+    event_payload = payload.as_event_payload().model_dump(mode="python")
+    if existing is not None:
+        existing_payload = {
+            **existing.model_dump(mode="python"),
+            "position": None,
+        }
+        expected_payload = {
+            **event_payload,
+            "position": None,
+        }
+        if existing_payload == expected_payload:
+            return []
+        return _conflict(
+            make_event,
+            "record_decision_answer_rejection",
+            "decision answer delivery identity conflicts",
+        )
+    if attempt.state != "baseline_captured":
+        return _conflict(
+            make_event,
+            "record_decision_answer_rejection",
+            "decision answer rejection arrived after staging",
+        )
+    return [make_event("decision_answer_rejected", event_payload)]
 
 
 def handle_stage_runner_submission(
@@ -596,6 +651,15 @@ def handle_stage_runner_submission(
             {"payload_ref": payload.payload_ref.model_dump(mode="json")}
             if payload.payload_ref is not None
             else {"payload": payload.payload}
+        ),
+        **(
+            {
+                "decision_answer_receipt_ref": payload.decision_answer_receipt_ref.model_dump(
+                    mode="json"
+                )
+            }
+            if payload.decision_answer_receipt_ref is not None
+            else {}
         ),
         "payload_hash": digest,
         "payload_size_bytes": payload_size_bytes,
@@ -1588,15 +1652,45 @@ def handle_complete_runner_recovery(
             ).model_dump(mode="json", exclude_none=True),
         )
     ]
-    retryable_recovery = attempt.recovery_reason in {
-        "boundary_mismatch",
-        "runner_died",
-        "staged_artifact_missing",
-        "staged_artifact_corrupt",
+    semantic_correction_reason = _semantic_correction_rejection_reason(projection, attempt)
+    semantic_correction = attempt.recovery_reason in {
         "submission_format_rejected",
         "candidate_check_failed",
-        "invalid_planner_proposal",
-    } or (attempt.recovery_reason == "cancelled" and attempt.retry_after_recovery)
+    }
+    try:
+        decision_v1_recovery = (
+            resolve_decision_applicability(projection, attempt.node_id) is not None
+        )
+    except ValueError:
+        # Malformed decision authority is not evidence of legacy applicability.
+        # Fail closed so recovery cannot gain either the legacy accepted-patch
+        # shortcut or another model execution from an invalid binding.
+        decision_v1_recovery = True
+    legacy_completion_shortcut = not decision_v1_recovery
+    retryable_recovery = (
+        (attempt.recovery_reason == "boundary_mismatch" and legacy_completion_shortcut)
+        or (
+            attempt.recovery_reason
+            in {
+                "runner_died",
+                "staged_artifact_missing",
+                "staged_artifact_corrupt",
+            }
+            and legacy_completion_shortcut
+        )
+        or (
+            attempt.recovery_reason == "invalid_planner_proposal"
+            and attempt.retry_after_recovery
+            and legacy_completion_shortcut
+            and semantic_correction_reason is None
+        )
+        or (
+            semantic_correction
+            and attempt.retry_after_recovery
+            and semantic_correction_reason is None
+        )
+        or (attempt.recovery_reason == "cancelled" and attempt.retry_after_recovery)
+    )
     if attempt.recovery_reason == "validation_environment_blocked":
         reason = attempt.recovery_error_detail or "submission validation environment blocked"
         lifecycle_events.extend(
@@ -1630,15 +1724,21 @@ def handle_complete_runner_recovery(
                 ),
             ]
         )
-    elif (
-        attempt.recovery_reason
-        in {
-            "submission_repair_exhausted",
-            "invalid_planner_proposal",
-        }
-        and not attempt.retry_after_recovery
+    elif attempt.recovery_reason in {
+        "submission_repair_exhausted",
+        "invalid_planner_proposal",
+    } and (
+        not attempt.retry_after_recovery
+        or (
+            attempt.recovery_reason == "invalid_planner_proposal"
+            and semantic_correction_reason is not None
+        )
     ):
-        reason = attempt.recovery_error_detail or "submission repair exhausted"
+        reason = (
+            semantic_correction_reason
+            or attempt.recovery_error_detail
+            or "submission repair exhausted"
+        )
         error_class = (
             "invalid_planner_proposal"
             if attempt.recovery_reason == "invalid_planner_proposal"
@@ -1671,6 +1771,88 @@ def handle_complete_runner_recovery(
                 ),
             ]
         )
+    elif semantic_correction and (
+        not attempt.retry_after_recovery or semantic_correction_reason is not None
+    ):
+        semantic_correction_reason = (
+            semantic_correction_reason or "semantic correction was not authorized"
+        )
+        attempt_number = effective_node_attempt_number(
+            node_attempts_view(projection).get(attempt.node_id)
+        )
+        max_attempts = attempt.recovery_max_attempts or node_max_attempts_view(projection).get(
+            attempt.node_id, 0
+        )
+        lifecycle_events.extend(
+            [
+                make_event(
+                    "output_record_accepted",
+                    failure_record_payload(
+                        node_id=attempt.node_id,
+                        phase="recovery",
+                        failure_class="invalid_plan_failure",
+                        error_class="semantic_correction_not_authorized",
+                        retryable=False,
+                        lease_id=attempt.lease_id,
+                        execution_id=attempt.execution_id,
+                        generation=attempt.lease_generation,
+                        reason=semantic_correction_reason,
+                        metadata={
+                            "attempt_number": attempt_number,
+                            "max_attempts": max_attempts,
+                        },
+                    ),
+                ),
+                make_event(
+                    "node_state_changed",
+                    {
+                        "node_id": attempt.node_id,
+                        "new_state": "failed",
+                        "trigger": "semantic_correction_not_authorized",
+                        "reason": semantic_correction_reason,
+                    },
+                ),
+            ]
+        )
+    elif (
+        attempt.recovery_reason
+        in {
+            "runner_died",
+            "staged_artifact_missing",
+            "staged_artifact_corrupt",
+        }
+        and not retryable_recovery
+    ):
+        failure_reason = (
+            attempt.recovery_error_detail or attempt.recovery_reason or "runner execution failed"
+        )
+        lifecycle_events.extend(
+            [
+                make_event(
+                    "output_record_accepted",
+                    failure_record_payload(
+                        node_id=attempt.node_id,
+                        phase="execution",
+                        failure_class="infrastructure_failure",
+                        error_class=attempt.recovery_reason or "runner_died",
+                        retryable=False,
+                        lease_id=attempt.lease_id,
+                        execution_id=attempt.execution_id,
+                        generation=attempt.lease_generation,
+                        reason=failure_reason,
+                    ),
+                ),
+                make_event(
+                    "node_state_changed",
+                    {
+                        "node_id": attempt.node_id,
+                        "new_state": "failed",
+                        "trigger": "runner_recovery_terminal",
+                        "reason": failure_reason,
+                    },
+                ),
+            ]
+        )
     elif retryable_recovery:
         attempt_number = effective_node_attempt_number(
             node_attempts_view(projection).get(attempt.node_id)
@@ -1678,12 +1860,6 @@ def handle_complete_runner_recovery(
         max_attempts = attempt.recovery_max_attempts or node_max_attempts_view(projection).get(
             attempt.node_id, 0
         )
-        try:
-            legacy_completion_shortcut = (
-                resolve_decision_applicability(projection, attempt.node_id) is None
-            )
-        except ValueError:
-            legacy_completion_shortcut = False
         if (
             attempt.recovery_reason == "runner_died"
             and legacy_completion_shortcut
@@ -1801,6 +1977,49 @@ def _recovery_completion_disposition(attempt: Any) -> str:
     if attempt.runner_return_kind == "successful_return":
         return "restored_boundary_mismatch"
     return "restored_unwitnessed"
+
+
+def _semantic_correction_rejection_reason(
+    projection: GraphProjection,
+    attempt: Any,
+) -> str | None:
+    """Require durable evidence and an applicable candidate before retrying.
+
+    ``retry_after_recovery`` is an instruction from the runtime, not authority
+    to create corrective work by itself. The recovery event must carry a
+    bounded diagnostic and the exact candidate snapshot that it describes.
+    """
+    if attempt.recovery_reason not in {
+        "submission_format_rejected",
+        "candidate_check_failed",
+        "invalid_planner_proposal",
+    }:
+        return None
+    if (
+        not isinstance(attempt.recovery_error_detail, str)
+        or not attempt.recovery_error_detail.strip()
+    ):
+        return "semantic correction requires diagnostic evidence"
+    candidate_identity = (
+        attempt.recovery_snapshot_id,
+        attempt.recovery_snapshot_ref,
+        attempt.recovery_commit_sha,
+        attempt.final_tree_sha,
+    )
+    if not all(isinstance(value, str) and value for value in candidate_identity):
+        return "semantic correction requires a retained candidate input"
+    if attempt.recovery_reason == "candidate_check_failed":
+        staged_identity = (
+            attempt.staged_snapshot_id,
+            attempt.staged_snapshot_ref,
+            attempt.staged_commit_sha,
+            attempt.staged_tree_sha,
+        )
+        if not all(isinstance(value, str) and value for value in staged_identity):
+            return "candidate correction requires the staged candidate input"
+    if not decision_recovery_uses_legacy_contract(projection, attempt.node_id):
+        return "semantic correction has no applicable decision contract"
+    return None
 
 
 def handle_resolve_validation_environment_blockage(

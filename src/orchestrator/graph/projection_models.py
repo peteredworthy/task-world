@@ -20,6 +20,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from orchestrator.config import FailureDiagnostic
 
 from orchestrator.graph.models import (
     AcceptedOutputRecordPayload,
@@ -681,6 +682,35 @@ class CallbackEventValue(ProjectionModel):
         return _freeze_sequence(value, "callback record_ids must be a sequence")
 
 
+class DecisionAnswerRejectionValue(ProjectionModel):
+    """Immutable projection value for one received invalid answer delivery."""
+
+    execution_id: StrictStr
+    node_id: StrictStr
+    lease_id: StrictStr
+    lease_generation: StrictInt
+    answer_attempt_id: StrictStr
+    delivery_id: StrictStr
+    transport_channel: StrictStr
+    transport_session_id: StrictStr
+    transport_request_id: StrictStr
+    answer_sha256: StrictStr | None = None
+    failure_diagnostic: FailureDiagnostic
+    decision_answer_receipt_ref: StoredArtifactRef | None = None
+    position: StrictInt
+
+    @field_validator("failure_diagnostic", mode="before")
+    @classmethod
+    def accept_json_diagnostic(cls, value: object) -> object:
+        if isinstance(value, dict):
+            diagnostic = cast(dict[str, object], value)
+            refs = diagnostic.get("protected_evidence_refs")
+            if isinstance(refs, list):
+                return {**diagnostic, "protected_evidence_refs": tuple(cast(list[str], refs))}
+            return diagnostic
+        return value
+
+
 class ExecutionAttemptValue(ProjectionModel):
     execution_id: StrictStr
     state: Literal[
@@ -775,6 +805,7 @@ class ExecutionAttemptValue(ProjectionModel):
     continuation_snapshot_ref: StrictStr | None = None
     continuation_commit_sha: StrictStr | None = None
     continuation_tree_sha: StrictStr | None = None
+    decision_answer_rejections: tuple[DecisionAnswerRejectionValue, ...] = ()
 
     @field_validator(
         "baseline_entries",
@@ -794,6 +825,7 @@ class ExecutionAttemptValue(ProjectionModel):
         "recovery_paths",
         "restored_paths",
         "removed_paths",
+        "decision_answer_rejections",
         mode="before",
     )
     @classmethod

@@ -17,6 +17,11 @@ from orchestrator.config.enums import (
     is_selectable_agent_runner_type,
     normalize_persisted_agent_runner_type,
 )
+from orchestrator.config.failures import (
+    FailureCategory,
+    FailureDiagnostic,
+    FailureNextAction,
+)
 from orchestrator.config.global_config import (
     ExecutionConfig,
     GlobalConfig,
@@ -30,6 +35,7 @@ from orchestrator.config.models import (
     AutoVerifyItemConfig,
     ContextSource,
     DryRunConfig,
+    MCPServerConfig,
     RequirementConfig,
     RetryConfig,
     RoutineConfig,
@@ -63,6 +69,9 @@ from orchestrator.config.routines import (
 __all__ = [
     "AgentInteractionContract",
     "AgentRunnerType",
+    "FailureCategory",
+    "FailureDiagnostic",
+    "FailureNextAction",
     "AutoVerifyConfig",
     "AutoVerifyItemConfig",
     "ContextSource",
@@ -74,6 +83,7 @@ __all__ = [
     "GlobalConfig",
     "JournalConfig",
     "MergeStrategy",
+    "MCPServerConfig",
     "ModelProfile",
     "PathsConfig",
     "Priority",

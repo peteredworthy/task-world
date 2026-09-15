@@ -54,6 +54,7 @@ from orchestrator.graph.command_models import (
     StageRunnerSubmissionCommand,
     WitnessRunnerCompletionCommand,
     FinalizeRunnerExecutionCommand,
+    RecordDecisionAnswerRejectionCommand,
     CompleteRunnerRecoveryCommand,
     CompleteValidationEnvironmentBlockageResolutionCommand,
     RequestRunnerRecoveryCommand,
@@ -74,6 +75,7 @@ from orchestrator.graph.commands.boundary import (
     handle_complete_runner_recovery,
     handle_complete_validation_environment_blockage_resolution,
     handle_finalize_runner_execution,
+    handle_record_decision_answer_rejection,
     handle_record_runner_baseline,
     handle_record_managed_snapshot_cleanup_applied,
     handle_request_runner_recovery,
@@ -119,6 +121,9 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     "submit_callback": CommandSpec(SubmitCallbackCommand, handle_submit_callback),
     "record_runner_baseline": CommandSpec(
         RecordRunnerBaselineCommand, handle_record_runner_baseline
+    ),
+    "record_decision_answer_rejection": CommandSpec(
+        RecordDecisionAnswerRejectionCommand, handle_record_decision_answer_rejection
     ),
     "stage_runner_submission": CommandSpec(
         StageRunnerSubmissionCommand, handle_stage_runner_submission

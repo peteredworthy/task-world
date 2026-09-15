@@ -2098,7 +2098,18 @@ def _artifact_references_from_events(
                     references.append((event.position, ref))
             continue
         if event.event_type == "runner_submission_staged":
-            raw_ref = event.payload.get("payload_ref")
+            for field in ("payload_ref", "decision_answer_receipt_ref"):
+                raw_ref = event.payload.get(field)
+                if isinstance(raw_ref, dict):
+                    try:
+                        ref = StoredArtifactRef.model_validate(raw_ref)
+                    except ValidationError:
+                        continue
+                    if ref.artifact_id == ref.content_hash:
+                        references.append((event.position, ref))
+            continue
+        if event.event_type == "decision_answer_rejected":
+            raw_ref = event.payload.get("decision_answer_receipt_ref")
             if isinstance(raw_ref, dict):
                 try:
                     ref = StoredArtifactRef.model_validate(raw_ref)
@@ -2764,6 +2775,43 @@ class GraphEventStore:
             "encoding": row.encoding,
             "storage_uri": row.storage_uri,
         }
+
+    async def read_decision_answer_receipt_owner(
+        self,
+        run_id: str,
+        content_hash: str,
+    ) -> EventEnvelope | None:
+        """Resolve the one semantic owner of a decision-answer receipt.
+
+        The general artifact-reference index proves that bytes may be served;
+        replay additionally needs the exact graph fact that assigned those
+        bytes their accepted or rejected meaning.
+        """
+        rows = list(
+            await self._session.scalars(
+                select(EventV2Model)
+                .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
+                .where(
+                    EventV2Model.event_type.in_(
+                        ("runner_submission_staged", "decision_answer_rejected")
+                    )
+                )
+                .where(
+                    func.json_extract(
+                        EventV2Model.payload,
+                        "$.payload.decision_answer_receipt_ref.content_hash",
+                    )
+                    == content_hash
+                )
+                .order_by(EventV2Model.version)
+                .limit(2)
+            )
+        )
+        if not rows:
+            return None
+        if len(rows) != 1:
+            raise ValueError("decision answer receipt has multiple durable owner events")
+        return EventEnvelope.model_validate_json(rows[0].payload)
 
     async def read_bounded_graph_health(
         self,

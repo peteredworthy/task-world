@@ -168,6 +168,7 @@ task-world/
 │   │
 │   ├── config/                # All configuration: enums, models, routine loading
 │   │   ├── enums.py           # RunStatus, TaskStatus, AgentRunnerType, ModelProfile, etc.
+│   │   ├── failures.py        # Provider-neutral bounded failure diagnostics
 │   │   ├── global_config.py   # config.json loader
 │   │   ├── loader.py          # Config loading helpers
 │   │   ├── models.py          # RoutineConfig, StepConfig, TaskConfig, NudgerConfig, etc.

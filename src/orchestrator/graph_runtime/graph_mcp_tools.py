@@ -17,7 +17,7 @@ from typing import Annotated, Any, cast
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.fastmcp.tools import Tool
-from mcp.types import ContentBlock, Tool as MCPTool
+from mcp.types import ContentBlock, TextContent, Tool as MCPTool
 from pydantic import WithJsonSchema
 
 from orchestrator.graph import (
@@ -30,13 +30,14 @@ from orchestrator.runners import (
     SubmissionAcknowledgement,
     SubmissionContract,
     SubmissionInvocation,
+    SubmissionRejectedError,
     SubmitCallback,
     is_advisory_submission,
     is_decision_submission,
     route_graph_tool_call,
     submission_tool_input_schema,
+    submission_rejection_requires_stop,
     validate_reliable_plan_tool_specs,
-    validate_submission_arguments,
 )
 
 _GRAPH_MCP_ALLOWLIST = frozenset(
@@ -93,12 +94,29 @@ class _DecisionSubmissionFastMCP(FastMCP):
     ) -> None:
         self._submission_contract = submission_contract
         self._submission_input_schema = submission_tool_input_schema(submission_contract)
+        self._decision_submit_ingress: Callable[[dict[str, Any]], Awaitable[str]] | None = None
+        self._decision_submission_closed_reason: str | None = None
         super().__init__(name=name, instructions=instructions)
+
+    def bind_decision_submit_ingress(
+        self,
+        ingress: Callable[[dict[str, Any]], Awaitable[str]],
+    ) -> None:
+        self._decision_submit_ingress = ingress
 
     async def list_tools(self) -> list[MCPTool]:
         tools = await super().list_tools()
         return [
-            tool.model_copy(update={"inputSchema": self._submission_input_schema})
+            tool.model_copy(
+                update={
+                    "inputSchema": self._submission_input_schema,
+                    # This adapter returns the acknowledgement as the first
+                    # text block for wire compatibility; the base FastMCP
+                    # function's inferred ``{"result": string}`` schema would
+                    # otherwise reject that canonical MCP representation.
+                    "outputSchema": None,
+                }
+            )
             if tool.name == "submit"
             else tool
             for tool in tools
@@ -109,12 +127,23 @@ class _DecisionSubmissionFastMCP(FastMCP):
         name: str,
         arguments: dict[str, Any],
     ) -> Sequence[ContentBlock] | dict[str, Any]:
-        if name == "submit":
-            try:
-                validate_submission_arguments(self._submission_contract, arguments)
-            except ValueError as exc:
-                raise ToolError(str(exc)) from exc
-        return await super().call_tool(name, arguments)
+        if name != "submit" or self._decision_submit_ingress is None:
+            return await super().call_tool(name, arguments)
+        if self._decision_submission_closed_reason is not None:
+            raise ToolError(self._decision_submission_closed_reason)
+        try:
+            rendered = await self._decision_submit_ingress(arguments)
+        except SubmissionRejectedError as exc:
+            if submission_rejection_requires_stop(exc.acknowledgement):
+                self._decision_submission_closed_reason = str(exc)
+            raise ToolError(str(exc)) from exc
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        # The connected graph-MCP client parses the first text block directly
+        # as ``SubmissionAcknowledgement`` JSON. Bypass FastMCP's inferred
+        # ``{"result": string}`` wrapper while retaining the advertised input
+        # schema and routing the complete received arguments through ingress.
+        return [TextContent(type="text", text=rendered)]
 
 
 def build_graph_mcp_server(
@@ -206,8 +235,7 @@ def build_graph_mcp_server(
             if output.content_json_schema is not None
         )
 
-        async def submit(outputs: dict[str, Any]) -> str:
-            """Submit model-authored content keyed by the required output port."""
+        async def submit_raw(arguments: dict[str, Any]) -> str:
             callback = on_submit or _noop_submit
             typed_callback = cast(
                 Callable[
@@ -216,7 +244,6 @@ def build_graph_mcp_server(
                 ],
                 callback,
             )
-            arguments = {"outputs": outputs}
             invocation: dict[str, Any] | SubmissionInvocation = (
                 submission_invocation_factory(arguments)
                 if submission_invocation_factory is not None
@@ -228,6 +255,10 @@ def build_graph_mcp_server(
                 if acknowledgement is not None
                 else '{"disposition":"durably_staged","message":"submission is durably staged and pending runner completion; it is not yet accepted"}'
             )
+
+        async def submit(outputs: dict[str, Any]) -> str:
+            """Submit model-authored content keyed by the required output port."""
+            return await submit_raw({"outputs": outputs})
 
         input_schema = submission_tool_input_schema(submission_contract)
         outputs_schema = cast(
@@ -247,6 +278,8 @@ def build_graph_mcp_server(
                 else f"Submit required graph outputs. Contract: {contract_summary}"
             ),
         )
+        if decision_submission and isinstance(mcp, _DecisionSubmissionFastMCP):
+            mcp.bind_decision_submit_ingress(submit_raw)
 
     async def submit_graph_patch(
         patch_id: str,

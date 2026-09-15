@@ -4,12 +4,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from orchestrator.config import (
+    FailureCategory,
+    FailureNextAction,
+)
+
 # Agent interface and types
 from orchestrator.runners.interface import AgentRunner
 from orchestrator.runners.errors import (
     AgentConfigError as AgentConfigError,
     AgentExecutionError,
     AgentNotAvailableError,
+    AgentRateLimitError,
+    AgentTimeoutError,
     SubmissionRejectedError,
     SubmissionRepairExhaustedError,
 )
@@ -22,6 +29,7 @@ from orchestrator.runners.types import (
     ExecutionContext,
     ExecutionMetrics,
     ExecutionResult,
+    FailureDiagnostic,
     GradeCallback,
     GraphPatchCallback,
     LogLineCallback,
@@ -32,6 +40,7 @@ from orchestrator.runners.types import (
     SubmissionRejectionEvidence,
     SubmissionOutputContract,
     SubmissionInvocation,
+    submission_rejection_requires_stop,
     SubmitCallback,
 )
 from orchestrator.runners.submission import (
@@ -289,6 +298,8 @@ __all__ = [
     "SubmissionRejectedError",
     "AgentExecutionError",
     "AgentNotAvailableError",
+    "AgentRateLimitError",
+    "AgentTimeoutError",
     "AgentMetadataCallback",
     "AgentRunnerInfo",
     "BroadcastCallback",
@@ -296,6 +307,10 @@ __all__ = [
     "EscalationCallback",
     "ExecutionContext",
     "SubmissionContract",
+    "FailureDiagnostic",
+    "FailureCategory",
+    "FailureNextAction",
+    "submission_rejection_requires_stop",
     "SubmissionAcknowledgement",
     "SubmissionRejectionCategory",
     "SubmissionRejectionEvidence",

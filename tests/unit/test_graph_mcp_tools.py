@@ -12,6 +12,7 @@ from orchestrator.graph import (
     BATCH_DECISION_SCHEMA_ID,
     BATCH_DECISION_SCHEMA_VERSION,
     batch_decision_schema,
+    canonical_decision_answer,
 )
 from orchestrator.graph_runtime.graph_mcp_tools import build_graph_mcp_server
 from orchestrator.runners import (
@@ -135,6 +136,7 @@ async def test_decision_submit_schema_is_self_contained_and_matches_codex_contra
 
     async def on_submit(args: dict[str, Any]) -> SubmissionAcknowledgement:
         calls.append(args)
+        canonical_decision_answer("batch_decision", args["outputs"]["decision"])
         return SubmissionAcknowledgement(
             disposition="durably_staged",
             message="staged",
@@ -181,12 +183,14 @@ async def test_decision_submit_schema_is_self_contained_and_matches_codex_contra
         }
     }
     await mcp.call_tool("submit", valid)
+    invalid = {"outputs": {"decision": {"disposition": "invented"}}}
     assert calls == [valid]
-    with pytest.raises(ToolError, match="Input validation error"):
+    with pytest.raises(ToolError, match="disposition"):
         await mcp.call_tool(
             "submit",
-            {"outputs": {"decision": {"disposition": "invented"}}},
+            invalid,
         )
+    assert calls == [valid, invalid]
 
 
 async def test_verifier_empty_allowlist_does_not_expose_planner_macros() -> None:

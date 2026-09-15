@@ -18,9 +18,11 @@ from pydantic import (
     model_validator,
 )
 
+from orchestrator.config import FailureDiagnostic
 from orchestrator.graph.macros import MacroInvocation
 from orchestrator.graph.models import (
     Actor,
+    DecisionAnswerRejectionPayload,
     EventEnvelope,
     FileStateRecord,
     RunnerBoundaryEntry,
@@ -271,8 +273,45 @@ class RecordRunnerBaselineCommand(StrictCommandPayload):
         return self
 
 
+class RecordDecisionAnswerRejectionCommand(StrictCommandPayload):
+    """Record one invalid decision answer received at orchestrator ingress."""
+
+    execution_id: CommandIdentifier
+    node_id: CommandIdentifier
+    lease_id: CommandIdentifier
+    lease_generation: int = Field(ge=0)
+    answer_attempt_id: CommandIdentifier
+    delivery_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    transport_channel: CommandIdentifier
+    transport_session_id: CommandIdentifier
+    transport_request_id: CommandIdentifier
+    answer_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    failure_diagnostic: FailureDiagnostic
+    decision_answer_receipt_ref: StoredArtifactRef | None = None
+
+    @field_validator("failure_diagnostic", mode="before")
+    @classmethod
+    def accept_json_diagnostic(cls, value: object) -> object:
+        if isinstance(value, dict):
+            diagnostic = cast(dict[str, Any], value)
+        else:
+            return value
+        if isinstance(diagnostic.get("protected_evidence_refs"), list):
+            refs = cast(list[str], diagnostic["protected_evidence_refs"])
+            normalized: dict[str, Any] = {
+                **diagnostic,
+                "protected_evidence_refs": tuple(refs),
+            }
+            return normalized
+        return diagnostic
+
+    def as_event_payload(self) -> DecisionAnswerRejectionPayload:
+        return DecisionAnswerRejectionPayload.model_validate(self.model_dump(mode="python"))
+
+
 class StageRunnerSubmissionCommand(SubmitCallbackCommand):
     payload_ref: StoredArtifactRef | None = None
+    decision_answer_receipt_ref: StoredArtifactRef | None = None
     staged_snapshot_id: CommandIdentifier
     staged_snapshot_ref: CommandIdentifier
     staged_commit_sha: CommandIdentifier
@@ -962,6 +1001,7 @@ __all__ = [
     "RecordCleanupAppliedCommand",
     "RecordManagedSnapshotCleanupAppliedCommand",
     "RecordRunnerBaselineCommand",
+    "RecordDecisionAnswerRejectionCommand",
     "RecordDecisionCommand",
     "RecordGatekeeperVerdictsCommand",
     "RecordHeartbeatCommand",

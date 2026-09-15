@@ -19,6 +19,7 @@ from orchestrator.graph import (
     apply_command,
     Actor,
     ActorKind,
+    boundary_manifest_hash,
     EventEnvelope,
     FakeClock,
     GraphProjection,
@@ -2797,6 +2798,84 @@ async def test_reliable_plan_claude_cli_requires_graph_mcp_registry_before_creat
 
     assert len(executor.failures) == 1
     assert "graph MCP registry is unavailable" in executor.failures[0]
+    assert factory.create_calls == 0
+    assert executor._running == {}
+
+
+@pytest.mark.asyncio
+async def test_decision_retry_missing_receipt_blocks_before_runner_creation() -> None:
+    class RecordingFactory:
+        def __init__(self) -> None:
+            self.create_calls = 0
+
+        def create_runner(self, context: GraphDispatchContext) -> Any:
+            del context
+            self.create_calls += 1
+            return OutputAgent([])
+
+    prior_events = [
+        _event(
+            "node_created",
+            {"node_id": "worker-1", "kind": "worker", "state": "running"},
+            1,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "lease_id": "lease-old",
+                "node_id": "worker-1",
+                "generation": 1,
+                "execution_id": "exec-old",
+                "base_snapshot_id": "routine-snapshot",
+            },
+            2,
+        ),
+        _event(
+            "runner_baseline_recorded",
+            {
+                "execution_id": "exec-old",
+                "node_id": "worker-1",
+                "lease_id": "lease-old",
+                "lease_generation": 1,
+                "baseline_snapshot_id": "routine-snapshot",
+                "baseline_tree_sha": "a" * 40,
+                "entries": [],
+                "boundary_hash": boundary_manifest_hash("a" * 40, []),
+                "cache_roots": [],
+            },
+            3,
+        ),
+        _event(
+            "decision_answer_rejected",
+            {
+                "execution_id": "exec-old",
+                "node_id": "worker-1",
+                "lease_id": "lease-old",
+                "lease_generation": 1,
+                "answer_attempt_id": "answer-old",
+                "delivery_id": "a" * 64,
+                "transport_channel": "test",
+                "transport_session_id": "session-old",
+                "transport_request_id": "request-old",
+                "failure_diagnostic": {
+                    "category": "answer_validation",
+                    "code": "submission_format_rejected",
+                    "message": "The submitted answer is invalid.",
+                    "next_action": "correct_answer",
+                    "correction_allowed": True,
+                },
+            },
+            4,
+        ),
+    ]
+    context = _context(graph_events=prior_events)
+    factory = RecordingFactory()
+    executor = RecordingExecutor(agent_factory=factory)
+    executor.dispatch_context = context
+
+    await executor.dispatch(cast(Any, SimpleNamespace(kind="agent_dispatch")))
+
+    assert executor.failures == ["decision retry requires a protected rejected-answer receipt"]
     assert factory.create_calls == 0
     assert executor._running == {}
 

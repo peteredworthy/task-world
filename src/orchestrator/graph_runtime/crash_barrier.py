@@ -21,8 +21,10 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 CRASH_BARRIER_ENV = "ORCHESTRATOR_GRAPH_CRASH_BARRIER"
 CRASH_BARRIER_AUTHORIZATION = "operator-authorized-live-crash-drill"
 CrashBarrierPoint = Literal[
+    "pre_stage",
     "after_staging_pre_witness",
     "after_witness_pre_finalization",
+    "after_commit_pre_ack",
 ]
 
 
@@ -122,7 +124,12 @@ class CrashBarrierObservation(BaseModel):
     node_role: str = Field(min_length=1, max_length=64)
     semantic_stage: str = Field(min_length=1, max_length=64)
     point: CrashBarrierPoint
-    attempt_state: Literal["submission_staged", "completion_witnessed"]
+    attempt_state: Literal[
+        "baseline_captured",
+        "submission_staged",
+        "completion_witnessed",
+        "finalized",
+    ]
     recovered_attempts: Annotated[tuple[CrashBarrierRecoveryProof, ...], Field(max_length=20)] = ()
 
 
@@ -338,6 +345,8 @@ class FileCrashBarrier:
             await asyncio.to_thread(self._record_release_v1, state)
             return
         if run_id != self._config.run_id or observation is None:
+            return
+        if point not in self._config.slots:
             return
         if observation.run_id != run_id or observation.execution_id != execution_id:
             raise CrashBarrierError("crash barrier observation does not match dispatch scope")
