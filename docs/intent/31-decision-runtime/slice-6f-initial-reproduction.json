@@ -1,0 +1,25 @@
+{
+  "workspace": "/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/decision-final-review-9phkvtj8",
+  "reported_qualified": true,
+  "reported_outcome": "completed",
+  "reported_unfinished_nodes": [],
+  "actual_run_state": "active",
+  "actual_active_or_suspended_leases": [
+    "lease-60",
+    "lease-96",
+    "lease-129"
+  ],
+  "actual_node_states": {
+    "downstream-accepted-one": "running",
+    "worker-snapshot-one": "completed",
+    "worker-snapshot-three": "completed",
+    "verifier-snapshot-two": "completed",
+    "verifier-snapshot-three": "completed",
+    "downstream-rejected-two": "running",
+    "worker-snapshot-two": "completed",
+    "downstream-accepted-three": "running",
+    "verifier-snapshot-one": "completed"
+  },
+  "actual_execution_attempt_count": 0,
+  "scope": "Original pre-closure reproduction; fresh disposable SQLite only."
+}

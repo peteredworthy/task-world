@@ -42,6 +42,7 @@ from orchestrator.graph.models import (
     FileEntry,
     FileStateRecord,
     FailureRecord,
+    GapClassificationRecord,
     freeze_canonical_record,
     GatekeeperCostRecordedPayload,
     GatekeeperVerdictRecordedPayload,
@@ -6089,6 +6090,7 @@ def _derive_task_states(state: GraphProjection) -> dict[str, str]:
             task_states[task_region_id] = "pending"
 
     _apply_accepted_region_supersessions(state, task_states)
+    _apply_accepted_corrective_recovery_regions(state, task_states)
     return task_states
 
 
@@ -6143,6 +6145,53 @@ def _apply_accepted_region_supersessions(
         for superseded_region_id in latest_candidate.supersedes_task_region_ids:
             if task_states.get(superseded_region_id) in {"needs_revision", "pending"}:
                 task_states[superseded_region_id] = "accepted"
+
+
+def _apply_accepted_corrective_recovery_regions(
+    state: GraphProjection,
+    task_states: dict[str, str],
+) -> None:
+    """Close the exact gap-decision region consumed by accepted corrective work."""
+    for task_region_id, task in sorted(state.tasks.items()):
+        if task_states.get(task_region_id) != "accepted":
+            continue
+        candidate = _latest_candidate(task.candidates)
+        if candidate is None:
+            continue
+        candidate_record = state.records.by_id.get(candidate.candidate_id)
+        if not isinstance(candidate_record, CandidateRecord):
+            continue
+        worker = state.nodes.get(candidate_record.producer_node_id)
+        if (
+            worker is None
+            or worker.spec.dispatch_payload.get("semantic_stage") != "corrective_work"
+        ):
+            continue
+        binding = state.topology.input_bindings.get(
+            candidate_record.producer_node_id, FrozenMap()
+        ).get("classified_gap")
+        if binding is None or len(binding.record_ids) != 1:
+            continue
+        gap_record = state.records.by_id.get(binding.record_ids[0])
+        if (
+            not isinstance(gap_record, GapClassificationRecord)
+            or gap_record.value.classification != "corrective_work_required"
+        ):
+            continue
+        gap_planner = state.nodes.get(gap_record.producer_node_id)
+        if (
+            gap_planner is None
+            or gap_planner.runtime.state != "completed"
+            or gap_planner.spec.role != "gap_planner"
+        ):
+            continue
+        recovery_region_id = gap_planner.spec.task_region_id
+        if (
+            recovery_region_id is not None
+            and task_states.get(recovery_region_id) == "pending"
+            and _task_region_node_ids(state, recovery_region_id) == [gap_record.producer_node_id]
+        ):
+            task_states[recovery_region_id] = "accepted"
 
 
 def _derive_candidate_free_region_state(

@@ -1,0 +1,147 @@
+{
+  "cases": [
+    {
+      "candidate_commit": "1ee4060d04731e06ff5cf9cd89ea3b55b8cc36ba",
+      "candidate_name_status": "",
+      "case_id": "blocked",
+      "clean_checkout": true,
+      "database_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/blocked-9eeb3c96/joined.db",
+      "finalized_execution_count": 4,
+      "graph_state": "active",
+      "pause_reason": "graph_blocked",
+      "run_id": "joined-blocked-3d5e48d568",
+      "runner_recovery_reasons": [],
+      "workflow_status": "paused",
+      "worktree_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/blocked-9eeb3c96/worktree"
+    },
+    {
+      "candidate_commit": "d31e8f1ae9ff91aa5042e23d207f52e2f7992194",
+      "candidate_name_status": "",
+      "case_id": "cancellation-restart",
+      "clean_checkout": true,
+      "database_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/cancellation-restart-61c4b5d8/joined.db",
+      "finalized_execution_count": 4,
+      "graph_state": "cancelled",
+      "pause_reason": "server_shutdown",
+      "run_id": "joined-cancellation-restart-5142420711",
+      "runner_recovery_reasons": [
+        "runner_died"
+      ],
+      "workflow_status": "cancelled",
+      "worktree_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/cancellation-restart-61c4b5d8/worktree"
+    },
+    {
+      "candidate_commit": "e89c5cb730325b11fad8928d452e3cc2ee1d3ce2",
+      "candidate_name_status": "A\tcorrected.txt",
+      "case_id": "correction",
+      "clean_checkout": true,
+      "database_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/correction-b04d01aa/joined.db",
+      "finalized_execution_count": 10,
+      "graph_state": "completed",
+      "pause_reason": null,
+      "run_id": "joined-correction-189703b363",
+      "runner_recovery_reasons": [],
+      "workflow_status": "completed",
+      "worktree_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/correction-b04d01aa/worktree"
+    },
+    {
+      "candidate_commit": "0c26eb705aafab480c75e748a6f2256c93b072b2",
+      "candidate_name_status": "",
+      "case_id": "defective-candidate",
+      "clean_checkout": false,
+      "database_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/defective-candidate-f3c016bf/joined.db",
+      "finalized_execution_count": 7,
+      "graph_state": "active",
+      "pause_reason": "graph_blocked",
+      "run_id": "joined-defective-candidate-c6084d8fb7",
+      "runner_recovery_reasons": [],
+      "workflow_status": "paused",
+      "worktree_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/defective-candidate-f3c016bf/worktree"
+    },
+    {
+      "candidate_commit": "810019c46d794789c80ce4e195c5f8c3d0d8c80e",
+      "candidate_name_status": "",
+      "case_id": "defective-verifier",
+      "clean_checkout": false,
+      "database_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/defective-verifier-a7072f2f/joined.db",
+      "finalized_execution_count": 7,
+      "graph_state": "active",
+      "pause_reason": "graph_blocked",
+      "run_id": "joined-defective-verifier-2c54ed0d05",
+      "runner_recovery_reasons": [],
+      "workflow_status": "paused",
+      "worktree_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/defective-verifier-a7072f2f/worktree"
+    },
+    {
+      "candidate_commit": "c8806842529a1780334442e7ec46dcee3c234265",
+      "candidate_name_status": "A\tbase.txt\nA\tdependent.txt",
+      "case_id": "dependent-batches",
+      "clean_checkout": true,
+      "database_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/dependent-batches-4e530fc4/joined.db",
+      "finalized_execution_count": 10,
+      "graph_state": "completed",
+      "pause_reason": null,
+      "run_id": "joined-dependent-batches-e4a85104ec",
+      "runner_recovery_reasons": [],
+      "workflow_status": "completed",
+      "worktree_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/dependent-batches-4e530fc4/worktree"
+    },
+    {
+      "candidate_commit": "3f1641fe5465ef25a22a5fa403216b7173cd597d",
+      "candidate_name_status": "A\tamended.txt",
+      "case_id": "plan-amendment",
+      "clean_checkout": true,
+      "database_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/plan-amendment-f68553a5/joined.db",
+      "finalized_execution_count": 9,
+      "graph_state": "completed",
+      "pause_reason": null,
+      "run_id": "joined-plan-amendment-d898789aaf",
+      "runner_recovery_reasons": [],
+      "workflow_status": "completed",
+      "worktree_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/plan-amendment-f68553a5/worktree"
+    },
+    {
+      "candidate_commit": "b091b6024ca72e8a91461230eb76e2388e2f692e",
+      "candidate_name_status": "A\tsingle.txt",
+      "case_id": "single-batch",
+      "clean_checkout": true,
+      "database_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/single-batch-6be0bda0/joined.db",
+      "finalized_execution_count": 7,
+      "graph_state": "completed",
+      "pause_reason": null,
+      "run_id": "joined-single-batch-072c224431",
+      "runner_recovery_reasons": [],
+      "workflow_status": "completed",
+      "worktree_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/single-batch-6be0bda0/worktree"
+    },
+    {
+      "candidate_commit": "08edf74c736bf50741298113de48b23f196e4322",
+      "candidate_name_status": "A\tstage3-smoke.txt",
+      "case_id": "smoke",
+      "clean_checkout": true,
+      "database_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/smoke-9c33f7cb/joined.db",
+      "finalized_execution_count": 7,
+      "graph_state": "completed",
+      "pause_reason": null,
+      "run_id": "joined-smoke-ca9515842a",
+      "runner_recovery_reasons": [],
+      "workflow_status": "completed",
+      "worktree_path": "/private/var/folders/sb/19pvn34j4116vwhtsttw0hbr0000gn/T/pytest-of-peter/pytest-1543/test_joined_decision_v1_correc0/joined-decision-v1/smoke-9c33f7cb/worktree"
+    },
+    {
+      "case_id": "compatibility",
+      "finalized_execution_count": 0,
+      "graph_state": null,
+      "run_id": "compatibility-controls",
+      "workflow_status": null
+    }
+  ],
+  "pytest_result": "1 passed in 203.29s",
+  "evidence_note": "Captured post-test disposable-state readback. Temporary pytest database/worktree paths are not permanent replay artifacts; the assertions and retained logs establish the reported outcomes.",
+  "passing_test_assertions": [
+    "Exact bytes and mode100644 for completed products",
+    "Zero active/suspended leases, process owners and pending outbox for all passing runtime cases",
+    "No unfinished joined nodes for completed cases",
+    "Intended durable cause for correction, blocker, cancellation/restart and negative cases"
+  ]
+}

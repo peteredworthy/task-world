@@ -24,6 +24,7 @@ from orchestrator.graph.decisions import (
     ReliablePlanCheckDecision,
     resolve_decision_applicability,
     reliable_plan_check_decision_tool_schema as reliable_plan_check_decision_tool_schema,
+    verification_report_directly_binds_candidate,
 )
 from orchestrator.graph.models import (
     CheckResultRecord,
@@ -2812,6 +2813,7 @@ def _accepted_plan_and_verifier(
         if (
             not isinstance(plan, SemanticArtifactRecord)
             or plan.value.authority_status != "accepted"
+            or plan.value.semantic_role != "implementation_plan"
             or scope not in _declared_batch_ids_from_plan(plan)
         ):
             raise ValueError("exact bound accepted plan is unavailable")
@@ -2819,18 +2821,26 @@ def _accepted_plan_and_verifier(
             not isinstance(verification, VerificationReportRecord)
             or verification.outcome != "passed"
             or plan.record_id not in verification.evaluated_record_ids
+            or not verification_report_directly_binds_candidate(
+                projection,
+                verification,
+                plan.record_id,
+            )
             or (node_payload_view(projection, verification.producer_node_id) or {}).get(
                 "semantic_stage"
             )
             != "plan_verification"
         ):
-            raise ValueError("exact bound plan verification is unavailable")
+            raise ValueError(
+                "exact bound plan verification is not directly bound to the accepted plan"
+            )
         return plan, verification.producer_node_id
     plans: list[SemanticArtifactRecord] = [
         record
         for record in records.values()
         if isinstance(record, SemanticArtifactRecord)
         and record.value.authority_status == "accepted"
+        and record.value.semantic_role == "implementation_plan"
         and scope in _declared_batch_ids_from_plan(record)
     ]
     if len(plans) != 1:
@@ -2842,6 +2852,14 @@ def _accepted_plan_and_verifier(
         if isinstance(record, VerificationReportRecord)
         and record.outcome == "passed"
         and plan.record_id in record.evaluated_record_ids
+        and (
+            plan.value.schema_id != DECISION_PLAN_SCHEMA_ID
+            or verification_report_directly_binds_candidate(
+                projection,
+                record,
+                plan.record_id,
+            )
+        )
         and (node_payload_view(projection, record.producer_node_id) or {}).get("semantic_stage")
         == "plan_verification"
     ]
@@ -3098,7 +3116,11 @@ def _stamp_semantic_decisions(
         node.setdefault("scope", scope)
         node.setdefault("objective", objective)
         node.setdefault("acceptance", acceptance)
-        if dependencies:
+        # Dependency evidence is a readiness precondition for the effectful
+        # batch worker. The verifier, checks, and finalization nodes are
+        # already gated by their typed input edges and do not carry the
+        # dependency-verification ports.
+        if dependencies and node.get("kind") == "worker":
             node["preconditions"] = [f"declared batch {item} passed" for item in dependencies]
         if node.get("kind") in {"worker", "verifier"}:
             node["bound_requirement_ids"] = requirement_ids

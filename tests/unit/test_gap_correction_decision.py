@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 import pytest
@@ -26,7 +27,12 @@ from tests.unit.graph_test_utils import event as graph_event
 from tests.unit.test_graph_decisions import decision_successor_events
 
 
-def _correction_projection(*, failed: bool = True, check_count: int = 1):
+def _correction_projection(
+    *,
+    failed: bool = True,
+    check_count: int = 1,
+    misbound_plan_verifier: bool = False,
+):
     events = decision_successor_events()
     for item in events:
         if item.event_type == "node_created" and item.payload.get("node_id") == "planner-plan":
@@ -75,6 +81,51 @@ def _correction_projection(*, failed: bool = True, check_count: int = 1):
                 }
             )
             events[events.index(item)] = item.model_copy(update={"payload": payload})
+
+    if misbound_plan_verifier:
+        plan_event = next(
+            item
+            for item in events
+            if item.event_type == "output_record_accepted"
+            and item.payload.get("record_id") == "accepted-decision-plan"
+        )
+        other_plan_payload = deepcopy(dict(plan_event.payload))
+        other_plan_payload["record_id"] = "other-domain-plan"
+        other_value = deepcopy(dict(other_plan_payload["value"]))
+        other_value["schema_id"] = "other.domain.plan"
+        other_plan_payload["value"] = other_value
+        events.append(
+            graph_event(
+                "output_record_accepted",
+                other_plan_payload,
+                position=max(item.position for item in events) + 1,
+            )
+        )
+        for index, item in enumerate(events):
+            payload = dict(item.payload)
+            if item.event_type == "output_record_accepted" and payload.get("record_id") == (
+                "plan-passed"
+            ):
+                payload.update(
+                    {
+                        "candidate_id": "other-domain-plan",
+                        "candidate_record_id": "other-domain-plan",
+                        "candidate_record_ids": ["other-domain-plan"],
+                        "evaluated_record_ids": [
+                            "other-domain-plan",
+                            "accepted-decision-plan",
+                            "requirement-record-1",
+                        ],
+                    }
+                )
+                events[index] = item.model_copy(update={"payload": payload})
+            elif (
+                item.event_type == "input_bound"
+                and payload.get("to_node_id") == "verifier-plan"
+                and payload.get("to_port") == "semantic_artifact"
+            ):
+                payload["record_ids"] = ["other-domain-plan"]
+                events[index] = item.model_copy(update={"payload": payload})
 
     position = len(events) + 1
     events.extend(
@@ -326,6 +377,17 @@ def test_correction_context_binds_exact_failure_evidence_and_baseline() -> None:
         "e2": "gap-evidence-check",
     }
     assert resolved.plan_record_id == "accepted-decision-plan"
+
+
+def test_correction_rejects_baseline_report_with_only_transitive_plan_evidence() -> None:
+    with pytest.raises(
+        DecisionContractResolutionError,
+        match="directly bound to the accepted plan",
+    ):
+        resolve_correction_decision_context(
+            _correction_projection(misbound_plan_verifier=True),
+            "planner-plan",
+        )
 
 
 @pytest.mark.parametrize(

@@ -23,12 +23,18 @@ from orchestrator.graph import (
     FakeClock,
     PatchCommandContext,
     GraphProjection,
+    ReliablePlanContractIdentity,
+    ReliablePlanJoinedCaseManifest,
+    ReliablePlanJoinedCaseObservation,
+    ReliablePlanJoinedCaseQualification,
     ReliablePlanScenarioDefinition,
     ReliablePlanScenarioManifest,
     ReliablePlanQualificationReceipt,
     ReliablePlanScenarioObservation,
     ReliablePlanSkeletonQualification,
     SequentialIdGenerator,
+    canonical_decision_v1_joined_case_manifest,
+    canonical_reliable_plan_scenario_manifest,
     event_factory,
     leases_view,
     qualification_from_accepted_records,
@@ -45,6 +51,7 @@ from orchestrator.graph_runtime.prompts import (
     summarize_graph_node_prompt,
 )
 from orchestrator.graph_runtime.store import GraphEventStore
+from orchestrator.graph_runtime.joined_reliable_plan_driver import run_joined_driver_case
 
 
 class ReliablePlanScenarioAssertionError(AssertionError):
@@ -64,6 +71,14 @@ class ReliablePlanQualificationRun:
     projection: GraphProjection
     accepted_receipt_record_id: str
     receipt: ReliablePlanQualificationReceipt
+
+
+@dataclass(frozen=True)
+class ReliablePlanJoinedCaseRun:
+    """Joined failure/correction evidence from the same controller driver."""
+
+    qualification: ReliablePlanJoinedCaseQualification
+    observations: tuple[ReliablePlanJoinedCaseObservation, ...]
 
 
 class _SqliteProbe:
@@ -138,7 +153,20 @@ class ReliablePlanProductPathRunner:
         return await self._executors[scenario.number](scenario)
 
     async def run(self, manifest: ReliablePlanScenarioManifest) -> ReliablePlanQualificationRun:
-        observations = tuple([await self.execute(scenario) for scenario in manifest.scenarios])
+        if manifest.contract_identity.interaction_contract == "decision-v1":
+            joined = await self.run_joined_cases(canonical_decision_v1_joined_case_manifest())
+            observations = tuple(
+                ReliablePlanScenarioObservation(
+                    number=scenario.number,
+                    name=scenario.name,
+                    product_path=scenario.product_path,
+                    run_id=observed.run_id,
+                    evidence=observed.evidence,
+                )
+                for scenario, observed in zip(manifest.scenarios, joined.observations, strict=True)
+            )
+        else:
+            observations = tuple([await self.execute(scenario) for scenario in manifest.scenarios])
         probe = _SqliteProbe(self._root, manifest.scenarios[0])
         await probe.initialize()
         try:
@@ -172,6 +200,7 @@ class ReliablePlanProductPathRunner:
             observation_hashes = tuple(item.observation_hash for item in observations)
             receipt = ReliablePlanQualificationReceipt(
                 receipt_record_id=receipt_record_id,
+                contract_identity=manifest.contract_identity,
                 manifest_hash=reliable_plan_manifest_hash(manifest),
                 observation_record_ids=observation_record_ids,
                 observation_hashes=observation_hashes,
@@ -205,6 +234,85 @@ class ReliablePlanProductPathRunner:
             )
         finally:
             await probe.close()
+
+    async def run_joined_cases(
+        self, manifest: ReliablePlanJoinedCaseManifest
+    ) -> ReliablePlanJoinedCaseRun:
+        """Run the fixed joined correction/failure set on the real graph driver."""
+        observations: list[ReliablePlanJoinedCaseObservation] = []
+        for case in manifest.cases:
+            if case.case_id == "compatibility":
+                observations.append(_joined_compatibility_observation(manifest))
+                continue
+            observed = await run_joined_driver_case(self._root, case.case_id)
+            _require(observed.outcome == case.expected_outcome, " | ".join(observed.evidence))
+            expected_causes = {
+                "single-batch": "typed_plan_completed_without_intervention",
+                "dependent-batches": "typed_plan_completed_without_intervention",
+                "plan-amendment": "revised_plan_independently_verified_and_completed",
+                "smoke": "typed_plan_completed_without_intervention",
+                "correction": "failed_check_repaired_by_accepted_corrective_work",
+                "blocked": "required_operator_input_absent",
+                "cancellation-restart": "runner_shutdown_recovered_then_cancelled_after_restart",
+                "defective-candidate": "mandatory_candidate_check_failed_and_escalated",
+                "defective-verifier": "independent_verifier_failed_and_escalated",
+            }
+            _require(
+                observed.outcome_cause == expected_causes[case.case_id],
+                " | ".join(observed.evidence),
+            )
+            completed = observed.outcome == "completed"
+            bounded_terminal = (
+                observed.active_lease_count == 0
+                and observed.suspended_lease_count == 0
+                and observed.owned_process_count == 0
+                and observed.pending_outbox_count == 0
+            )
+            _require(bounded_terminal, " | ".join(observed.evidence))
+            if completed:
+                _require(observed.graph_state == "completed", " | ".join(observed.evidence))
+                _require(
+                    observed.workflow_status.value == "completed", " | ".join(observed.evidence)
+                )
+                _require(observed.exact_candidate, " | ".join(observed.evidence))
+                _require(observed.clean_checkout, " | ".join(observed.evidence))
+                _require(not observed.unfinished_node_ids, " | ".join(observed.evidence))
+                _require(observed.finalized_execution_count > 0, " | ".join(observed.evidence))
+            elif observed.outcome == "blocked":
+                _require(observed.workflow_status.value == "paused", " | ".join(observed.evidence))
+                _require(observed.graph_state == "active", " | ".join(observed.evidence))
+            observations.append(
+                ReliablePlanJoinedCaseObservation(
+                    case_id=case.case_id,
+                    run_id=observed.run_id,
+                    outcome=observed.outcome,
+                    passed=True,
+                    false_acceptance=False,
+                    intervention_recorded=observed.intervention_recorded,
+                    intentionally_unexecuted_node_ids=(),
+                    unfinished_node_ids=observed.unfinished_node_ids,
+                    evidence=observed.evidence,
+                    contract_identity=manifest.contract_identity,
+                    finalized_execution_count=observed.finalized_execution_count,
+                    active_lease_count=observed.active_lease_count,
+                    suspended_lease_count=observed.suspended_lease_count,
+                    owned_process_count=observed.owned_process_count,
+                    pending_outbox_count=observed.pending_outbox_count,
+                    candidate_paths=observed.candidate_paths,
+                    exact_candidate=observed.exact_candidate,
+                    clean_checkout=observed.clean_checkout,
+                    graph_state=observed.graph_state,
+                    workflow_status=observed.workflow_status,
+                )
+            )
+        qualification = ReliablePlanJoinedCaseQualification(
+            manifest=manifest,
+            observations=tuple(observations),
+        )
+        return ReliablePlanJoinedCaseRun(
+            qualification=qualification,
+            observations=tuple(observations),
+        )
 
     async def _scenario_1(
         self, scenario: ReliablePlanScenarioDefinition
@@ -1588,6 +1696,63 @@ async def run_reliable_plan_product_path_scenarios(
 ) -> ReliablePlanQualificationRun:
     """Canonical all-ten deterministic qualification entry point."""
     return await ReliablePlanProductPathRunner(root).run(manifest)
+
+
+async def run_reliable_plan_joined_cases(
+    manifest: ReliablePlanJoinedCaseManifest,
+    *,
+    root: Path,
+) -> ReliablePlanJoinedCaseRun:
+    """Run Slice 6C's joined correction and failure cases deterministically."""
+    return await ReliablePlanProductPathRunner(root).run_joined_cases(manifest)
+
+
+def _joined_compatibility_observation(
+    manifest: ReliablePlanJoinedCaseManifest,
+) -> ReliablePlanJoinedCaseObservation:
+    legacy = canonical_reliable_plan_scenario_manifest()
+    legacy_round_trip = ReliablePlanScenarioManifest.model_validate_json(legacy.model_dump_json())
+    decision_identity_round_trip = ReliablePlanContractIdentity.model_validate_json(
+        manifest.contract_identity.model_dump_json()
+    )
+    _require(
+        legacy_round_trip.contract_identity.interaction_contract == "legacy",
+        "legacy qualification round trip was relabeled",
+    )
+    _require(
+        reliable_plan_manifest_hash(legacy_round_trip) == reliable_plan_manifest_hash(legacy),
+        "legacy qualification hash changed during compatibility round trip",
+    )
+    _require(
+        decision_identity_round_trip == manifest.contract_identity,
+        "decision-v1 contract identity changed during compatibility round trip",
+    )
+    return ReliablePlanJoinedCaseObservation(
+        case_id="compatibility",
+        run_id="compatibility-controls",
+        outcome="compatibility",
+        passed=True,
+        false_acceptance=False,
+        intervention_recorded=False,
+        intentionally_unexecuted_node_ids=("model-evaluation-node",),
+        unfinished_node_ids=(),
+        evidence=(
+            "legacy_manifest_round_trip=legacy",
+            "legacy_manifest_hash=stable",
+            "decision_v1_identity=generated-schema-and-compiler-bound",
+        ),
+        contract_identity=manifest.contract_identity,
+        finalized_execution_count=0,
+        active_lease_count=0,
+        suspended_lease_count=0,
+        owned_process_count=0,
+        pending_outbox_count=0,
+        candidate_paths=(),
+        exact_candidate=False,
+        clean_checkout=True,
+        graph_state=None,
+        workflow_status=None,
+    )
 
 
 def _require(condition: bool, evidence: str) -> None:

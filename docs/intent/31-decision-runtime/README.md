@@ -1,5 +1,18 @@
 # Decisions and runtime execution
 
+## Integrated verification, September 15
+
+Final review replaced a qualification wrapper that could report completion while
+stored work remained active. The closure uses production joined execution,
+exact committed products, durable failure evidence and terminal ownership checks.
+The original slice 6B success cases were found in the main checkout and preserved.
+[The final review and closure ledger](slice-6f-final-review.md) records the fixes,
+independent review, source manifest and gate evidence. The
+[rollout and evaluation card](slice-6f-rollout-card.md) keeps model evaluation
+unexecuted. Earlier ledgers below describe historical passes.
+
+## Historical preparation and intermediate status
+
 Prepared September 11, 2026 for implementation by supervised Sol builders.
 This package specifies proposed changes. It does not claim they are implemented.
 

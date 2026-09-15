@@ -360,6 +360,33 @@ def test_evaluate_readiness_precondition_met_passes() -> None:
     assert reason == ""
 
 
+def test_evaluate_readiness_declared_batch_precondition_uses_passed_input() -> None:
+    node = _node(
+        "worker-2",
+        state="planned",
+        preconditions=["declared batch core passed"],
+        satisfied_input_ports={"dependency_verification_1"},
+    )
+
+    ready, reason = evaluate_readiness(node, "active", [], [])
+
+    assert ready is True
+    assert reason == ""
+
+
+def test_evaluate_readiness_declared_batch_precondition_requires_passed_input() -> None:
+    node = _node(
+        "worker-2",
+        state="planned",
+        preconditions=["declared batch core passed"],
+    )
+
+    ready, reason = evaluate_readiness(node, "active", [], [])
+
+    assert ready is False
+    assert reason == "precondition_failed:declared batch core passed"
+
+
 def test_evaluate_readiness_no_preconditions_unaffected() -> None:
     ready, reason = evaluate_readiness(_node("worker-1", state="planned"), "active", [], [])
 

@@ -22,6 +22,9 @@ from orchestrator.graph import (
     MAX_EVENT_ENVELOPE_BYTES,
     PatchCommandContext,
     ReliablePlanEvaluationConfig,
+    canonical_decision_v1_joined_case_manifest,
+    canonical_decision_v1_reliable_plan_scenario_manifest,
+    canonical_reliable_plan_scenario_manifest,
     ReliablePlanScenarioResult,
     ReliablePlanSkeletonQualification,
     SequentialIdGenerator,
@@ -40,6 +43,7 @@ from orchestrator.graph import (
     ready_nodes_view,
     runtime_retry_counts_view,
     require_reliable_plan_one_horizon_authorization,
+    reliable_plan_manifest_hash,
     serialize_authorized_reliable_plan_run_config,
 )
 from orchestrator.graph_runtime import (
@@ -51,6 +55,7 @@ from orchestrator.graph_runtime import (
     assemble_graph_dispatch_context,
     require_reliable_plan_qualification_for_run,
     run_reliable_plan_product_path_scenarios,
+    run_reliable_plan_joined_cases,
     verified_reliable_plan_seed_config,
 )
 from orchestrator.runners import AgentRunner, CodexServerAgent
@@ -2340,3 +2345,102 @@ async def test_product_path_runner_is_the_only_all_ten_one_horizon_gate(
             public_round_trip,
             public_round_trip.luna_arm,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+async def test_product_path_runner_records_decision_v1_identity_separately_from_legacy(
+    tmp_path: Path,
+) -> None:
+    legacy = canonical_reliable_plan_scenario_manifest()
+    decision_v1 = canonical_decision_v1_reliable_plan_scenario_manifest()
+    assert legacy.contract_identity.interaction_contract == "legacy"
+    assert decision_v1.contract_identity.interaction_contract == "decision-v1"
+    assert legacy.contract_identity != decision_v1.contract_identity
+    assert reliable_plan_manifest_hash(legacy) != reliable_plan_manifest_hash(decision_v1)
+
+    result = await run_reliable_plan_product_path_scenarios(
+        decision_v1,
+        root=tmp_path / "decision-v1-qualification",
+    )
+
+    assert result.qualification.qualified
+    assert result.qualification.manifest.contract_identity == decision_v1.contract_identity
+    assert result.receipt.contract_identity == decision_v1.contract_identity
+    assert result.receipt.manifest_hash == reliable_plan_manifest_hash(decision_v1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+async def test_joined_decision_v1_correction_and_failure_cases_are_bounded(
+    tmp_path: Path,
+) -> None:
+    manifest = canonical_decision_v1_joined_case_manifest()
+
+    result = await run_reliable_plan_joined_cases(
+        manifest,
+        root=tmp_path / "joined-decision-v1",
+    )
+
+    assert result.qualification.qualified
+    by_id = {item.case_id: item for item in result.observations}
+    for case_id in ("single-batch", "dependent-batches", "plan-amendment", "smoke"):
+        assert by_id[case_id].outcome == "completed"
+        assert by_id[case_id].graph_state == "completed"
+        assert by_id[case_id].workflow_status == RunStatus.COMPLETED
+        assert by_id[case_id].finalized_execution_count > 0
+        assert by_id[case_id].active_lease_count == 0
+        assert by_id[case_id].suspended_lease_count == 0
+        assert by_id[case_id].owned_process_count == 0
+        assert by_id[case_id].pending_outbox_count == 0
+        assert by_id[case_id].unfinished_node_ids == ()
+        assert by_id[case_id].exact_candidate is True
+        assert by_id[case_id].clean_checkout is True
+    assert by_id["correction"].outcome == "completed"
+    assert by_id["correction"].intervention_recorded is True
+    assert by_id["correction"].finalized_execution_count > 0
+    assert by_id["correction"].graph_state == "completed"
+    assert by_id["correction"].workflow_status == RunStatus.COMPLETED
+    assert by_id["correction"].unfinished_node_ids == ()
+    assert by_id["blocked"].outcome == "blocked"
+    assert by_id["blocked"].intervention_recorded is True
+    assert by_id["blocked"].graph_state == "active"
+    assert by_id["blocked"].workflow_status == RunStatus.PAUSED
+    assert by_id["blocked"].unfinished_node_ids
+    assert by_id["cancellation-restart"].outcome == "cancelled"
+    assert by_id["cancellation-restart"].intervention_recorded is True
+    assert by_id["cancellation-restart"].graph_state == "cancelled"
+    assert by_id["cancellation-restart"].workflow_status == RunStatus.CANCELLED
+    assert by_id["defective-candidate"].outcome == "blocked"
+    assert by_id["defective-verifier"].outcome == "blocked"
+    expected_causes = {
+        "correction": "failed_check_repaired_by_accepted_corrective_work",
+        "blocked": "required_operator_input_absent",
+        "cancellation-restart": "runner_shutdown_recovered_then_cancelled_after_restart",
+        "defective-candidate": "mandatory_candidate_check_failed_and_escalated",
+        "defective-verifier": "independent_verifier_failed_and_escalated",
+    }
+    for case_id, cause in expected_causes.items():
+        assert f"outcome_cause={cause}" in by_id[case_id].evidence
+    for case_id in ("blocked", "cancellation-restart", "defective-candidate", "defective-verifier"):
+        assert by_id[case_id].active_lease_count == 0
+        assert by_id[case_id].suspended_lease_count == 0
+        assert by_id[case_id].owned_process_count == 0
+        assert by_id[case_id].pending_outbox_count == 0
+    assert all(item.false_acceptance is False for item in result.observations)
+    assert all(item.contract_identity == manifest.contract_identity for item in result.observations)
+    assert by_id["compatibility"].intentionally_unexecuted_node_ids == ("model-evaluation-node",)
+
+    public_readback = type(result.qualification).model_validate_json(
+        result.qualification.model_dump_json()
+    )
+    public_by_id = {item.case_id: item for item in public_readback.observations}
+    assert public_by_id["compatibility"].intentionally_unexecuted_node_ids == (
+        "model-evaluation-node",
+    )
+    assert public_by_id["compatibility"].unfinished_node_ids == ()
+    assert public_by_id["smoke"].candidate_paths == ("stage3-smoke.txt",)
+    assert public_by_id["smoke"].exact_candidate is True
+    assert public_by_id["smoke"].clean_checkout is True

@@ -303,6 +303,11 @@ The no-model recovery lifecycle entry point is
 `uv run python examples/recovery/deterministic_lifecycle.py`. It uses disposable
 Git/SQLite state and scripted runners through production graph dispatch,
 submission, checks and finalization. It does not start the live server or a model.
+The default smoke uses decision-v1; `run_legacy_lifecycle` retains the separate
+legacy control. `graph_runtime/joined_reliable_plan_driver.py` assembles disposable
+typed cases over the existing `GraphRunDriver`, signal consumer, dispatcher and
+scripted runner routing. `run_reliable_plan_joined_cases` is the public qualification
+entry point. A scripted result proves deterministic infrastructure, not model reliability.
 Rejected reliable-plan requests are captured by
 `graph_runtime/rejection_evidence.py` in private artifacts; replay must use a
 fresh isolated database and matching orchestrator source. The separate

@@ -31,6 +31,7 @@ from orchestrator.config import AgentRunnerType, load_routine_from_path
 from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
 from orchestrator.graph import (
     FakeClock,
+    ReliablePlanContractIdentity,
     SequentialIdGenerator,
     StoredArtifactRef,
     edges_view,
@@ -88,6 +89,7 @@ class SuccessorProbeEvidence(BaseModel):
     """Bounded result for one deterministic or explicitly paid successor probe."""
 
     schema_version: Literal[1] = 1
+    qualification_contract_identity: ReliablePlanContractIdentity | None = None
     status: Literal["passed", "failed", "incomplete", "error"]
     mode: Literal["deterministic", "paid"]
     run_id: str
@@ -852,6 +854,9 @@ async def run_probe(
             "dynamic_tool_receipt_refs": [
                 ref.model_dump(mode="json") for ref in prepared.factory.dynamic_tool_receipt_refs
             ],
+            "qualification_contract_identity": ReliablePlanContractIdentity().model_dump(
+                mode="json"
+            ),
         }
         async with prepared.artifacts.publication():
             protected_context_ref = await prepared.artifacts.put(
@@ -922,6 +927,7 @@ async def run_probe(
         evidence = SuccessorProbeEvidence(
             status=status,
             mode=mode,
+            qualification_contract_identity=ReliablePlanContractIdentity(),
             run_id=prepared.run_id,
             model=MODEL,
             reasoning_effort=EFFORT,

@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from orchestrator.artifacts import FilesystemArtifactStore, StoredArtifactRef
 from orchestrator.db import create_engine, create_session_factory, init_db
-from orchestrator.graph import FakeClock, SequentialIdGenerator
+from orchestrator.graph import FakeClock, ReliablePlanContractIdentity, SequentialIdGenerator
 from orchestrator.graph_runtime import (
     RejectionEvidenceArtifact,
     capture_source_identity,
@@ -58,6 +58,7 @@ class ReplayInput(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     status: Literal["passed", "failed", "incomplete", "error"]
+    qualification_contract_identity: ReliablePlanContractIdentity | None = None
     orchestrator_source_identity: dict[str, Any]
     harness_sha256: str
     lifecycle_helper_sha256: str
@@ -359,6 +360,10 @@ async def replay_result(result_path: Path) -> ReplaySummary:
         "oracle_sha256": result.oracle_sha256,
         "successor_node_id": result.successor_node_id,
     }
+    if result.qualification_contract_identity is not None:
+        protected_fields["qualification_contract_identity"] = (
+            result.qualification_contract_identity.model_dump(mode="json")
+        )
     if any(protected_mapping.get(key) != value for key, value in protected_fields.items()):
         raise ReplayProbeError("protected context identity differs")
     protected_prompt = protected_mapping.get("successor_prompt")

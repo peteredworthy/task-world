@@ -157,12 +157,54 @@ def test_failed_correction_supersession_replays_identically_at_every_split() -> 
         event(
             "node_created",
             {
+                "node_id": "planner-gap-original",
+                "kind": "gap_planner",
+                "role": "gap_planner",
+                "state": "completed",
+                "task_region_id": "recovery-original",
+            },
+            position=6,
+        ),
+        event(
+            "output_record_accepted",
+            {
+                "record_id": "gap-original",
+                "record_kind": "output",
+                "record_type": "classified_gap",
+                "producer_node_id": "planner-gap-original",
+                "port": "classified_gap",
+                "schema": "GapClassification",
+                "value": {
+                    "milestone_kind": "verification",
+                    "classification": "corrective_work_required",
+                    "source": "failed verification",
+                    "task_region_id": "region-original",
+                    "attempt_number": 1,
+                },
+            },
+            position=7,
+        ),
+        event(
+            "input_bound",
+            {
+                "edge_id": "edge-gap-correction",
+                "to_node_id": "worker-correction",
+                "to_port": "classified_gap",
+                "record_ids": ["gap-original"],
+                "bound_at_position": 7,
+            },
+            position=8,
+        ),
+        event(
+            "node_created",
+            {
                 "node_id": "worker-correction",
                 "kind": "worker",
                 "state": "completed",
                 "task_region_id": "region-correction",
+                "semantic_stage": "corrective_work",
             },
-            position=6,
+            position=9,
         ),
         event(
             "output_record_accepted",
@@ -175,7 +217,7 @@ def test_failed_correction_supersession_replays_identically_at_every_split() -> 
                 "candidate_id": "candidate-correction",
                 "task_region_id": "region-correction",
             },
-            position=7,
+            position=10,
         ),
         event(
             "output_record_accepted",
@@ -192,7 +234,7 @@ def test_failed_correction_supersession_replays_identically_at_every_split() -> 
                 "supersedes_task_region_id": "region-original",
                 "value": {"summary": "correction"},
             },
-            position=8,
+            position=11,
         ),
         event(
             "node_created",
@@ -202,7 +244,7 @@ def test_failed_correction_supersession_replays_identically_at_every_split() -> 
                 "state": "completed",
                 "task_region_id": "region-correction",
             },
-            position=9,
+            position=12,
         ),
         event(
             "output_record_accepted",
@@ -218,7 +260,7 @@ def test_failed_correction_supersession_replays_identically_at_every_split() -> 
                 "outcome": "passed",
                 "value": {"outcome": "passed", "grades": []},
             },
-            position=10,
+            position=13,
         ),
         event(
             "verification_passed",
@@ -230,13 +272,17 @@ def test_failed_correction_supersession_replays_identically_at_every_split() -> 
                 "record_id": "verification-correction-passed",
                 "outcome": "passed",
             },
-            position=11,
+            position=14,
         ),
     ]
     full = build_projection(stream)
     expected_states = task_states_view(full)
     expected_blockers = list(iter_final_invariant_blockers(stream, full))
-    assert expected_states == {"region-correction": "accepted", "region-original": "accepted"}
+    assert expected_states == {
+        "recovery-original": "accepted",
+        "region-correction": "accepted",
+        "region-original": "accepted",
+    }
     assert expected_blockers == []
 
     for split in range(len(stream) + 1):
@@ -252,6 +298,19 @@ def test_failed_correction_supersession_replays_identically_at_every_split() -> 
         assert list(iter_final_invariant_blockers(stream, replayed)) == expected_blockers, split
         assert prefix == frozen_prefix, split
         assert checkpoint == frozen_checkpoint, split
+
+    unrelated = graph_event(
+        "node_created",
+        {
+            "node_id": "unrelated-recovery-work",
+            "kind": "worker",
+            "state": "planned",
+            "task_region_id": "recovery-original",
+        },
+        position=15,
+    )
+    with_unrelated_member = reduce_event(full, unrelated)
+    assert task_states_view(with_unrelated_member)["recovery-original"] == "pending"
 
 
 def test_canonical_gatekeeper_stream_preserves_ordinary_and_external_entry_subtypes() -> None:

@@ -1,0 +1,128 @@
+{
+  "manifest_id": "reliable-plan-model-evaluation-v1",
+  "contract_identity": {
+    "interaction_contract": "decision-v1",
+    "answer_schema_id": "orchestrator.reliable-plan.decision-plan",
+    "answer_schema_version": 1,
+    "answer_schema_sha256": "sha256:cc5820d9dc5a673a8b7a6d945c71b045c2b23712891e0113571efd6742dc3590",
+    "compiler_contract_version": 1
+  },
+  "arm": {
+    "arm_id": "luna-bounded-workers",
+    "planner": {
+      "runner_type": "codex_server",
+      "model": "gpt-5.6-sol",
+      "profile": "architect"
+    },
+    "discovery_worker": {
+      "runner_type": "codex_server",
+      "model": "gpt-5.6-luna",
+      "profile": "summarizer"
+    },
+    "implementation_worker": {
+      "runner_type": "codex_server",
+      "model": "gpt-5.6-luna",
+      "profile": "coder"
+    },
+    "correction_worker": {
+      "runner_type": "codex_server",
+      "model": "gpt-5.6-luna",
+      "profile": "coder"
+    },
+    "verifier": {
+      "runner_type": "codex_server",
+      "model": "gpt-5.6-sol",
+      "profile": "coder"
+    },
+    "successor_planner": {
+      "runner_type": "codex_server",
+      "model": "gpt-5.6-luna",
+      "profile": "architect"
+    }
+  },
+  "cases": [
+    {
+      "case_id": "single-batch",
+      "name": "single-batch successor completion",
+      "product_path": "joined one-batch decision and finalization",
+      "expected_outcome": "completed",
+      "allowed_interventions": [
+        "none"
+      ],
+      "false_acceptance_negative": false,
+      "expected_failure_classes": []
+    },
+    {
+      "case_id": "dependent-batches",
+      "name": "dependent multi-batch completion",
+      "product_path": "joined dependency-ordered successor horizons",
+      "expected_outcome": "completed",
+      "allowed_interventions": [
+        "none"
+      ],
+      "false_acceptance_negative": false,
+      "expected_failure_classes": []
+    },
+    {
+      "case_id": "correction",
+      "name": "evidence-backed corrective completion",
+      "product_path": "joined failed-check correction and finalization",
+      "expected_outcome": "completed",
+      "allowed_interventions": [
+        "bounded-correction",
+        "none"
+      ],
+      "false_acceptance_negative": false,
+      "expected_failure_classes": []
+    },
+    {
+      "case_id": "plan-amendment",
+      "name": "independently verified plan amendment",
+      "product_path": "joined amendment verification and successor execution",
+      "expected_outcome": "completed",
+      "allowed_interventions": [
+        "bounded-plan-amendment",
+        "none"
+      ],
+      "false_acceptance_negative": false,
+      "expected_failure_classes": []
+    },
+    {
+      "case_id": "verifier-negative",
+      "name": "verifier negative must fail closed",
+      "product_path": "joined defective candidate and verifier negative",
+      "expected_outcome": "blocked",
+      "allowed_interventions": [
+        "operator-escalation"
+      ],
+      "false_acceptance_negative": true,
+      "expected_failure_classes": [
+        "verifier_failure",
+        "validation_rejection",
+        "candidate_check_failure"
+      ]
+    }
+  ],
+  "per_execution_budget": {
+    "max_model_executions": 1,
+    "max_rejected_answers": 2,
+    "max_wall_seconds": 180
+  },
+  "per_case_budget": {
+    "max_model_executions": 16,
+    "max_rejected_answers": 32,
+    "max_wall_seconds": 2880
+  },
+  "total_budget": {
+    "max_model_executions": 80,
+    "max_rejected_answers": 160,
+    "max_wall_seconds": 14400
+  },
+  "stop_rules": {
+    "stop_on_false_acceptance": true,
+    "stop_on_unexpected_outcome": true,
+    "stop_on_missing_evidence": true,
+    "no_automatic_retry": true
+  },
+  "operator_authorization_required": true
+}

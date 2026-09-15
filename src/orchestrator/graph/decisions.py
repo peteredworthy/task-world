@@ -1934,6 +1934,24 @@ def _plan_requirement_authority(
     }
 
 
+def verification_report_directly_binds_candidate(
+    projection: GraphProjection,
+    report: VerificationReportRecord,
+    candidate_record_id: str,
+) -> bool:
+    """Return whether a report's producer directly judged one exact candidate."""
+    binding = (
+        input_bindings_view(projection).get(report.producer_node_id, {}).get("semantic_artifact")
+    )
+    return (
+        binding is not None
+        and binding.record_ids == [candidate_record_id]
+        and report.candidate_id == candidate_record_id
+        and report.candidate_record_id == candidate_record_id
+        and report.candidate_record_ids == [candidate_record_id]
+    )
+
+
 def resolve_batch_decision_context(
     projection: GraphProjection,
     node_id: str,
@@ -2023,10 +2041,17 @@ def resolve_batch_decision_context(
         not isinstance(plan_verifier, VerificationReportRecord)
         or plan_verifier.outcome != "passed"
         or plan_id not in plan_verifier.evaluated_record_ids
+        or not verification_report_directly_binds_candidate(
+            projection,
+            plan_verifier,
+            plan_id,
+        )
         or plan_verifier_node is None
         or plan_verifier_node.get("semantic_stage") != "plan_verification"
     ):
-        raise DecisionContractResolutionError("bound independent plan verifier is unavailable")
+        raise DecisionContractResolutionError(
+            "bound independent plan verifier is not directly bound to the accepted plan"
+        )
     if horizon == 1:
         if horizon_verifier_id != plan_verifier_id:
             raise DecisionContractResolutionError(
@@ -2270,12 +2295,17 @@ def resolve_correction_decision_context(
         if isinstance(record, VerificationReportRecord)
         and record.outcome == "passed"
         and plan_record.record_id in record.evaluated_record_ids
+        and verification_report_directly_binds_candidate(
+            projection,
+            record,
+            plan_record.record_id,
+        )
         and (node_payload_view(projection, record.producer_node_id) or {}).get("semantic_stage")
         == "plan_verification"
     ]
     if len(plan_verifiers) != 1:
         raise DecisionContractResolutionError(
-            "correction decision requires one accepted plan verification"
+            "correction decision requires one plan verification directly bound to the accepted plan"
         )
     plan_verifier = plan_verifiers[0]
     plan_aliases, plan_requirement_records = _plan_requirement_authority(plan_record, records)
@@ -2346,7 +2376,14 @@ def _resolve_plan_repair_context(
             "plan repair requires a failed exact plan verification"
         )
     rejected_id = plan_binding.record_ids[0]
-    if rejected_id not in anchor_report.evaluated_record_ids:
+    if (
+        rejected_id not in anchor_report.evaluated_record_ids
+        or not verification_report_directly_binds_candidate(
+            projection,
+            anchor_report,
+            rejected_id,
+        )
+    ):
         raise DecisionContractResolutionError("failed plan report does not evaluate its bound plan")
 
     def load_plan(record_id: str) -> tuple[SemanticArtifactRecord, ImplementationPlan]:
@@ -2394,9 +2431,11 @@ def _resolve_plan_repair_context(
             if isinstance(record, VerificationReportRecord)
             and record.outcome == "passed"
             and current_record.record_id in record.evaluated_record_ids
-            and (binding := all_bindings.get(record.producer_node_id, {}).get("semantic_artifact"))
-            is not None
-            and binding.record_ids == [current_record.record_id]
+            and verification_report_directly_binds_candidate(
+                projection,
+                record,
+                current_record.record_id,
+            )
             and (node_payload_view(projection, record.producer_node_id) or {}).get("semantic_stage")
             == "plan_verification"
         ]

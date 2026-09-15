@@ -14,6 +14,7 @@ from orchestrator.graph import (
     apply_command,
     build_projection,
     compile_batch_decision,
+    compile_reliable_plan_region_ops,
     edges_view,
     input_bindings_view,
     node_payload_view,
@@ -446,6 +447,79 @@ def test_horizon_two_rejects_inexact_separate_authorities_without_effects(
     assert projection_to_checkpoint(projection, position=999) == before_projection
 
 
+def _events_with_transitively_cited_plan_verification() -> list[Any]:
+    events = decision_successor_events()
+    plan_event = next(
+        event
+        for event in events
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_id") == "accepted-decision-plan"
+    )
+    other_plan_payload = deepcopy(dict(plan_event.payload))
+    other_plan_payload["record_id"] = "other-decision-plan"
+    events.append(
+        graph_event(
+            "output_record_accepted",
+            other_plan_payload,
+            position=max(event.position for event in events) + 1,
+        )
+    )
+    events = _mutate_event_payload(
+        events,
+        event_type="output_record_accepted",
+        predicate=lambda payload: payload.get("record_id") == "plan-passed",
+        updates={
+            "candidate_id": "other-decision-plan",
+            "candidate_record_id": "other-decision-plan",
+            "candidate_record_ids": ["other-decision-plan"],
+            "evaluated_record_ids": [
+                "other-decision-plan",
+                "accepted-decision-plan",
+                "requirement-record-1",
+            ],
+        },
+    )
+    events = _mutate_event_payload(
+        events,
+        event_type="input_bound",
+        predicate=lambda payload: payload.get("to_node_id") == "verifier-plan"
+        and payload.get("to_port") == "semantic_artifact",
+        updates={"record_ids": ["other-decision-plan"]},
+    )
+    return events
+
+
+def test_successor_rejects_plan_report_with_only_transitive_plan_evidence() -> None:
+    events = _events_with_transitively_cited_plan_verification()
+
+    with pytest.raises(ValueError, match="directly bound to the accepted plan"):
+        resolve_batch_decision_context(build_projection(events), "planner-plan")
+
+
+def test_trusted_macro_rejects_report_with_only_transitive_plan_evidence() -> None:
+    projection = build_projection(_events_with_transitively_cited_plan_verification())
+
+    with pytest.raises(ValueError, match="directly bound to the accepted plan"):
+        compile_reliable_plan_region_ops(
+            {
+                "operation_key": "construct-core",
+                "scope": "core",
+                "objective": "Implement the bounded core.",
+                "requirement_ids": ["REQ-1"],
+                "dependencies": [],
+                "acceptance": ["The bounded core passes."],
+                "checks": [{"name": "oracle", "command_binding": "dynamic_feature_hidden_oracle"}],
+                "rubric": ["The bounded requirement is satisfied."],
+            },
+            projection=projection,
+            proposed_by_node_id="planner-plan",
+            patch_id="patch-transitive-plan-report",
+            trusted_plan_record_id="accepted-decision-plan",
+            trusted_plan_verification_record_id="plan-passed",
+            trusted_requirement_record_ids=("requirement-record-1",),
+        )
+
+
 @pytest.mark.parametrize(
     ("disjoint_requirements", "expected_aliases", "expected_record_ids"),
     [
@@ -576,6 +650,26 @@ def test_disjoint_horizon_amendment_retains_separate_ordered_authorities() -> No
         node["node_id"] for node in created if node.get("semantic_stage") == "successor_planning"
     )
     position += 1
+    verifier_edge = next(
+        op
+        for op in amended.ops
+        if op.get("op") == "create_edge"
+        and op.get("to_node_id") == verifier_id
+        and op.get("to_port") == "semantic_artifact"
+    )
+    verifier_binding_event = graph_event(
+        "input_bound",
+        {
+            "edge_id": verifier_edge["edge_id"],
+            "to_node_id": verifier_id,
+            "to_port": "semantic_artifact",
+            "record_ids": [semantic.record_id],
+            "bound_at_position": position,
+            "record_bound_positions": {semantic.record_id: position},
+        },
+        position=position,
+    )
+    position += 1
     report_id = "amended-plan-passed"
     report_event = graph_event(
         "output_record_accepted",
@@ -598,7 +692,7 @@ def test_disjoint_horizon_amendment_retains_separate_ordered_authorities() -> No
         position=position,
     )
     interim = projection
-    for event in [*durable_patch, semantic_event, report_event]:
+    for event in [*durable_patch, semantic_event, verifier_binding_event, report_event]:
         interim = reduce_event(interim, event)
     bindings = input_bindings_view(interim).get(replacement_id, {})
     bound_events = []

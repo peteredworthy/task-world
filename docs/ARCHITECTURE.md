@@ -250,7 +250,8 @@ task-world/
 │   │   ├── rejection_evidence.py # Private bounded rejected-plan capture and isolated replay
 │   │   ├── outbox.py          # Durable side-effect outbox mapping/dispatcher
 │   │   ├── reliable_plan_qualification.py # Grant issuance, consumption, runtime binding
-│   │   ├── reliable_plan_scenarios.py # Canonical ten-scenario product-path qualification
+│   │   ├── reliable_plan_scenarios.py # Separate legacy and joined decision-v1 qualification
+│   │   ├── joined_reliable_plan_driver.py # Disposable typed-case fixtures over GraphRunDriver
 │   │   └── store.py           # Graph event store and summary read models
 │   │
 │   ├── runners/               # Agent execution: all runner types, detection, profiles
@@ -627,8 +628,9 @@ uses three samples, asserts exact behavior cardinality, and requires a median
 under one second.
 
 Reliable-plan dogfood uses the public `usage_metrics_view` carrier query and
-the `ReliablePlanEvaluationConfig`, qualification, result, and comparison
-artifact models exported by `orchestrator.graph`. The incident-derived
+the `ReliablePlanEvaluationConfig`, qualification, result, comparison artifact,
+and fixed model-evaluation manifest/report models exported by
+`orchestrator.graph`. The incident-derived
 `reliable-plan-fff4f6b7-v1` fixture is a strict typed manifest, not a passing
 attestation. `run_reliable_plan_scenarios` executes every manifest entry and a
 qualification can be built only from its returned product-path results; all ten

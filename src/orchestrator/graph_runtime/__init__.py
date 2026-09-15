@@ -97,9 +97,11 @@ from orchestrator.graph_runtime.prompts import (
 )
 from orchestrator.graph_runtime.recovery import RecoveryReport, recover, reconcile_graph
 from orchestrator.graph_runtime.reliable_plan_scenarios import (
+    ReliablePlanJoinedCaseRun,
     ReliablePlanProductPathRunner,
     ReliablePlanQualificationRun,
     ReliablePlanScenarioAssertionError,
+    run_reliable_plan_joined_cases,
     run_reliable_plan_product_path_scenarios,
 )
 from orchestrator.graph_runtime.reliable_plan_qualification import (
@@ -239,6 +241,7 @@ __all__ = [
     "OutboxItem",
     "RecoveryReport",
     "ReliablePlanProductPathRunner",
+    "ReliablePlanJoinedCaseRun",
     "ReliablePlanQualificationRun",
     "ReliablePlanScenarioAssertionError",
     "MAX_REJECTION_EVIDENCE_BYTES",
@@ -308,6 +311,7 @@ __all__ = [
     "reconcile_graph",
     "reconcile_runtime",
     "run_reliable_plan_product_path_scenarios",
+    "run_reliable_plan_joined_cases",
     "capture_reliable_plan_rejection_evidence",
     "capture_source_identity",
     "render_rejected_graph_patch_response",

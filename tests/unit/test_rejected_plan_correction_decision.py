@@ -99,6 +99,9 @@ def _rejected_amendment_events(*, horizon: int = 2) -> tuple[list[Any], str, str
             "port": "verification_report",
             "schema": "VerificationReport",
             "graph_position": position + 1,
+            "candidate_id": semantic.record_id,
+            "candidate_record_id": semantic.record_id,
+            "candidate_record_ids": [semantic.record_id],
             "outcome": "failed",
             "value": {"outcome": "failed", "grades": []},
             "evaluated_record_ids": [
@@ -394,6 +397,26 @@ def test_later_horizon_repair_patch_accepts_and_resolves_exact_verified_successo
         for op in compiled.ops
         if op["op"] == "create_node" and op["node"].get("kind") == "verifier"
     )
+    verifier_edge = next(
+        edge
+        for edge in edges_view(projection).values()
+        if edge.to_node_id == verifier["node_id"] and edge.to_port == "semantic_artifact"
+    )
+    projection = reduce_event(
+        projection,
+        graph_event(
+            "input_bound",
+            {
+                "edge_id": verifier_edge.edge_id,
+                "to_node_id": verifier["node_id"],
+                "to_port": "semantic_artifact",
+                "record_ids": [replacement.record_id],
+                "bound_at_position": 1201,
+                "record_bound_positions": {replacement.record_id: 1200},
+            },
+            position=1201,
+        ),
+    )
     projection = reduce_event(
         projection,
         graph_event(
@@ -405,12 +428,15 @@ def test_later_horizon_repair_patch_accepts_and_resolves_exact_verified_successo
                 "producer_node_id": verifier["node_id"],
                 "port": "verification_report",
                 "schema": "VerificationReport",
-                "graph_position": 1201,
+                "graph_position": 1202,
+                "candidate_id": replacement.record_id,
+                "candidate_record_id": replacement.record_id,
+                "candidate_record_ids": [replacement.record_id],
                 "outcome": "passed",
                 "value": {"outcome": "passed", "grades": []},
                 "evaluated_record_ids": [replacement.record_id],
             },
-            position=1201,
+            position=1202,
         ),
     )
     for edge in edges_view(projection).values():
@@ -424,7 +450,7 @@ def test_later_horizon_repair_patch_accepts_and_resolves_exact_verified_successo
         if record_id is None:
             record_id = (edge.accepted_record_selector or {})["record_id"]
         bound_record = output_record_payloads_view(projection)[record_id]
-        bound_position = 1202 if bound_record.graph_position is not None else 0
+        bound_position = 1203 if bound_record.graph_position is not None else 0
         record_position = bound_position if bound_record.graph_position is not None else -1
         projection = reduce_event(
             projection,

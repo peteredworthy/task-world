@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from functools import partial
 import json
 from pathlib import Path
+import re
 import secrets
 import shlex
 import subprocess
@@ -30,8 +31,15 @@ from orchestrator.api import create_app
 from orchestrator.api.deps import make_service_factory, make_workflow_preparer
 from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.config import AgentRunnerType, RoutineSource, load_routine_from_path
-from orchestrator.db import EventV2Model, RunRepository, commit_with_event_outbox, init_db
+from orchestrator.db import (
+    EventV2Model,
+    GraphOutboxModel,
+    RunRepository,
+    commit_with_event_outbox,
+    init_db,
+)
 from orchestrator.graph import (
+    FakeClock,
     MAX_EVENT_ENVELOPE_BYTES,
     ReliablePlanEvaluationConfig,
     build_projection,
@@ -50,6 +58,7 @@ from orchestrator.graph import (
     projection_to_checkpoint,
     ready_nodes_view,
     reduce_event,
+    SequentialIdGenerator,
     task_region_snapshot_authority_view,
     task_states_view,
 )
@@ -75,6 +84,7 @@ from orchestrator.runners.types import (
     ExecutionResult,
     GradeCallback,
     LogLineCallback,
+    SubmissionInvocation,
     SubmitCallback,
 )
 from orchestrator.workflow import GraphRunDriver, SignalConsumer, WorkflowService
@@ -223,6 +233,57 @@ class _ScriptedAgent:
         return None
 
 
+class _DecisionScriptedAgent:
+    """Submit one typed decision through the trusted production ingress."""
+
+    def __init__(
+        self,
+        answer_factory: Callable[[ExecutionContext], Awaitable[dict[str, Any]]],
+        execution_contexts: list[ExecutionContext],
+    ) -> None:
+        self._answer_factory = answer_factory
+        self._execution_contexts = execution_contexts
+        self.terminal_close_calls = 0
+
+    @property
+    def info(self) -> AgentRunnerInfo:
+        return AgentRunnerInfo(
+            agent_runner_type=AgentRunnerType.CODEX_SERVER,
+            name="decision-sequential-product-path",
+        )
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        del on_checklist_update, on_output, on_grade, on_agent_metadata, on_escalation
+        self._execution_contexts.append(context)
+        invocation = SubmissionInvocation(
+            execution_id=context.execution_id,
+            answer_attempt_id=f"decision-attempt-{context.execution_id}",
+            transport_channel="codex_dynamic_tool",
+            transport_session_id=f"decision-session-{context.execution_id}",
+            transport_request_id=f"decision-request-{context.execution_id}",
+            arguments={"outputs": await self._answer_factory(context)},
+        )
+        acknowledgement = await on_submit(invocation)
+        assert acknowledgement is not None
+        assert acknowledgement.disposition == "durably_staged", acknowledgement
+        return ExecutionResult(success=True, completion_cause="terminal_answer_completed")
+
+    async def request_terminal_answer_completion(self) -> None:
+        self.terminal_close_calls += 1
+
+    async def cancel(self) -> None:
+        return None
+
+
 class _RecordingFactory:
     def __init__(self, scenario: str = "happy") -> None:
         self.scenario = scenario
@@ -321,6 +382,147 @@ class _RecordingFactory:
                 self.execution_contexts,
             )
         raise AssertionError(f"unexpected model-backed node: {context.node_kind}")
+
+
+class _DecisionRecordingFactory(_RecordingFactory):
+    """Deterministic decision-v1 behavior for the joined production driver."""
+
+    def __init__(self, case: str) -> None:
+        self.decision_v1 = True
+        self.decision_case = case
+        self.amendment_requested = False
+        super().__init__(f"decision-{case}")
+
+    def _build_runner(
+        self,
+        runner_type: AgentRunnerType,
+        runner_config: dict[str, Any],
+        *,
+        run_id: str,
+        phase: str,
+    ) -> AgentRunner:
+        del run_id, phase
+        assert runner_type == AgentRunnerType.CODEX_SERVER
+        context = self._building_context
+        assert context is not None
+        self.effective_configs[context.node_id] = dict(runner_config)
+        stage = context.node_payload.get("semantic_stage")
+        return _DecisionScriptedAgent(
+            partial(self._answer, stage=stage),
+            self.execution_contexts,
+        )
+
+    async def _answer(self, context: ExecutionContext, *, stage: object) -> dict[str, Any]:
+        if stage == "initial_planning":
+            return {
+                "decision": {
+                    "questions": ["Which bounded implementation plan should be verified?"],
+                    "rationale": "The runtime supplied the feature scope and requirement.",
+                    "focus": ["docs/dynamic-smoke.md"],
+                }
+            }
+        if stage == "discovery":
+            return {
+                "semantic_artifact": {
+                    "summary": "A bounded implementation plan.",
+                    "batches": self._plan_batches(),
+                }
+            }
+        if stage == "successor_planning":
+            return {"decision": self._successor_answer()}
+        if stage == "effectful_batch" and context.node_kind == "worker":
+            output = Path(context.working_dir) / "docs/graph-approach/decision-smoke-output.txt"
+            output.parent.mkdir(parents=True, exist_ok=True)
+            prior = output.read_text(encoding="utf-8") if output.exists() else ""
+            output.write_text(f"{prior}{context.node_id}: decision-smoke\n", encoding="utf-8")
+            return {
+                "decision": {
+                    "status": "ready",
+                    "summary": "The committed batch candidate is ready.",
+                }
+            }
+        if stage in {"plan_verification", "final_audit"} or context.node_kind == "verifier":
+            aliases = sorted(
+                set(re.findall(r"\bo[1-9][0-9]*\b", context.prompt)),
+                key=lambda value: int(value[1:]),
+            )
+            assert aliases, context.prompt
+            return {
+                "decision": {
+                    "findings": [
+                        {
+                            "obligation": alias,
+                            "grade": "A",
+                            "reason": "The exact bound evidence satisfies the obligation.",
+                            "evidence": [],
+                        }
+                        for alias in aliases
+                    ]
+                }
+            }
+        raise AssertionError(f"unexpected decision-v1 stage: {stage!r}")
+
+    def _plan_batches(self) -> list[dict[str, Any]]:
+        batches = [
+            {
+                "key": "core",
+                "objective": "Implement the bounded core change.",
+                "scope": ["docs/graph-approach/decision-smoke-output.txt"],
+                "requirements": ["r1"],
+                "acceptance": ["The core candidate is present."],
+                "checks": [
+                    {
+                        "name": "core check",
+                        "command_definition": {"argv": ["sh", "-c", "true"]},
+                    }
+                ],
+            }
+        ]
+        if self.decision_case == "dependent":
+            batches.append(
+                {
+                    "key": "api",
+                    "objective": "Complete the dependent API change.",
+                    "scope": ["docs/graph-approach/decision-smoke-output.txt"],
+                    "requirements": ["r1"],
+                    "depends_on": ["core"],
+                    "acceptance": ["The dependent candidate is present."],
+                    "checks": [
+                        {
+                            "name": "api check",
+                            "command_definition": {"argv": ["sh", "-c", "true"]},
+                        }
+                    ],
+                }
+            )
+        return batches
+
+    def _successor_answer(self) -> dict[str, Any]:
+        if self.decision_case == "amendment" and not self.amendment_requested:
+            self.amendment_requested = True
+            return {
+                "disposition": "revise_plan",
+                "reason": "Add the dependent API batch before execution.",
+                "amendment": {
+                    "additional_batches": [
+                        {
+                            "key": "api",
+                            "objective": "Complete the dependent API change.",
+                            "scope": ["docs/graph-approach/decision-smoke-output.txt"],
+                            "requirements": ["r1"],
+                            "depends_on": ["core"],
+                            "acceptance": ["The amended dependent candidate is present."],
+                            "checks": [
+                                {
+                                    "name": "api check",
+                                    "command_definition": {"argv": ["sh", "-c", "true"]},
+                                }
+                            ],
+                        }
+                    ]
+                },
+            }
+        return {"disposition": "proceed", "implementation_notes": "Execute the bound batch."}
 
 
 def _batch_macro(horizon: int, *, check_command: str = "true") -> dict[str, Any]:
@@ -898,12 +1100,16 @@ class _JoinedHarness:
         evaluation = ReliablePlanEvaluationConfig.model_validate(
             json.loads(QUALIFICATION_FIXTURE.read_text())
         )
+        routine_payload = load_routine_from_path(ROUTINE_PATH).model_dump(
+            mode="json", by_alias=True
+        )
+        if getattr(self.factory, "decision_v1", False):
+            routine_payload["agent_interaction_contract"] = "decision-v1"
+            routine_payload["semantic_artifact_schemas"] = []
         created = await self.client.post(
             "/api/runs",
             json={
-                "routine_embedded": load_routine_from_path(ROUTINE_PATH).model_dump(
-                    mode="json", by_alias=True
-                ),
+                "routine_embedded": routine_payload,
                 "repo_name": self.repo.name,
                 "branch": "main",
                 "execution_mode": "graph",
@@ -1009,7 +1215,11 @@ async def _make_joined_harness(
         spawn_agents=False,
     )
     await init_db(app.state.engine)
-    factory = _RecordingFactory(scenario)
+    factory: _RecordingFactory
+    if scenario.startswith("decision-"):
+        factory = _DecisionRecordingFactory(scenario.removeprefix("decision-"))
+    else:
+        factory = _RecordingFactory(scenario)
     process_registry = RunnerOwnedProcessRegistry()
     controllers: list[GraphController] = []
 
@@ -1574,6 +1784,215 @@ async def test_api_correction_uses_exact_failure_evidence_then_completes_horizon
         assert "planner-h2-original" in node_kinds_view(projection)
         assert "planner-h2-original" not in effective_active_node_ids_view(projection)
         _assert_reliable_plan_checkpoint_parity(events)
+    finally:
+        await harness.close()
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_batch_keys", "expect_amendment"),
+    [
+        ("one-batch", ("core",), False),
+        ("dependent", ("core", "api"), False),
+        ("amendment", ("core", "api"), True),
+    ],
+    ids=["one-batch", "dependent-batches", "verified-plan-amendment"],
+)
+@pytest.mark.asyncio
+@pytest.mark.timeout(180)
+async def test_decision_v1_joined_success_cases_use_production_driver(
+    tmp_path: Path,
+    canonical_qualification: Any,
+    case: str,
+    expected_batch_keys: tuple[str, ...],
+    expect_amendment: bool,
+) -> None:
+    """Run Slice 6B's core cases through API start and the durable graph driver."""
+    harness = await _make_joined_harness(
+        tmp_path,
+        canonical_qualification,
+        scenario=f"decision-{case}",
+    )
+    try:
+        run_id = await harness.create_and_start(
+            acceptance_command="test -f docs/graph-approach/decision-smoke-output.txt",
+            hidden_oracle_command=(
+                "grep -q decision-smoke docs/graph-approach/decision-smoke-output.txt"
+            ),
+        )
+        await harness.drain_start(run_id)
+        outcome = await harness.wait_driver(run_id)
+        public = await harness.client.get(f"/api/runs/{run_id}")
+        assert public.status_code == 200, public.text
+        assert public.json()["status"] == "completed", (public.json(), outcome)
+        assert outcome is not None and outcome.completed is True
+
+        fresh_controller = GraphController(
+            harness.app.state.session_factory,
+            FakeClock(),
+            SequentialIdGenerator(),
+            auto_dispatch=False,
+        )
+        projection = await fresh_controller.read_projection(run_id)
+        records = list(output_record_payloads_view(projection).values())
+        plan_records = [
+            record
+            for record in records
+            if record.record_type == "semantic_artifact"
+            and getattr(record.value, "semantic_role", None) == "implementation_plan"
+        ]
+        assert plan_records
+        assert all(
+            getattr(record.value, "schema_id", None) == "orchestrator.reliable-plan.decision-plan"
+            for record in plan_records
+        )
+        plan_reports = [
+            record
+            for record in records
+            if record.record_type == "verification_report"
+            and (node_payload_view(projection, record.producer_node_id) or {}).get("semantic_stage")
+            == "plan_verification"
+        ]
+        assert len(plan_reports) >= (2 if expect_amendment else 1)
+        assert all(record.outcome == "passed" for record in plan_reports)
+
+        effectful_nodes = {
+            node_id: node_payload_view(projection, node_id) or {}
+            for node_id in node_kinds_view(projection)
+            if (node_payload_view(projection, node_id) or {}).get("semantic_stage")
+            in {"effectful_batch", "corrective_work"}
+            and (node_payload_view(projection, node_id) or {}).get("role") == "implementer"
+        }
+        assert [
+            payload.get("declared_batch_id")
+            for _, payload in sorted(
+                effectful_nodes.items(), key=lambda item: str(item[1].get("planning_horizon"))
+            )
+        ] == list(expected_batch_keys)
+        for batch_key in expected_batch_keys:
+            worker_id = next(
+                node_id
+                for node_id, payload in effectful_nodes.items()
+                if payload.get("declared_batch_id") == batch_key
+            )
+            check_id = next(
+                node_id
+                for node_id in node_kinds_view(projection)
+                if (payload := node_payload_view(projection, node_id)) is not None
+                and node_kinds_view(projection)[node_id] == "check"
+                and payload.get("declared_batch_id") == batch_key
+            )
+            verifier_id = next(
+                node_id
+                for node_id in node_kinds_view(projection)
+                if (payload := node_payload_view(projection, node_id)) is not None
+                and node_kinds_view(projection)[node_id] == "verifier"
+                and payload.get("semantic_stage") == "effectful_batch"
+                and payload.get("declared_batch_id") == batch_key
+            )
+            candidate = next(
+                record
+                for record in records
+                if record.record_type == "candidate" and record.producer_node_id == worker_id
+            )
+            file_state_ids = list(candidate.file_state_record_ids)
+            assert len(file_state_ids) == 1
+            check = next(
+                record
+                for record in records
+                if record.record_type == "check_result" and record.producer_node_id == check_id
+            )
+            assert check.value.status == "passed"
+            assert check.candidate_record_ids == [candidate.record_id]
+            report = next(
+                record
+                for record in records
+                if record.record_type == "verification_report"
+                and record.producer_node_id == verifier_id
+            )
+            assert report.outcome == "passed"
+            assert candidate.record_id in report.evaluated_record_ids
+            assert check.record_id in report.evaluated_record_ids
+            assert file_state_ids[0] in report.evaluated_record_ids
+
+        if len(expected_batch_keys) == 2:
+            events = await harness.events(run_id)
+
+            def position(event_type: str, node_id: str, state: str) -> int:
+                return next(
+                    event.position
+                    for event in events
+                    if event.event_type == event_type
+                    and event.payload.get("node_id") == node_id
+                    and event.payload.get("new_state") == state
+                )
+
+            core_verifier = next(
+                node_id
+                for node_id in node_kinds_view(projection)
+                if node_kinds_view(projection)[node_id] == "verifier"
+                and (payload := node_payload_view(projection, node_id)) is not None
+                and payload.get("semantic_stage") == "effectful_batch"
+                and payload.get("declared_batch_id") == "core"
+            )
+            api_worker = next(
+                node_id
+                for node_id, payload in effectful_nodes.items()
+                if payload.get("declared_batch_id") == "api"
+            )
+            assert position("node_state_changed", core_verifier, "completed") < next(
+                event.position
+                for event in events
+                if event.event_type == "node_created" and event.payload.get("node_id") == api_worker
+            )
+
+        amendments = [
+            record
+            for record in plan_records
+            if getattr(record.value, "supersedes_record_id", None) is not None
+        ]
+        if expect_amendment:
+            assert len(amendments) == 1
+            amendment = amendments[0]
+            assert amendment.value.supersedes_record_id in {
+                record.record_id
+                for record in plan_records
+                if record.record_id != amendment.record_id
+            }
+            assert any(
+                amendment.record_id in report.evaluated_record_ids for report in plan_reports
+            )
+        else:
+            assert not amendments
+
+        completion = next(
+            record for record in records if record.record_type == "completion_decision"
+        )
+        assert getattr(completion.value, "status", None) == "passed"
+        assert not any(lease.state == "active" for lease in leases_view(projection).values())
+        assert not harness.process_registry.has_run_owners(run_id)
+
+        async with harness.app.state.session_factory() as session:
+            outbox_statuses = list(
+                (
+                    await session.execute(
+                        select(GraphOutboxModel.status).where(GraphOutboxModel.run_id == run_id)
+                    )
+                ).scalars()
+            )
+        assert outbox_statuses and set(outbox_statuses) == {"completed"}
+        checkout = Path(public.json()["worktree_path"])
+        assert (
+            subprocess.run(
+                ["git", "-C", str(checkout), "status", "--porcelain"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+            == ""
+        )
+        assert (checkout / "docs/graph-approach/decision-smoke-output.txt").read_text(
+            encoding="utf-8"
+        ).count("decision-smoke") == len(expected_batch_keys)
     finally:
         await harness.close()
 

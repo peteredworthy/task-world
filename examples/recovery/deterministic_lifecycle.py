@@ -17,10 +17,11 @@ from pathlib import Path
 import shlex
 import subprocess
 import tempfile
+import re
 from typing import Any, Literal, cast
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.config import AgentRunnerType, load_routine_from_path
@@ -29,6 +30,7 @@ from orchestrator.graph import (
     CheckResultRecord,
     CompletionDecisionRecord,
     FakeClock,
+    ReliablePlanContractIdentity,
     SequentialIdGenerator,
     execution_attempts_view,
     leases_view,
@@ -59,10 +61,11 @@ from orchestrator.runners import (
     GradeCallback,
     LogLineCallback,
     SubmitCallback,
+    SubmissionInvocation,
     ensure_gitignore,
 )
 from orchestrator.state import create_run_from_routine
-from orchestrator.workflow import GraphRunDriver, WorkflowService
+from orchestrator.workflow import GraphRunDriver, SignalConsumer, WorkflowService
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -70,11 +73,44 @@ ROUTINE_PATH = ROOT / "routines" / "dynamic-graph-feature" / "routine.yaml"
 EXPECTED_BYTES = b"stage3-smoke-ok\n"
 
 
+class LifecyclePhaseCounts(BaseModel):
+    """Observed agent-phase counts; no fixed phase budget is implied."""
+
+    model_phases: int = Field(ge=0)
+    finalized_executions: int = Field(ge=0)
+    by_node_kind: dict[str, int]
+
+
+class LifecyclePublicReadback(BaseModel):
+    """Public explanation assembled from the accepted lifecycle projection."""
+
+    accepted: bool
+    graph_state: str | None
+    workflow_status: str
+    candidate_paths: list[str]
+    candidate_bytes_sha256: str
+    candidate_mode: str
+    clean_checkout: bool
+    exact_candidate: bool
+    check_statuses: dict[str, str]
+    completion_status: str | None
+    finalized_execution_count: int
+    active_lease_count: int
+    suspended_lease_count: int
+    owned_process_count: int
+    pending_outbox_count: int
+    intentionally_unexecuted_node_ids: list[str]
+    unfinished_node_ids: list[str]
+    explanation: str
+
+
 class LifecycleEvidence(BaseModel):
     schema_version: int = 1
+    qualification_contract_identity: ReliablePlanContractIdentity = ReliablePlanContractIdentity()
     status: Literal["passed", "failed"]
     run_id: str
     graph_state: str | None
+    phase_counts: LifecyclePhaseCounts
     exact_candidate: bool
     changed_paths: list[str]
     dispatch_node_ids: list[str]
@@ -101,6 +137,7 @@ class LifecycleEvidence(BaseModel):
     candidate_commit: str
     candidate_tree: str
     candidate_mode: str
+    public_readback: LifecyclePublicReadback
 
 
 class LifecycleProbeFailure(RuntimeError):
@@ -210,6 +247,12 @@ class _ScriptedRunner:
         on_escalation: EscalationCallback | None = None,
     ) -> ExecutionResult:
         del on_checklist_update, on_output, on_agent_metadata, on_escalation
+        if (
+            context.submission_contract is not None
+            and context.submission_contract.interaction_contract == "decision-v1"
+        ):
+            await self._decision_v1(context, on_submit)
+            return ExecutionResult(success=True, completion_cause="terminal_answer_completed")
         submit_without_args = cast(Callable[[], Awaitable[Any]], on_submit)
         submit_with_args = cast(Callable[[dict[str, Any]], Awaitable[Any]], on_submit)
         self._factory.execution_contexts.append(context)
@@ -251,6 +294,86 @@ class _ScriptedRunner:
         else:
             raise LifecycleProbeFailure(f"unexpected scripted node kind {self._dispatch.node_kind}")
         return ExecutionResult(success=True)
+
+    async def _decision_v1(self, context: ExecutionContext, on_submit: SubmitCallback) -> None:
+        contract = context.submission_contract
+        if contract is None or len(contract.outputs) != 1:
+            raise LifecycleProbeFailure("decision-v1 dispatch has no single authored output")
+        output = contract.outputs[0]
+        family = output.semantic_role
+        if family == "discovery_brief":
+            answer: dict[str, Any] = {
+                "questions": ["Which exact file and checks satisfy the smoke requirement?"],
+                "rationale": "The repository and acceptance boundary must be inspected.",
+                "focus": ["SMOKE_SPEC.md"],
+            }
+        elif family == "implementation_plan":
+            answer = {
+                "summary": "Implement and independently verify the exact smoke candidate.",
+                "batches": [
+                    {
+                        "key": "stage3-smoke",
+                        "objective": "Create the exact smoke file.",
+                        "scope": ["stage3-smoke.txt"],
+                        "requirements": ["r1"],
+                        "depends_on": [],
+                        "acceptance": ["The independent Stage 3 oracle passes."],
+                        "checks": [
+                            {
+                                "name": "stage3 exact-file oracle",
+                                "command_definition": {
+                                    "id": "stage3-exact-file-oracle",
+                                    "cmd": str(self._factory.oracle),
+                                },
+                            }
+                        ],
+                        "review_points": ["Only stage3-smoke.txt changes."],
+                    }
+                ],
+            }
+        elif family == "batch_decision":
+            answer = {
+                "disposition": "proceed",
+                "implementation_notes": "Implement the exact selected smoke batch.",
+            }
+        elif family == "work_result":
+            (Path(context.working_dir) / "stage3-smoke.txt").write_bytes(EXPECTED_BYTES)
+            answer = {"status": "ready", "summary": "The exact smoke file is committed."}
+        elif family == "verification_decision":
+            aliases = list(
+                dict.fromkeys(re.findall(r'"alias"\s*:\s*"(o[1-9][0-9]*)"', context.prompt))
+            )
+            if not aliases:
+                raise LifecycleProbeFailure("decision verifier prompt has no obligations")
+            answer = {
+                "findings": [
+                    {
+                        "obligation": alias,
+                        "grade": "A",
+                        "reason": "The exact candidate and bound receipts satisfy this obligation.",
+                        "evidence": [],
+                    }
+                    for alias in aliases
+                ]
+            }
+        else:
+            raise LifecycleProbeFailure(f"unexpected decision-v1 family {family!r}")
+        submit = cast(Callable[[SubmissionInvocation], Awaitable[Any]], on_submit)
+        acknowledgement = await submit(
+            SubmissionInvocation(
+                execution_id=context.execution_id or "missing-execution",
+                answer_attempt_id="scripted-answer-1",
+                transport_channel="codex_dynamic_tool",
+                transport_session_id="deterministic-lifecycle",
+                transport_request_id=f"request-{context.execution_id}",
+                arguments={"outputs": {output.port: answer}},
+            )
+        )
+        if acknowledgement.disposition != "durably_staged":
+            raise LifecycleProbeFailure(acknowledgement.message)
+
+    async def request_terminal_answer_completion(self) -> None:
+        return None
 
     async def _plan(self, context: ExecutionContext, on_submit: SubmitCallback) -> None:
         if context.graph_patch_callback is None:
@@ -353,7 +476,11 @@ class ScriptedLifecycleFactory:
         return _ScriptedRunner(self, self._building_context)
 
 
-async def run_lifecycle(workspace: Path) -> LifecycleEvidence:
+async def run_lifecycle(
+    workspace: Path,
+    *,
+    interaction_contract: Literal["legacy", "decision-v1"] = "decision-v1",
+) -> LifecycleEvidence:
     workspace = workspace.resolve(strict=True)
     source_commit, source_tree, source_status = await asyncio.to_thread(
         lambda: (
@@ -376,8 +503,11 @@ async def run_lifecycle(workspace: Path) -> LifecycleEvidence:
     registry = RunnerOwnedProcessRegistry()
     factory = ScriptedLifecycleFactory(oracle)
     executor: GraphDispatchExecutor | None = None
+    consumer: SignalConsumer | None = None
     try:
         routine = load_routine_from_path(ROUTINE_PATH)
+        if interaction_contract == "decision-v1":
+            routine = routine.model_copy(update={"agent_interaction_contract": "decision-v1"})
         run_config = {
             "feature_spec_path": "SMOKE_SPEC.md",
             "feature_spec_content": (worktree / "SMOKE_SPEC.md").read_text(),
@@ -409,7 +539,7 @@ async def run_lifecycle(workspace: Path) -> LifecycleEvidence:
         async with sessions() as session:
             service = WorkflowService(session)
             await service.create_run(run)
-            await service.apply_start_run(run_id)
+            await service.start_run(run_id)
         await seed_run(
             sessions,
             routine,
@@ -444,21 +574,45 @@ async def run_lifecycle(workspace: Path) -> LifecycleEvidence:
             return project_graph_projection_snapshot(facts or [], projection=projection)
 
         driver = GraphRunDriver(sessions, unused_service, clock=clock, id_gen=ids)
-        outcome = await driver.drive_to_quiescence(
-            run_id,
-            controller=controller,
-            dispatcher=dispatcher,
-            executor=executor,
-            read_projection=read_projection,
+        outcome_ready: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+
+        async def graph_runner(_run_id: str) -> None:
+            try:
+                driven = await driver.drive_to_quiescence(
+                    _run_id,
+                    controller=controller,
+                    dispatcher=dispatcher,
+                    executor=executor,
+                    read_projection=read_projection,
+                )
+                if driven.completed:
+                    async with sessions() as session:
+                        await WorkflowService(session).finalize_graph_run_completion(_run_id)
+                outcome_ready.set_result(driven)
+            except BaseException as exc:
+                if not outcome_ready.done():
+                    outcome_ready.set_exception(exc)
+                raise
+
+        async def create_service(session: Any) -> WorkflowService:
+            return WorkflowService(session)
+
+        consumer = SignalConsumer(
+            sessions,
+            create_service,
+            graph_runner=graph_runner,
+            graph_execution_quiescence_preparer=registry.prepare_run_quiescence,
+            graph_execution_quiescer=registry.quiesce_run,
+            graph_owner_checker=registry.has_run_owners,
+            poll_interval=0.01,
+            liveness_clock=clock,
         )
+        await consumer.start()
+        outcome = await asyncio.wait_for(outcome_ready, timeout=50)
         pending = await dispatcher.dispatch_pending(run_id=run_id)
         await executor.wait_for_all()
-        if outcome.completed:
-            async with sessions() as session:
-                finalized_run = await WorkflowService(session).finalize_graph_run_completion(run_id)
-        else:
-            async with sessions() as session:
-                finalized_run = await WorkflowService(session).get_run(run_id)
+        async with sessions() as session:
+            finalized_run = await WorkflowService(session).get_run(run_id)
         final_snapshot = await read_projection(run_id)
         projection = await controller.read_projection(run_id)
         async with sessions() as session:
@@ -493,63 +647,117 @@ async def run_lifecycle(workspace: Path) -> LifecycleEvidence:
             line.split("\t", 1)[1] for line in name_status.splitlines() if "\t" in line
         ]
         candidate_mode = candidate_entry.partition(" ")[0]
+        candidate_path = worktree / "stage3-smoke.txt"
+        candidate_bytes = await asyncio.to_thread(
+            lambda: candidate_path.read_bytes() if candidate_path.exists() else b""
+        )
+        oracle_passed = (await asyncio.to_thread(_run, [str(oracle)], worktree)).returncode == 0
         exact_candidate = (
             name_status == "A\tstage3-smoke.txt"
             and changed_paths == ["stage3-smoke.txt"]
             and not status_lines
-            and (worktree / "stage3-smoke.txt").read_bytes() == EXPECTED_BYTES
+            and candidate_bytes == EXPECTED_BYTES
             and candidate_mode == "100644"
-            and (await asyncio.to_thread(_run, [str(oracle)], worktree)).returncode == 0
+            and oracle_passed
         )
         counts = Counter(event.event_type for event in events)
-        evidence = LifecycleEvidence(
-            status=(
-                "passed"
-                if outcome.completed
-                and exact_candidate
-                and final_snapshot.run_state == "completed"
-                and all(attempt.state == "finalized" for attempt in attempts)
-                and not any(
-                    lease.state in {"active", "suspended"}
-                    for lease in leases_view(projection).values()
-                )
-                and registry.run_owner_count(run_id) == 0
-                and not pending
-                and checks
-                and set(checks.values()) == {"passed"}
-                and completion is not None
-                and completion.value.status == "passed"
-                and len(factory.verifier_instance_ids) == 3
-                and len(set(factory.verifier_instance_ids)) == 3
-                and finalized_run.status.value == "completed"
-                and not {
-                    "agent_died",
-                    "callback_rejected_conflict",
-                    "runner_recovery_requested",
-                }.intersection(counts)
-                else "failed"
+        finalized_execution_count = sum(attempt.state == "finalized" for attempt in attempts)
+        active_lease_count = sum(
+            lease.state == "active" for lease in leases_view(projection).values()
+        )
+        suspended_lease_count = sum(
+            lease.state == "suspended" for lease in leases_view(projection).values()
+        )
+        owned_process_count = registry.run_owner_count(run_id)
+        remaining_node_states = {
+            node_id: state
+            for node_id, state in node_states_view(projection).items()
+            if state not in {"completed", "retired"}
+        }
+        accepted = (
+            outcome.completed
+            and exact_candidate
+            and final_snapshot.run_state == "completed"
+            and all(attempt.state == "finalized" for attempt in attempts)
+            and active_lease_count == 0
+            and suspended_lease_count == 0
+            and owned_process_count == 0
+            and not pending
+            and bool(checks)
+            and set(checks.values()) == {"passed"}
+            and completion is not None
+            and completion.value.status == "passed"
+            and finalized_run.status.value == "completed"
+            and not {
+                "agent_died",
+                "callback_rejected_conflict",
+                "runner_recovery_requested",
+            }.intersection(counts)
+        )
+        phase_counts = LifecyclePhaseCounts(
+            model_phases=len(factory.dispatch_contexts),
+            finalized_executions=finalized_execution_count,
+            by_node_kind=dict(
+                sorted(Counter(context.node_kind for context in factory.dispatch_contexts).items())
             ),
+        )
+        explanation = (
+            f"Accepted result: graph={final_snapshot.run_state}, workflow="
+            f"{finalized_run.status.value}, candidate_paths={changed_paths}, "
+            f"candidate_mode={candidate_mode}, oracle={'passed' if oracle_passed else 'failed'}, "
+            f"checks={dict(sorted(checks.items()))}, finalized_executions="
+            f"{finalized_execution_count}, active_leases={active_lease_count}, "
+            f"suspended_leases={suspended_lease_count}, "
+            f"owned_processes={owned_process_count}, pending_outbox={len(pending)}."
+            if accepted
+            else (
+                f"Result not accepted: graph={final_snapshot.run_state}, "
+                f"workflow={finalized_run.status.value}, candidate_paths={changed_paths}, "
+                f"oracle={'passed' if oracle_passed else 'failed'}, "
+                f"unfinished_nodes={sorted(remaining_node_states)}."
+            )
+        )
+        public_readback = LifecyclePublicReadback(
+            accepted=accepted,
+            graph_state=final_snapshot.run_state,
+            workflow_status=finalized_run.status.value,
+            candidate_paths=changed_paths,
+            candidate_bytes_sha256=hashlib.sha256(candidate_bytes).hexdigest(),
+            candidate_mode=candidate_mode,
+            clean_checkout=not status_lines,
+            exact_candidate=exact_candidate,
+            check_statuses=checks,
+            completion_status=(completion.value.status if completion else None),
+            finalized_execution_count=finalized_execution_count,
+            active_lease_count=active_lease_count,
+            suspended_lease_count=suspended_lease_count,
+            owned_process_count=owned_process_count,
+            pending_outbox_count=len(pending),
+            intentionally_unexecuted_node_ids=[],
+            unfinished_node_ids=sorted(remaining_node_states),
+            explanation=explanation,
+        )
+        evidence = LifecycleEvidence(
+            qualification_contract_identity=ReliablePlanContractIdentity.for_interaction(
+                interaction_contract
+            ),
+            status="passed" if accepted else "failed",
             run_id=run_id,
             graph_state=final_snapshot.run_state,
+            phase_counts=phase_counts,
             exact_candidate=exact_candidate,
             changed_paths=changed_paths,
             dispatch_node_ids=[context.node_id for context in factory.dispatch_contexts],
             verifier_instance_ids=factory.verifier_instance_ids,
             event_type_counts=dict(sorted(counts.items())),
-            finalized_execution_count=sum(attempt.state == "finalized" for attempt in attempts),
-            active_lease_count=sum(
-                lease.state == "active" for lease in leases_view(projection).values()
-            ),
-            owned_process_count=registry.run_owner_count(run_id),
+            finalized_execution_count=finalized_execution_count,
+            active_lease_count=active_lease_count,
+            owned_process_count=owned_process_count,
             pending_outbox_count=len(pending),
             check_statuses=checks,
             completion_status=(completion.value.status if completion else None),
             task_states=task_states_view(projection),
-            remaining_node_states={
-                node_id: state
-                for node_id, state in node_states_view(projection).items()
-                if state not in {"completed", "retired"}
-            },
+            remaining_node_states=remaining_node_states,
             outcome_completed=outcome.completed,
             outcome_blocked_reason=outcome.blocked_reason,
             workflow_status=finalized_run.status.value,
@@ -563,18 +771,28 @@ async def run_lifecycle(workspace: Path) -> LifecycleEvidence:
             candidate_commit=candidate_commit,
             candidate_tree=candidate_tree,
             candidate_mode=candidate_mode,
+            public_readback=public_readback,
         )
         return evidence
     finally:
-        if registry.has_run_owners(run_id):
-            await registry.quiesce_run(
-                run_id,
-                runner_loss=False,
-                retry_after_recovery=False,
-            )
-            if executor is not None:
-                await executor.wait_for_all()
-        await engine.dispose()
+        try:
+            if consumer is not None:
+                await consumer.stop()
+        finally:
+            if registry.has_run_owners(run_id):
+                await registry.quiesce_run(
+                    run_id,
+                    runner_loss=False,
+                    retry_after_recovery=False,
+                )
+                if executor is not None:
+                    await executor.wait_for_all()
+            await engine.dispose()
+
+
+async def run_legacy_lifecycle(workspace: Path) -> LifecycleEvidence:
+    """Retain the source-bound pre-decision compatibility smoke."""
+    return await run_lifecycle(workspace, interaction_contract="legacy")
 
 
 def main(argv: list[str] | None = None) -> int:

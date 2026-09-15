@@ -173,8 +173,8 @@ def evaluate_readiness(
     invalid_claim = _invalid_claim_reason(node.resource_claims)
     if invalid_claim:
         return False, invalid_claim
-    for precondition in node.preconditions:
-        if not _precondition_satisfied(node, precondition):
+    for index, precondition in enumerate(node.preconditions, start=1):
+        if not _precondition_satisfied(node, precondition, index=index):
             return False, f"precondition_failed:{precondition}"
     for existing in claimed_resources:
         for requested in node.resource_claims:
@@ -286,9 +286,16 @@ def _invalid_claim_reason(claims: Sequence[ResourceClaim]) -> str:
     return ""
 
 
-def _precondition_satisfied(node: NodeScheduleInfo, precondition: str) -> bool:
+def _precondition_satisfied(
+    node: NodeScheduleInfo,
+    precondition: str,
+    *,
+    index: int,
+) -> bool:
     if precondition == "has_command_definition":
         return node.command_definition_present
+    if precondition.startswith("declared batch ") and precondition.endswith(" passed"):
+        return f"dependency_verification_{index}" in node.satisfied_input_ports
     return False
 
 

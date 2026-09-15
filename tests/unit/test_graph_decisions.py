@@ -424,6 +424,16 @@ def decision_successor_events(requirement_count: int = 1) -> list[Any]:
         )
     bindings = [
         (
+            "plan-to-verifier",
+            "worker-discovery",
+            "semantic_artifact",
+            "semantic_artifact",
+            "accepted-decision-plan",
+            plan_position,
+            {"record_id": "accepted-decision-plan"},
+            "verifier-plan",
+        ),
+        (
             "plan-to-successor",
             "worker-discovery",
             "semantic_artifact",
@@ -431,6 +441,7 @@ def decision_successor_events(requirement_count: int = 1) -> list[Any]:
             "accepted-decision-plan",
             plan_position,
             {"record_id": "accepted-decision-plan"},
+            "planner-plan",
         ),
         (
             "verification-to-successor",
@@ -440,6 +451,7 @@ def decision_successor_events(requirement_count: int = 1) -> list[Any]:
             "plan-passed",
             verification_position,
             {"record_id": "plan-passed"},
+            "planner-plan",
         ),
     ]
     bindings.extend(
@@ -451,6 +463,7 @@ def decision_successor_events(requirement_count: int = 1) -> list[Any]:
             f"requirement-record-{index}",
             requirement_positions[index],
             {"record_id": f"requirement-record-{index}"},
+            "planner-plan",
         )
         for index in range(1, requirement_count + 1)
     )
@@ -462,6 +475,7 @@ def decision_successor_events(requirement_count: int = 1) -> list[Any]:
         record_id,
         _record_position,
         selector,
+        target,
     ) in bindings:
         events.append(
             graph_event(
@@ -470,7 +484,7 @@ def decision_successor_events(requirement_count: int = 1) -> list[Any]:
                     "edge_id": edge_id,
                     "from_node_id": source,
                     "from_port": source_port,
-                    "to_node_id": "planner-plan",
+                    "to_node_id": target,
                     "to_port": target_port,
                     "required": True,
                     "dependency_type": "input_binding",
@@ -485,7 +499,7 @@ def decision_successor_events(requirement_count: int = 1) -> list[Any]:
                 "input_bound",
                 {
                     "edge_id": edge_id,
-                    "to_node_id": "planner-plan",
+                    "to_node_id": target,
                     "to_port": target_port,
                     "record_ids": [record_id],
                     "bound_at_position": bound_position,

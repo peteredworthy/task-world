@@ -1,0 +1,95 @@
+{
+  "review_base_commit": "1cf10fc7267107c314bcffef0fd716716c498f6b",
+  "scope": "All changed source, example, routine and test files; unchanged files are identified by the review base commit.",
+  "files": {
+    "examples/recovery/deterministic_lifecycle.py": {
+      "review_base_sha256": "5eb69b221fc50c8758ba99744cf67272cfcd659abaaa049e150bfeed412b4be6",
+      "final_sha256": "961080d165a53e341f39a69b4c2c1296ca0c13809e1ec96eff8db8c3a8722af2"
+    },
+    "examples/recovery/replay_successor_probe.py": {
+      "review_base_sha256": "e3f2988987f0b80667b34eb7efcd1d75de5edfa3c67708be33ad40dfc129c94b",
+      "final_sha256": "f073baa37d2431ebf94887c064c01d97d497eb6ffd88b48a5264038853b0c04c"
+    },
+    "examples/recovery/successor_planner_probe.py": {
+      "review_base_sha256": "82bbc9aaf99a6a8b766f6ebd018a78d245128ff6cd3bb7daa23c2b7a07347e50",
+      "final_sha256": "533b9c1f091a933555f0551c449f637ebe5319c74bcdb4edbe2fa2312f8ba284"
+    },
+    "src/orchestrator/graph/__init__.py": {
+      "review_base_sha256": "1ca1b823ff2cceb22ab1c39ba1ab37830c346e047cba73aaf592fb77a796afa7",
+      "final_sha256": "2592b4750ed04fd56e7463cf1d81d3f04960120bffbb6c1a50133558e4df6e00"
+    },
+    "src/orchestrator/graph/decisions.py": {
+      "review_base_sha256": "e8001f1f62fa4a358f285e0c4e103f0890c7ebf927314816d8de35339e15a717",
+      "final_sha256": "f8908d62f0d47e1e4a269ace05412a5c293a8bb8b172bb48c1dfa22e011a79c6"
+    },
+    "src/orchestrator/graph/macros.py": {
+      "review_base_sha256": "7b2d4f18a3f6c95fc20c1394828a9b146269ee6d894d1ac5cd9f818775905cbc",
+      "final_sha256": "7e9dfa88a3ddf96c1eb1b1b7d51562d45e27fd849f513ace6e39b1e102c5aa93"
+    },
+    "src/orchestrator/graph/projections.py": {
+      "review_base_sha256": "db580627d9ec0a16ceb591978af3ef5e362ca9e6345ae712e2577b2413e9cacc",
+      "final_sha256": "3af19f8018151ac21edb7f7d2520543a602efccadd97bed17d5d737e63942751"
+    },
+    "src/orchestrator/graph/reliable_plan_evaluation.py": {
+      "review_base_sha256": "b33732664839ef9c6dd1f7279001ed1377b16a75588f2c06713f524673943a51",
+      "final_sha256": "23473133ba93b6e1847eb69130326cf4cfaf1acf8d8001d7bec231367bedbc75"
+    },
+    "src/orchestrator/graph/scheduler.py": {
+      "review_base_sha256": "c359473d626aec9c51099db92d2a20b8b7e763a0114575e88014777f6f78befb",
+      "final_sha256": "c8b803cf3d7e8e99f7af1c1de72343c64131d3a35a1589e2756a8eb07ea039c5"
+    },
+    "src/orchestrator/graph_runtime/__init__.py": {
+      "review_base_sha256": "49fb2ed31d8fc9678af2a9961a4b962f3214927540a9018851f271896eb6c7ab",
+      "final_sha256": "4ef344acfc8e654b07e60eb4a00b9604ae605933baa9161fbd266a7edfe36911"
+    },
+    "src/orchestrator/graph_runtime/joined_reliable_plan_driver.py": {
+      "review_base_sha256": null,
+      "final_sha256": "521640b504d2d5099ac9811ce8aeda4f32955a50f85e967ca3b0d3391e1b3e5e"
+    },
+    "src/orchestrator/graph_runtime/reliable_plan_scenarios.py": {
+      "review_base_sha256": "4c79e4170dbad19ff5e64411b26d71a9637f4238b78250ff736696bd5f7f1abd",
+      "final_sha256": "163815fc99cf733811989af6d160e2f2c77ca98ad0102f06e9934041fc8a7d70"
+    },
+    "tests/integration/test_graph_sequential_product_path.py": {
+      "review_base_sha256": "443c91d69a2d75fdcdf3dd805425f0c35b2c424dde10aa611e7eea8e01828a8f",
+      "final_sha256": "bc470b417ce7f425e128e4b24c2c6dd61d9fc0e9af619bc76e46da08bbb3f68f"
+    },
+    "tests/integration/test_recovery_deterministic_lifecycle.py": {
+      "review_base_sha256": "598059db0f388184fe52d0cc748bdd628c4e4b5e9a35b9b0907b649bb9cbc781",
+      "final_sha256": "0910a8b2cca69c05a9aecc637df0d5de071249b6fc4e83091457e45c19ad0151"
+    },
+    "tests/integration/test_reliable_plan_product_path_qualification.py": {
+      "review_base_sha256": "f64722e283221bfe0be121ef603624bbbd33f00f3caffc6bedbecb8f0ea5ac89",
+      "final_sha256": "205e77875702bada1a6d7f059e65afe59bf9a62a1432302cf93daf0331646e08"
+    },
+    "tests/unit/test_gap_correction_decision.py": {
+      "review_base_sha256": "d53518bb8922c333524b4be9c73404bd1006a2438f5717a879561fcd151846e1",
+      "final_sha256": "e8d9765b1eb95eb0b3403e81002fe4fa39e338c267199289c9c36e72cbd46ce1"
+    },
+    "tests/unit/test_graph_decisions.py": {
+      "review_base_sha256": "8e60e55ec53baf8cf3671d657794d6369ee91bdbe11a78c0a758b5e7ec5bdcfd",
+      "final_sha256": "51c4b06f473fb6bc54da22d122805f079b73c956ee31d15aaea883c562677870"
+    },
+    "tests/unit/test_graph_projection_replay_equivalence.py": {
+      "review_base_sha256": "2c72edf5d57b54dab002411e10150bee4219a7758817a8101eeae709e7a8af06",
+      "final_sha256": "cae02484cebe4d5f73dc97299980eebbc2b74fc7cf835afbaed61f43df66d56e"
+    },
+    "tests/unit/test_rejected_plan_correction_decision.py": {
+      "review_base_sha256": "8dfa7b2365a0d1f55f5e17ddf3661f0781682f6130ae7c573d0128b08225c2f0",
+      "final_sha256": "d0724091cf46cd2093976f0453a92e0fff9dd06f35d1a71c6f6d7de28760adad"
+    },
+    "tests/unit/test_reliable_plan_evaluation.py": {
+      "review_base_sha256": "7b73044a14a3133f297b507470cc31c7f55f75f2b2294aa9856f029865d0f3fe",
+      "final_sha256": "8c0953a9ed55872a1df24366657709419753439bef82bc64e31edcaf838e02e5"
+    },
+    "tests/unit/test_scheduler.py": {
+      "review_base_sha256": "bbb7e690d90d0b1a47ccb739c185cb40d893b65fe2034ae87cb8cf190450cd24",
+      "final_sha256": "6c68823f61d0d527b20e1ad1a33768b0631d4cbedd4f72c7caa623ac876452b3"
+    },
+    "tests/unit/test_successor_amendment_decision.py": {
+      "review_base_sha256": "a4b743a366735a65ec01b7b27018cf01815656f363340861786bc3646a713e8b",
+      "final_sha256": "c2772342cb9a015a102b9a2bc8c01c2772d51bf903c69b782960ab85002eb4a9"
+    }
+  },
+  "final_source_bundle_sha256": "970c6fa07d73c08b82cfca7fd7525be90ae693f322c27db57af84ac523acdd0e"
+}
