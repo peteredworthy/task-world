@@ -72,6 +72,7 @@ def _projection(
     attempt_number: int | None = None,
     max_attempts: int | None = None,
     node_overrides: dict[str, object] | None = None,
+    explicit_legacy_authority: bool = False,
 ):
     projection = initial_projection()
     node_payload = {"node_id": "node", "kind": kind, "state": "running"}
@@ -83,8 +84,106 @@ def _projection(
         node_payload["max_attempts"] = max_attempts
     if node_overrides is not None:
         node_payload.update(node_overrides)
-    for event in (
-        _event("node_created", node_payload, 1),
+    if explicit_legacy_authority:
+        node_payload.update(
+            {
+                "kind": "planner",
+                "role": "planner",
+                "inputs": [
+                    {
+                        "port": "routine_snapshot",
+                        "direction": "input",
+                        "schema": "RoutineSnapshot",
+                        "required": True,
+                    }
+                ],
+                "outputs": [
+                    {
+                        "port": "graph_patch",
+                        "direction": "output",
+                        "schema": "GraphPatch",
+                        "record_layers": ["graph_record"],
+                    }
+                ],
+            }
+        )
+        snapshot_value = {
+            "routine_id": "legacy-routine",
+            "name": "Legacy routine",
+            "content_hash": "c" * 64,
+            "step_count": 1,
+            "task_count": 1,
+            "agent_interaction_contract": None,
+        }
+        events = [
+            _event(
+                "node_created",
+                {
+                    "node_id": "routine-snapshot",
+                    "kind": "artifact",
+                    "role": "routine_snapshot",
+                    "state": "completed",
+                    "outputs": [
+                        {
+                            "port": "snapshot",
+                            "direction": "output",
+                            "schema": "RoutineSnapshot",
+                            "record_layers": ["graph_record"],
+                        }
+                    ],
+                },
+                1,
+            ),
+            _event(
+                "output_record_accepted",
+                {
+                    "record_type": "routine_snapshot",
+                    "record_id": "legacy-routine-snapshot",
+                    "record_kind": "graph_record",
+                    "producer_node_id": "routine-snapshot",
+                    "port": "snapshot",
+                    "schema": "RoutineSnapshot",
+                    "value": snapshot_value,
+                },
+                2,
+            ),
+            _event("node_created", node_payload, 3),
+            _event(
+                "edge_created",
+                {
+                    "edge_id": "legacy-routine-to-node",
+                    "from_node_id": "routine-snapshot",
+                    "from_port": "snapshot",
+                    "to_node_id": "node",
+                    "to_port": "routine_snapshot",
+                    "required": True,
+                    "purpose": "routine_snapshot",
+                    "dependency_type": "input_binding",
+                    "accepted_record_selector": {
+                        "record_type": "routine_snapshot",
+                        "schema": "RoutineSnapshot",
+                    },
+                },
+                4,
+            ),
+            _event(
+                "input_bound",
+                {
+                    "edge_id": "legacy-routine-to-node",
+                    "to_node_id": "node",
+                    "to_port": "routine_snapshot",
+                    "record_ids": ["legacy-routine-snapshot"],
+                    "bound_at_position": 0,
+                    "record_bound_positions": {"legacy-routine-snapshot": -1},
+                },
+                5,
+            ),
+        ]
+        lease_position = 6
+    else:
+        events = [_event("node_created", node_payload, 1)]
+        lease_position = 2
+    events.append(
         _event(
             "lease_granted",
             {
@@ -94,9 +193,10 @@ def _projection(
                 "execution_id": "exec",
                 "base_snapshot_id": "snap",
             },
-            2,
-        ),
-    ):
+            lease_position,
+        )
+    )
+    for event in events:
         projection = reduce_event(projection, event)
     return projection
 
@@ -278,6 +378,7 @@ def _staged_projection(
     attempt_number: int | None = None,
     max_attempts: int | None = None,
     node_overrides: dict[str, object] | None = None,
+    explicit_legacy_authority: bool = False,
 ):
     projection = _projection(
         kind=kind,
@@ -285,6 +386,7 @@ def _staged_projection(
         attempt_number=attempt_number,
         max_attempts=max_attempts,
         node_overrides=node_overrides,
+        explicit_legacy_authority=explicit_legacy_authority,
     )
     baseline = _apply(
         projection,
@@ -764,7 +866,11 @@ def test_invalid_planner_proposal_recovery_obeys_persisted_execution_limit(
     expected_state: str,
     expected_trigger: str,
 ) -> None:
-    projection = _staged_projection(attempt_number=attempt_number, max_attempts=2)
+    projection = _staged_projection(
+        attempt_number=attempt_number,
+        max_attempts=2,
+        explicit_legacy_authority=True,
+    )
     requested = _apply(
         projection,
         "request_runner_recovery",
@@ -777,6 +883,9 @@ def test_invalid_planner_proposal_recovery_obeys_persisted_execution_limit(
             "error_detail": "invalid_planner_proposal",
             "max_attempts": 2,
             "retry_after_recovery": True,
+            "recovery_snapshot_id": "rejected-candidate",
+            "recovery_snapshot_ref": "refs/orchestrator/snapshots/rejected-candidate",
+            "recovery_commit_sha": OID,
             "final_tree_sha": OID,
             "boundary_hash": boundary_manifest_hash(OID, []),
             "boundary_entries": [],

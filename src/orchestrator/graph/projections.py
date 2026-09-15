@@ -2262,6 +2262,7 @@ def reduce_event(
 
 def _reduce_slice_c(state: GraphProjection, event: EventEnvelope) -> GraphProjection | None:
     if event.event_type in {
+        "decision_answer_rejected",
         "runner_baseline_recorded",
         "runner_submission_staged",
         "runner_completion_witnessed",
@@ -2416,6 +2417,7 @@ def _explicit_cache_carrier_fields(payload: object) -> set[str]:
 
 def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
     from orchestrator.graph.models import (
+        DecisionAnswerRejectionPayload,
         RunnerBaselineRecordedPayload,
         RunnerExecutionFinalizedPayload,
         RunnerCompletionWitnessedPayload,
@@ -2424,10 +2426,50 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
         RunnerSubmissionStagedPayload,
         ValidationEnvironmentBlockageResolutionPayload,
     )
-    from orchestrator.graph.projection_models import ExecutionAttemptValue
+    from orchestrator.graph.projection_models import (
+        DecisionAnswerRejectionValue,
+        ExecutionAttemptValue,
+    )
 
     attempts = state.execution.attempts_by_execution_id
-    if event.event_type in {
+    if event.event_type == "decision_answer_rejected":
+        payload = DecisionAnswerRejectionPayload.model_validate(event.payload)
+        existing = attempts.get(payload.execution_id)
+        if (
+            existing is None
+            or existing.node_id != payload.node_id
+            or existing.lease_id != payload.lease_id
+        ):
+            raise ProjectionReplayConflictError(
+                "decision answer rejection has no compatible execution attempt"
+            )
+        prior = next(
+            (
+                item
+                for item in existing.decision_answer_rejections
+                if item.delivery_id == payload.delivery_id
+            ),
+            None,
+        )
+        candidate_value = DecisionAnswerRejectionValue(
+            **payload.model_dump(mode="python"),
+            position=event.position,
+        )
+        if prior is not None:
+            if prior == candidate_value:
+                return state
+            raise ProjectionReplayConflictError(
+                "decision answer rejection delivery conflicts during replay"
+            )
+        candidate = existing.model_copy(
+            update={
+                "decision_answer_rejections": (
+                    *existing.decision_answer_rejections,
+                    candidate_value,
+                )
+            }
+        )
+    elif event.event_type in {
         "validation_environment_blockage_resolution_requested",
         "validation_environment_blockage_resolved",
     }:

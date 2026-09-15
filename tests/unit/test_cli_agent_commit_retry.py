@@ -21,6 +21,7 @@ import pytest
 from orchestrator.git import WorktreeCommitError
 from orchestrator.runners import (
     CLIAgent,
+    FailureDiagnostic,
     SubmissionAcknowledgement,
     SubmissionRejectedError,
     SubmissionRejectionEvidence,
@@ -170,6 +171,43 @@ async def test_quality_gate_rejection_reprompts_with_actionable_output(
     assert "authoritative validation checks" in correction_prompt
     assert "uv run pytest" in correction_prompt
     assert "test_example failed" in correction_prompt
+
+
+async def test_environment_rejection_does_not_reprompt_for_code_correction(
+    tmp_path: object,
+) -> None:
+    spawned: list[_FakeProcess] = []
+    submit_calls: list[int] = []
+
+    async def on_submit() -> None:
+        submit_calls.append(1)
+        raise SubmissionRejectedError(
+            SubmissionAcknowledgement(
+                disposition="rejected",
+                message="validation environment blocked",
+                rejection_category="validation_environment_blocked",
+                failure_diagnostic=FailureDiagnostic(
+                    category="infrastructure_environment",
+                    code="validation_environment_blocked",
+                    message="The validation environment is unavailable or blocked.",
+                    next_action="resolve_environment",
+                    correction_allowed=False,
+                ),
+            )
+        )
+
+    agent = CLIAgent(
+        command="sh",
+        parser=None,
+        subprocess_factory=_factory(spawned),
+        max_commit_fix_attempts=2,
+    )
+
+    with pytest.raises(SubmissionRejectedError):
+        await agent.execute(_ctx(tmp_path), _noop_checklist, on_submit, on_output=None)
+
+    assert submit_calls == [1]
+    assert len(spawned) == 1
 
 
 async def test_typed_rejected_ack_reprompts_then_accepts_finalized_readback(

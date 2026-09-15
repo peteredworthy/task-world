@@ -183,6 +183,13 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
             summary="actor_role blockers command_type patch_id proposed_by_node_id reason rejection_reason rejection_evidence",
             node_detail="reason",
         ),
+        "decision_answer_rejected": _spec(
+            "decision_answer_rejected",
+            projection="answer_attempt_id answer_sha256 decision_answer_receipt_ref delivery_id execution_id failure_diagnostic lease_generation lease_id node_id transport_channel transport_request_id transport_session_id",
+            light="answer_attempt_id decision_answer_receipt_ref delivery_id execution_id failure_diagnostic node_id",
+            summary="answer_attempt_id answer_sha256 decision_answer_receipt_ref delivery_id execution_id failure_diagnostic lease_generation lease_id node_id transport_channel transport_request_id transport_session_id",
+            node_detail="answer_attempt_id answer_sha256 decision_answer_receipt_ref delivery_id execution_id failure_diagnostic node_id",
+        ),
         "dead_input_detected": _same(
             "dead_input_detected",
             "from_node_id node_id reason to_port",

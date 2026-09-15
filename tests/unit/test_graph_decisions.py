@@ -45,9 +45,12 @@ from orchestrator.graph import (
     compile_verification_decision,
     compile_routine,
     decision_plan_declaration,
+    decision_recovery_uses_legacy_contract,
     decode_submission_payload,
     execution_attempts_view,
+    leases_view,
     node_payload_view,
+    node_states_view,
     reliable_plan_check_decision_tool_schema,
     reduce_event,
     recovery_proof_hash,
@@ -1275,6 +1278,8 @@ def test_resolver_uses_trusted_contract_stage_and_exact_bound_snapshot() -> None
 
     legacy_projection = build_projection(_compile(_planner_routine()))
     assert resolve_decision_applicability(legacy_projection, "planner-plan") is None
+    assert decision_recovery_uses_legacy_contract(legacy_projection, "planner-plan") is True
+    assert decision_recovery_uses_legacy_contract(decision_projection, "planner-plan") is False
     assert resolve_decision_applicability(decision_projection, "routine-snapshot") is None
 
     events = _compile(_planner_routine(interaction="decision-v1"))
@@ -1291,6 +1296,13 @@ def test_resolver_uses_trusted_contract_stage_and_exact_bound_snapshot() -> None
         match="does not reference a routine snapshot",
     ):
         resolve_decision_applicability(build_projection(malformed), "planner-plan")
+    assert (
+        decision_recovery_uses_legacy_contract(
+            build_projection(malformed),
+            "planner-plan",
+        )
+        is False
+    )
 
 
 def test_resolver_rejects_missing_or_impossible_snapshot_authority() -> None:
@@ -2741,7 +2753,7 @@ def test_work_result_boundaries_reject_changed_read_authority(
         assert "read authority changed" in str(result[0].payload["reason"])
 
 
-def test_decision_stage_is_effect_free_and_finalization_is_terminal_and_atomic() -> None:
+def test_decision_stage_is_effect_free_finalization_atomic_and_recovery_terminal() -> None:
     projection = _decision_successor_projection()
     root = node_payload_view(projection, "root")
     assert root is not None
@@ -3164,8 +3176,8 @@ def test_decision_stage_is_effect_free_and_finalization_is_terminal_and_atomic()
     assert [item.event_type for item in finalized].count("output_record_accepted") == 1
 
     # A decision-v1 run that dies after its consequence patch was accepted but
-    # before the judgment/finalization must retry; only the legacy contract may
-    # infer completion from an accepted patch alone.
+    # before judgment/finalization is terminal: it cannot use either the legacy
+    # accepted-patch completion shortcut or the legacy automatic retry path.
     patch_only = _reduce_planned_events(
         witnessed,
         [
@@ -3220,5 +3232,26 @@ def test_decision_stage_is_effect_free_and_finalization_is_terminal_and_atomic()
         item.payload.get("trigger") for item in recovered if item.event_type == "node_state_changed"
     }
     assert "accepted_graph_patch_before_agent_death" not in triggers
-    assert "runner_recovery_completed_retry_scheduled" in triggers
-    assert any(item.event_type == "runtime_retry_scheduled" for item in recovered)
+    assert triggers == {"runner_recovery_terminal"}
+    assert not any(item.event_type == "runtime_retry_scheduled" for item in recovered)
+    assert not any(item.event_type == "graph_patch_accepted" for item in recovered)
+    assert not any(
+        item.event_type == "output_record_accepted"
+        and item.payload.get("record_type") == "decision_answer"
+        for item in recovered
+    )
+    failure = next(item for item in recovered if item.event_type == "output_record_accepted")
+    assert failure.payload["value"]["failure_class"] == "infrastructure_failure"
+    assert failure.payload["value"]["error_class"] == "runner_died"
+    assert failure.payload["value"]["retryable"] is False
+
+    terminal_projection = _reduce_planned_events(
+        recovery_pending,
+        recovered,
+        stage_position + 3 + len(finalized),
+    )
+    assert node_states_view(terminal_projection)["planner-plan"] == "failed"
+    assert leases_view(terminal_projection)["decision-lease"].state == "revoked"
+    terminal_attempt = execution_attempts_view(terminal_projection)["decision-execution"]
+    assert terminal_attempt.state == "recovered"
+    assert terminal_attempt.retry_scheduled is False

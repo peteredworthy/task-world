@@ -129,6 +129,17 @@ async def test_cli_unowned_exit_one_is_failure() -> None:
     assert result.error == "Process exited with code 1"
 
 
+async def test_cli_noncorrectable_submission_rejection_stops_without_success_witness() -> None:
+    agent, task = await _run_terminal_stop_agent("import time; time.sleep(30)")
+
+    await agent.request_submission_rejection_stop()
+    result = await asyncio.wait_for(task, timeout=2.0)
+
+    assert not result.success
+    assert result.completion_cause is None
+    assert "Process exited with code" in (result.error or "")
+
+
 async def test_cli_terminal_answer_timeout_kills_and_fails_closed(tmp_path: Path) -> None:
     ready = tmp_path / "ready"
     script = (

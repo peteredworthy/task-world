@@ -7,7 +7,9 @@ from copy import deepcopy
 from contextlib import asynccontextmanager
 import json
 import re
+import shutil
 import subprocess
+import tempfile
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
@@ -27,7 +29,13 @@ from orchestrator.artifacts import (
     StoredArtifactRef,
 )
 from orchestrator.config import AgentRunnerType, RoutineConfig
-from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
+from orchestrator.db import (
+    EventV2Model,
+    GraphOutboxModel,
+    create_engine,
+    create_session_factory,
+    init_db,
+)
 from orchestrator.graph import (
     DecisionSubmissionEnvelope,
     build_projection,
@@ -51,6 +59,9 @@ from orchestrator.graph_runtime import (
     GraphDispatchExecutor,
     GraphEventStore,
     GraphMcpExecutionRegistry,
+    OutboxDispatcher,
+    replay_decision_answer_receipt,
+    resolve_orchestrator_source_root,
     StaticGraphAgentFactory,
 )
 from orchestrator.runners import (
@@ -60,9 +71,7 @@ from orchestrator.runners import (
     ExecutionResult,
     SubmissionAcknowledgement,
     SubmissionInvocation,
-)
-from orchestrator.runners.errors import SubmissionRejectedError
-from orchestrator.runners.types import (
+    SubmissionRejectedError,
     AgentMetadataCallback,
     ChecklistUpdateCallback,
     EscalationCallback,
@@ -818,6 +827,8 @@ async def test_work_result_worker_uses_real_checkout_and_runtime_owned_records(
     fail_check: bool = False,
     revision: str | None = None,
     revise_after_answer: bool = False,
+    dispatch_recovery: bool = False,
+    expected_recovery_node_state: str | None = None,
 ) -> None:
     worktree = tmp_path / "work-result-worktree"
     _init_repo(worktree)
@@ -932,10 +943,42 @@ async def test_work_result_worker_uses_real_checkout_and_runtime_owned_records(
         ),
         graph_mcp_registry=registry,
         worktree_path=worktree,
-        artifact_store=FilesystemArtifactStore(tmp_path / "work-result-artifacts"),
+        artifact_store=(artifacts := FilesystemArtifactStore(tmp_path / "work-result-artifacts")),
     )
     await executor.dispatch(dispatch_item)
     await executor.wait_for_all(timeout_seconds=10)
+
+    if dispatch_recovery:
+        async with sessions() as session:
+            async with session.begin():
+                dispatch_rows = (
+                    await session.execute(
+                        select(GraphOutboxModel).where(
+                            GraphOutboxModel.run_id == run_id,
+                            GraphOutboxModel.kind == "agent_dispatch",
+                        )
+                    )
+                ).scalars()
+                for row in dispatch_rows:
+                    row.status = "completed"
+        await OutboxDispatcher(
+            sessions,
+            executor,
+            FakeClock(),
+            retry_jitter_seconds=0,
+        ).dispatch_pending(
+            run_id=run_id,
+            allowed_kinds=frozenset({"snapshot_publish"}),
+        )
+        await OutboxDispatcher(
+            sessions,
+            executor,
+            FakeClock(),
+            retry_jitter_seconds=0,
+        ).dispatch_pending(
+            run_id=run_id,
+            allowed_kinds=frozenset({"runner_recovery"}),
+        )
 
     projection = await controller.read_projection(run_id)
     async with sessions() as session:
@@ -979,8 +1022,38 @@ async def test_work_result_worker_uses_real_checkout_and_runtime_owned_records(
     ]
     failed_after_staging = mutate_after_answer or (revision == "bound" and revise_after_answer)
     if expect_submission_rejection or failed_after_staging:
+        if expected_recovery_node_state is not None:
+            assert node_states_view(projection)["worker-core"] == expected_recovery_node_state, [
+                [
+                    (
+                        event.event_type,
+                        event.payload.get("reason"),
+                        event.payload.get("trigger"),
+                        event.payload.get("new_state"),
+                    )
+                    for event in events
+                    if event.event_type
+                    in {
+                        "runner_recovery_requested",
+                        "runner_recovery_completed",
+                        "node_state_changed",
+                    }
+                ],
+            ]
+        if dispatch_recovery:
+            assert not any(event.event_type == "runtime_retry_scheduled" for event in events)
+            async with sessions() as session:
+                agent_dispatches = (
+                    await session.execute(
+                        select(GraphOutboxModel).where(
+                            GraphOutboxModel.run_id == run_id,
+                            GraphOutboxModel.kind == "agent_dispatch",
+                        )
+                    )
+                ).scalars()
+                assert all(row.status == "completed" for row in agent_dispatches)
         assert next(iter(execution_attempts_view(projection).values())).state == (
-            "recovery_requested"
+            "recovered" if dispatch_recovery else "recovery_requested"
         )
         assert not decision_records
         assert not semantic_records
@@ -991,12 +1064,86 @@ async def test_work_result_worker_uses_real_checkout_and_runtime_owned_records(
             any(event.event_type == "runner_submission_staged" for event in events)
             is failed_after_staging
         )
+        if revision == "bound" and revise_after_answer:
+            async with sessions() as session:
+                public_errors = (
+                    await session.execute(
+                        select(EventV2Model).where(EventV2Model.event_type == "agent_error")
+                    )
+                ).scalars()
+                diagnostics = [
+                    payload.get("failure_diagnostic")
+                    for event in public_errors
+                    if isinstance(payload := json.loads(event.payload), dict)
+                    and payload.get("execution_id") == runner.execution_context.execution_id
+                ]
+            stale_diagnostic = (
+                next(
+                    diagnostic
+                    for diagnostic in diagnostics
+                    if isinstance(diagnostic, dict)
+                    and diagnostic.get("category") == "stale_binding"
+                )
+                if any(
+                    isinstance(diagnostic, dict) and diagnostic.get("category") == "stale_binding"
+                    for diagnostic in diagnostics
+                )
+                else None
+            )
+            assert stale_diagnostic is not None, [
+                (event.event_type, event.payload) for event in events[-20:]
+            ]
+            assert stale_diagnostic["next_action"] == "refresh_binding"
+            assert stale_diagnostic["correction_allowed"] is False
+            assert not any(event.event_type == "decision_answer_rejected" for event in events)
         if fail_check:
+            rejected_answers = [
+                event for event in events if event.event_type == "decision_answer_rejected"
+            ]
+            assert len(rejected_answers) == 1
+            diagnostic = rejected_answers[0].payload["failure_diagnostic"]
+            assert diagnostic["category"] == "candidate_check"
+            assert diagnostic["next_action"] == "correct_candidate"
+            assert diagnostic["correction_allowed"] is True
+            assert rejected_answers[0].payload["decision_answer_receipt_ref"] is not None
+            receipt_ref = StoredArtifactRef.model_validate(
+                rejected_answers[0].payload["decision_answer_receipt_ref"]
+            )
+            authority_position = max(event.position for event in events)
+            shutil.rmtree(worktree)
+            replay_engine = create_engine(tmp_path / "candidate-check-replay.db")
+            await init_db(replay_engine)
+            try:
+                replay = await replay_decision_answer_receipt(
+                    artifact_store=artifacts,
+                    evidence_ref=receipt_ref,
+                    authorization_session_factory=sessions,
+                    isolated_session_factory=create_session_factory(replay_engine),
+                    run_id=run_id,
+                    worktree_path=resolve_orchestrator_source_root(),
+                    clock=FakeClock(),
+                    id_gen=SequentialIdGenerator(),
+                )
+            finally:
+                await replay_engine.dispose()
+            assert replay.original_status == "rejected"
+            assert replay.rejection_phase == "candidate_check"
+            assert replay.failure_diagnostic is not None
+            assert replay.failure_diagnostic.category == "candidate_check"
+            assert replay.failure_diagnostic.next_action == "correct_candidate"
+            async with sessions() as session:
+                assert await GraphEventStore(session).current_position(run_id) == authority_position
+            assert runner.execute_calls == 1
             assert any(
                 event.event_type == "runner_recovery_requested"
                 and event.payload.get("reason") == "candidate_check_failed"
                 for event in events
-            )
+            ), [
+                (event.event_type, event.payload.get("reason"), event.payload.get("error_detail"))
+                for event in events
+                if event.event_type
+                in {"runner_recovery_requested", "runner_recovery_completed", "agent_error"}
+            ]
         await engine.dispose()
         return
     assert len(decision_records) == 1
@@ -1051,6 +1198,30 @@ async def test_work_result_failure_publishes_no_candidate_or_decision(
         runner_type=runner_type,
         mutate_after_answer=failure == "post-answer-mutation",
         fail_check=failure == "failed-check",
+    )
+
+
+@pytest.mark.parametrize(
+    "runner_type", [AgentRunnerType.CODEX_SERVER, AgentRunnerType.CLI_SUBPROCESS]
+)
+@pytest.mark.asyncio
+async def test_decision_v1_recovery_does_not_redispatch_after_candidate_rejection(
+    tmp_path: Path,
+    runner_type: AgentRunnerType,
+) -> None:
+    """A staged decision answer cannot silently buy a second model execution."""
+    await test_work_result_worker_uses_real_checkout_and_runtime_owned_records(
+        tmp_path=tmp_path,
+        answer={"status": "ready", "summary": "The result is ready."},
+        expected_node_state="failed",
+        expect_candidate=False,
+        include_semantic_output=False,
+        expect_semantic_output=False,
+        expect_submission_rejection=True,
+        runner_type=runner_type,
+        fail_check=True,
+        dispatch_recovery=True,
+        expected_recovery_node_state="failed",
     )
 
 
@@ -1676,6 +1847,30 @@ class _DecisionRunner:
         assert attempt.state == "submission_staged"
         async with self._sessions() as session:
             events = await GraphEventStore(session).read_run(context.run_id)
+        staged_event = next(
+            event
+            for event in events
+            if event.event_type == "runner_submission_staged"
+            and event.payload.get("execution_id") == self._execution_id
+        )
+        assert staged_event.payload.get("decision_answer_receipt_ref") is not None
+        with tempfile.TemporaryDirectory(prefix="decision-replay-") as replay_dir:
+            replay_engine = create_engine(Path(replay_dir) / "isolated.db")
+            await init_db(replay_engine)
+            replay = await replay_decision_answer_receipt(
+                artifact_store=self._artifacts,
+                evidence_ref=StoredArtifactRef.model_validate(
+                    staged_event.payload["decision_answer_receipt_ref"]
+                ),
+                authorization_session_factory=self._sessions,
+                isolated_session_factory=create_session_factory(replay_engine),
+                run_id=context.run_id,
+                worktree_path=resolve_orchestrator_source_root(),
+                clock=FakeClock(),
+                id_gen=SequentialIdGenerator(),
+            )
+            await replay_engine.dispose()
+        assert replay.original_status == "accepted"
         stage_position = max(
             event.position
             for event in events
@@ -1923,6 +2118,7 @@ class _WorkResultRunner:
         self._codex: CodexServerAgent | None = None
         self.submission_rejected = False
         self.terminal_close_calls = 0
+        self.execute_calls = 0
         self.execution_context: ExecutionContext | None = None
 
     @property
@@ -1942,6 +2138,7 @@ class _WorkResultRunner:
         on_agent_metadata: AgentMetadataCallback | None = None,
         on_escalation: EscalationCallback | None = None,
     ) -> ExecutionResult:
+        self.execute_calls += 1
         self.execution_context = context
         if self._answer_factory is not None:
             self._answer = self._answer_factory(context)
@@ -1962,15 +2159,21 @@ class _WorkResultRunner:
                 _handshake_and(_tool_call(7, "submit", arguments), _turn_completed())
             )
             self._codex = CodexServerAgent(api_key=None, _environ={}, _transport=transport)
-            result = await self._codex.execute(
-                context,
-                on_checklist_update,
-                on_submit,
-                on_output,
-                on_grade,
-                on_agent_metadata,
-                on_escalation,
-            )
+            try:
+                result = await self._codex.execute(
+                    context,
+                    on_checklist_update,
+                    on_submit,
+                    on_output,
+                    on_grade,
+                    on_agent_metadata,
+                    on_escalation,
+                )
+            except SubmissionRejectedError:
+                response = next(message for message in transport.sent if message.get("id") == 7)
+                self.submission_rejected = not response["result"]["success"]
+                assert self._expect_rejection and self.submission_rejected, response
+                raise
             response = next(message for message in transport.sent if message.get("id") == 7)
             self.submission_rejected = not response["result"]["success"]
             assert self.submission_rejected is self._expect_rejection, response

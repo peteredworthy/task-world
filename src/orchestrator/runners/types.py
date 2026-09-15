@@ -5,6 +5,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from orchestrator.config import FailureDiagnostic
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 from orchestrator.config.models import MCPServerConfig
 
@@ -107,10 +108,19 @@ class SubmissionAcknowledgement(BaseModel):
     graph_position: int | None = Field(default=None, ge=0)
     rejection_category: SubmissionRejectionCategory | None = None
     rejection_evidence: SubmissionRejectionEvidence | None = None
+    failure_diagnostic: FailureDiagnostic | None = None
 
     @property
     def is_rejected(self) -> bool:
         return self.disposition == "rejected"
+
+
+def submission_rejection_requires_stop(acknowledgement: SubmissionAcknowledgement) -> bool:
+    """Return whether a rejection must not trigger authored-code correction."""
+    diagnostic = acknowledgement.failure_diagnostic
+    return acknowledgement.rejection_category == "validation_environment_blocked" or (
+        diagnostic is not None and not diagnostic.correction_allowed
+    )
 
 
 SubmitCallbackResult = SubmissionAcknowledgement | None

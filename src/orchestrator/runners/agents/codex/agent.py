@@ -76,7 +76,6 @@ from orchestrator.runners.mcp_scope import (
 )
 from orchestrator.runners.submission import (
     is_decision_submission,
-    validate_submission_arguments,
 )
 from orchestrator.workflow import GateBlockedError, InvalidTransitionError
 from orchestrator.runners.types import (
@@ -94,6 +93,7 @@ from orchestrator.runners.types import (
     QuotaBucket,
     SubmitCallback,
     SubmissionInvocation,
+    submission_rejection_requires_stop,
 )
 from orchestrator.config.enums import AgentRunnerType
 
@@ -975,14 +975,10 @@ class CodexServerAgent:
                     )
                     return
 
+                decision_submission = is_decision_submission(context.submission_contract)
                 try:
                     routed_submit_callback: SubmitCallback = on_submit
-                    decision_submission = is_decision_submission(context.submission_contract)
                     if tool_name == "submit" and decision_submission:
-                        validate_submission_arguments(
-                            context.submission_contract,
-                            tool_args,
-                        )
                         invocation = SubmissionInvocation(
                             execution_id=context.execution_id or context.task_id,
                             answer_attempt_id=(
@@ -1034,11 +1030,17 @@ class CodexServerAgent:
                             str(req_id), success=False, output=str(exc)
                         )
                         await _send_dynamic_tool_response(success=False, output=str(exc))
-                        if len(submit_rejection_causes) >= 3:
+                        if isinstance(
+                            exc, SubmissionRejectedError
+                        ) and submission_rejection_requires_stop(exc.acknowledgement):
+                            raise
+                        rejection_budget = 2 if decision_submission else 3
+                        if len(submit_rejection_causes) >= rejection_budget:
                             raise SubmissionRepairExhaustedError(
                                 AgentRunnerType.CODEX_SERVER.value,
                                 submit_rejection_causes[0],
                                 submit_rejection_causes[-1],
+                                rejection_budget,
                             )
                         logger.warning(
                             "CodexServerAgent: submit rejected with actionable feedback; "
@@ -1156,6 +1158,7 @@ class CodexServerAgent:
                     context.graph_patch_callback,
                     on_complete_recovery,
                     submit_rejection_causes,
+                    decision_submission=is_decision_submission(context.submission_contract),
                 )
                 finish_reasons.extend(extract_turn_finish_reasons(msg))
                 # Accumulate usage: cumulative wins (last value overwrites), or sum per-turn.
@@ -1214,6 +1217,7 @@ class CodexServerAgent:
             AgentTimeoutError,
             AgentExecutionError,
             GateBlockedError,
+            SubmissionRejectedError,
         ):
             raise
         except asyncio.CancelledError:
@@ -1532,6 +1536,8 @@ class CodexServerAgent:
         on_submit_graph_patch: Any | None = None,
         on_complete_recovery: CompleteRecoveryCallback | None = None,
         submit_rejection_causes: list[str] | None = None,
+        *,
+        decision_submission: bool = False,
     ) -> tuple[bool, dict[str, int]]:
         """Process one JSON-RPC notification.
 
@@ -1588,11 +1594,17 @@ class CodexServerAgent:
                 if _is_submit_callback_rejection(tool_name, exc):
                     causes = submit_rejection_causes if submit_rejection_causes is not None else []
                     causes.append(str(exc))
-                    if len(causes) >= 3:
+                    if isinstance(
+                        exc, SubmissionRejectedError
+                    ) and submission_rejection_requires_stop(exc.acknowledgement):
+                        raise
+                    rejection_budget = 2 if decision_submission else 3
+                    if len(causes) >= rejection_budget:
                         raise SubmissionRepairExhaustedError(
                             AgentRunnerType.CODEX_SERVER.value,
                             causes[0],
                             causes[-1],
+                            rejection_budget,
                         )
                     logger.warning(
                         "CodexServerAgent: legacy submit notification rejected; "

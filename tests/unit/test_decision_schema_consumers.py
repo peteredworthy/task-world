@@ -9,6 +9,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.shared.memory import create_connected_server_and_client_session
+from mcp.types import TextContent
 from pydantic import BaseModel, ConfigDict, ValidationError
 import pytest
 
@@ -36,7 +37,9 @@ from orchestrator.runners import (
     RELIABLE_PLAN_REQUIRED_TOOL_NAMES,
     SubmissionAcknowledgement,
     SubmissionContract,
+    SubmissionInvocation,
     SubmissionOutputContract,
+    SubmissionRejectedError,
     build_codex_server_prompt,
     build_dynamic_tool_specs,
     resolve_dispatch_tools,
@@ -229,6 +232,7 @@ async def test_one_contract_propagates_a_generated_field_to_prompt_codex_and_fas
 
     async def on_submit(args: dict[str, Any]) -> SubmissionAcknowledgement:
         calls.append(args)
+        _SentinelDecision.model_validate(args["outputs"]["decision"])
         return SubmissionAcknowledgement(disposition="durably_staged", message="staged")
 
     contract = SubmissionContract(
@@ -274,19 +278,20 @@ async def test_one_contract_propagates_a_generated_field_to_prompt_codex_and_fas
         }
     }
     await mcp.call_tool("submit", valid)
+    invalid = {
+        "outputs": {
+            "decision": {
+                "disposition": "proceed",
+                "implementation_notes": "",
+            }
+        },
+    }
     with pytest.raises(ToolError):
         await mcp.call_tool(
             "submit",
-            {
-                "outputs": {
-                    "decision": {
-                        "disposition": "proceed",
-                        "implementation_notes": "",
-                    }
-                }
-            },
+            invalid,
         )
-    assert calls == [valid]
+    assert calls == [valid, invalid]
 
 
 @pytest.mark.asyncio
@@ -371,9 +376,9 @@ async def test_codex_and_fastmcp_share_complete_submit_validation(
     async def on_submit_graph_patch(_payload: dict[str, Any]) -> str:
         return "unused"
 
-    async def on_submit(args: dict[str, Any]) -> SubmissionAcknowledgement:
-        callback_calls.append(args)
-        return SubmissionAcknowledgement(disposition="durably_staged", message="staged")
+    async def on_submit(args: dict[str, Any] | SubmissionInvocation) -> SubmissionAcknowledgement:
+        callback_calls.append(args.arguments if isinstance(args, SubmissionInvocation) else args)
+        raise ValueError("authoritative decision ingress rejected the answer")
 
     contract = _batch_decision_contract()
     canonical = submission_tool_input_schema(contract)
@@ -392,6 +397,14 @@ async def test_codex_and_fastmcp_share_complete_submit_validation(
         required_tools=RELIABLE_PLAN_REQUIRED_TOOL_NAMES,
         on_submit=on_submit,
         submission_contract=contract,
+        submission_invocation_factory=lambda value: SubmissionInvocation(
+            execution_id="execution-1",
+            answer_attempt_id="attempt-1",
+            transport_channel="claude_graph_mcp",
+            transport_session_id="session-1",
+            transport_request_id="request-1",
+            arguments=value,
+        ),
     )
     fastmcp_submit = next(tool for tool in await mcp.list_tools() if tool.name == "submit")
     assert fastmcp_submit.inputSchema == canonical
@@ -401,7 +414,58 @@ async def test_codex_and_fastmcp_share_complete_submit_validation(
         codex_validator.validate(arguments)
     with pytest.raises(ToolError):
         await mcp.call_tool("submit", arguments)
-    assert callback_calls == []
+    assert callback_calls == [arguments]
+
+
+@pytest.mark.asyncio
+async def test_fastmcp_closes_decision_ingress_after_noncorrectable_rejection() -> None:
+    callback_calls: list[dict[str, Any]] = []
+
+    async def on_submit_graph_patch(_payload: dict[str, Any]) -> str:
+        return "unused"
+
+    async def on_submit(args: dict[str, Any] | SubmissionInvocation) -> SubmissionAcknowledgement:
+        arguments = args.arguments if isinstance(args, SubmissionInvocation) else args
+        callback_calls.append(arguments)
+        if len(callback_calls) == 1:
+            raise SubmissionRejectedError(
+                SubmissionAcknowledgement(
+                    disposition="rejected",
+                    message="correct the authored answer",
+                    rejection_category="submission_format_rejected",
+                )
+            )
+        raise SubmissionRejectedError(
+            SubmissionAcknowledgement(
+                disposition="rejected",
+                message="decision answer budget exhausted",
+                rejection_category="validation_environment_blocked",
+            )
+        )
+
+    mcp = build_graph_mcp_server(
+        on_submit_graph_patch,
+        None,
+        on_submit=on_submit,
+        submission_contract=_batch_decision_contract(),
+        submission_invocation_factory=lambda value: SubmissionInvocation(
+            execution_id="execution-1",
+            answer_attempt_id=f"attempt-{len(callback_calls) + 1}",
+            transport_channel="claude_graph_mcp",
+            transport_session_id="session-1",
+            transport_request_id=f"request-{len(callback_calls) + 1}",
+            arguments=value,
+        ),
+    )
+
+    with pytest.raises(ToolError):
+        await mcp.call_tool("submit", _VALID)
+    with pytest.raises(ToolError):
+        await mcp.call_tool("submit", _VALID)
+    with pytest.raises(ToolError, match="budget exhausted"):
+        await mcp.call_tool("submit", _VALID)
+
+    assert callback_calls == [_VALID, _VALID]
 
 
 @pytest.mark.asyncio
@@ -513,6 +577,11 @@ async def test_codex_catalog_and_connected_fastmcp_accept_authoritative_command_
         result = await client.call_tool("submit", arguments)
 
     assert result.isError is False
+    first_content = result.content[0]
+    assert isinstance(first_content, TextContent)
+    acknowledgement = SubmissionAcknowledgement.model_validate_json(first_content.text)
+    assert acknowledgement.disposition == "durably_staged"
+    assert acknowledgement.message == "staged"
     assert callback_calls == [arguments]
 
 
@@ -525,6 +594,8 @@ async def test_decision_adapter_applies_schema_and_validation_through_mcp_protoc
 
     async def on_submit(args: dict[str, Any]) -> SubmissionAcknowledgement:
         callback_calls.append(args)
+        if "unexpected" in args:
+            raise ValueError("authoritative decision ingress rejected the answer")
         return SubmissionAcknowledgement(disposition="durably_staged", message="staged")
 
     contract = _batch_decision_contract()
@@ -542,8 +613,8 @@ async def test_decision_adapter_applies_schema_and_validation_through_mcp_protoc
 
         invalid_result = await client.call_tool("submit", {**_VALID, "unexpected": True})
         assert invalid_result.isError is True
-        assert callback_calls == []
+        assert callback_calls == [{**_VALID, "unexpected": True}]
 
         valid_result = await client.call_tool("submit", _VALID)
         assert valid_result.isError is False
-        assert callback_calls == [_VALID]
+        assert callback_calls == [{**_VALID, "unexpected": True}, _VALID]

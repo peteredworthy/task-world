@@ -4243,6 +4243,22 @@ def resolve_decision_applicability(
     )
 
 
+def decision_recovery_uses_legacy_contract(
+    projection: GraphProjection,
+    node_id: str,
+) -> bool:
+    """Return legacy recovery eligibility without weakening malformed authority.
+
+    A valid absence of decision-v1 authority is legacy.  An authority chain
+    that claims decision-v1 but cannot be resolved is not: recovery must fail
+    closed instead of converting corruption into permission to redispatch.
+    """
+    try:
+        return resolve_decision_applicability(projection, node_id) is None
+    except (TypeError, ValueError):
+        return False
+
+
 class DecisionBoundInput(_DecisionModel):
     """One exact record/version binding frozen into a decision request."""
 
@@ -4475,6 +4491,7 @@ __all__ = [
     "compile_implementation_plan",
     "compile_work_result",
     "decision_answer_schema",
+    "decision_recovery_uses_legacy_contract",
     "decision_plan_declaration",
     "decision_plan_schema",
     "decision_plan_schema_sha256",

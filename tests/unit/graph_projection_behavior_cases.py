@@ -340,6 +340,9 @@ def _assert_event_outcome(event_type: str, before: GraphProjection, after: Graph
         )
         assert callback is not None
         assert (callback.outcome, callback.payload) == ("callback_accepted", {"result": "ok"})
+    elif event_type == "decision_answer_rejected":
+        attempts = projection_to_checkpoint(after)["state"]["execution"]["attempts_by_execution_id"]
+        assert len(attempts["execution-1"]["decision_answer_rejections"]) == 1
     elif event_type.startswith("runner_") or event_type.startswith(
         "validation_environment_blockage_"
     ):
@@ -882,6 +885,26 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
         "cache_roots": [".cache"],
     }
     runner_baseline = _event("runner_baseline_recorded", runner_baseline_payload, 2)
+    decision_rejection_payload = {
+        "execution_id": "execution-1",
+        "node_id": "worker-1",
+        "lease_id": "lease-1",
+        "lease_generation": 1,
+        "answer_attempt_id": "attempt-1",
+        "delivery_id": "a" * 64,
+        "transport_channel": "test",
+        "transport_session_id": "session-1",
+        "transport_request_id": "request-1",
+        "answer_sha256": "b" * 64,
+        "failure_diagnostic": {
+            "category": "answer_validation",
+            "code": "submission_format_rejected",
+            "message": "The submitted answer is invalid.",
+            "next_action": "correct_answer",
+            "correction_allowed": True,
+            "protected_evidence_refs": ["artifact:receipt-1"],
+        },
+    }
     runner_staged_payload: dict[str, object] = {
         "execution_id": "execution-1",
         "node_id": "worker-1",
@@ -1345,6 +1368,7 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
         "runner_recovery_requested",
         "runner_recovery_completed",
         "runner_execution_finalized",
+        "decision_answer_rejected",
         "validation_environment_blockage_resolution_requested",
         "validation_environment_blockage_resolved",
     )
@@ -1433,6 +1457,12 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
                 "boundary_hash": _RUNNER_STAGED_HASH,
                 "boundary_entries": _RUNNER_STAGED_ENTRIES,
             },
+            frozenset({"execution"}),
+        ),
+        (
+            "decision_answer_rejected",
+            (*runner_context, runner_baseline),
+            decision_rejection_payload,
             frozenset({"execution"}),
         ),
         (

@@ -22,23 +22,22 @@ from typing import Any, cast
 import pytest
 
 from orchestrator.git import WorktreeCommitError
+from orchestrator.config import ChecklistStatus, MCPServerConfig, RoutineConfig, StepConfig
 from orchestrator.runners import (
+    AgentNotAvailableError,
     CodexServerAgent,
+    ExecutionContext,
+    ExecutionResult,
     RELIABLE_PLAN_REQUIRED_TOOL_NAMES,
     RealStdioTransport,
-)
-from orchestrator.runners.errors import AgentNotAvailableError, SubmissionRepairExhaustedError
-from orchestrator.runners.errors import SubmissionRejectedError
-from orchestrator.runners import (
     SubmissionAcknowledgement,
     SubmissionContract,
+    SubmissionInvocation,
     SubmissionOutputContract,
+    SubmissionRejectedError,
     SubmissionRejectionEvidence,
+    SubmissionRepairExhaustedError,
 )
-from orchestrator.runners.types import ExecutionContext, ExecutionResult
-from orchestrator.config import ChecklistStatus
-from orchestrator.config.models import MCPServerConfig
-from orchestrator.config.models import RoutineConfig, StepConfig
 from orchestrator.graph import (
     batch_decision_schema,
     FakeClock,
@@ -736,9 +735,55 @@ async def test_execute_stops_after_three_rejected_submissions() -> None:
     assert "invalid payload 0" in str(raised.value)
     assert "last_cause=submit callback rejected:" in str(raised.value)
     assert "invalid payload 2" in str(raised.value)
+    assert raised.value.attempt_limit == 3
+    assert "exhausted after 3 attempts" in str(raised.value)
     assert "operator_action=" in str(raised.value)
     responses = [sent for sent in transport.sent if sent.get("id") in {10, 11, 12}]
     assert [response["result"]["success"] for response in responses] == [False, False, False]
+
+
+async def test_execute_stops_after_two_rejected_decision_submissions() -> None:
+    notifications = [
+        _tool_call_request(
+            "submit",
+            {"outputs": {"decision": {"disposition": "proceed", "implementation_notes": "bad"}}},
+            10,
+        ),
+        _tool_call_request(
+            "submit",
+            {"outputs": {"decision": {"disposition": "proceed", "implementation_notes": "bad"}}},
+            11,
+        ),
+        _turn_completed(),
+    ]
+    agent, transport = _make_agent(notifications)
+    context = _ctx()
+    context.submission_contract = _decision_submission_contract()
+
+    async def reject_submit(_invocation: object) -> None:
+        raise SubmissionRejectedError(
+            SubmissionAcknowledgement(
+                disposition="rejected",
+                message="invalid decision answer",
+                rejection_category="submission_format_rejected",
+                rejection_evidence=SubmissionRejectionEvidence(
+                    category="submission_format_rejected",
+                    final_diagnostic="invalid decision answer",
+                ),
+            )
+        )
+
+    with pytest.raises(SubmissionRepairExhaustedError) as raised:
+        await agent.execute(
+            context=context,
+            on_checklist_update=_noop_checklist,
+            on_submit=reject_submit,
+        )
+
+    assert raised.value.attempt_limit == 2
+    assert "exhausted after 2 attempts" in str(raised.value)
+    responses = [sent for sent in transport.sent if sent.get("id") in {10, 11}]
+    assert [response["result"]["success"] for response in responses] == [False, False]
 
 
 async def test_legacy_submit_rejection_does_not_terminate_before_corrected_dynamic_call() -> None:
@@ -1167,7 +1212,7 @@ async def test_decision_catalog_exposes_only_submit_callback_by_default() -> Non
         },
     ],
 )
-async def test_decision_codex_ingress_rejects_invalid_arguments_before_callback(
+async def test_decision_codex_ingress_routes_complete_invalid_arguments_to_callback(
     arguments: dict[str, Any],
 ) -> None:
     agent, transport = _make_agent([_tool_call_request("submit", arguments, 41), _turn_completed()])
@@ -1177,13 +1222,16 @@ async def test_decision_codex_ingress_rejects_invalid_arguments_before_callback(
 
     async def on_submit(invocation: object) -> SubmissionAcknowledgement:
         calls.append(invocation)
-        return SubmissionAcknowledgement(disposition="durably_staged", message="staged")
+        raise ValueError("authoritative decision ingress rejected the answer")
 
     await agent.execute(context, _noop_checklist, on_submit)
 
     response = next(message for message in transport.sent if message.get("id") == 41)
     assert response["result"]["success"] is False
-    assert calls == []
+    assert len(calls) == 1
+    invocation = calls[0]
+    assert isinstance(invocation, SubmissionInvocation)
+    assert invocation.arguments == arguments
 
 
 async def test_requested_without_sent_interrupt_does_not_claim_terminal_completion() -> None:

@@ -7,6 +7,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, model_validator
 
+from orchestrator.config import FailureDiagnostic
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus, RunStatus, TaskStatus
 
 
@@ -351,6 +352,7 @@ class AgentErrorEvent(WorkflowEvent):
     # graph-specific free-form error event.
     node_id: str | None = None
     execution_id: str | None = None
+    failure_diagnostic: FailureDiagnostic | None = None
 
 
 class ClarificationRequested(WorkflowEvent):

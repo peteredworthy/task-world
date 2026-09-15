@@ -869,6 +869,136 @@ async def test_restart_after_finalization_before_outbox_ack_does_not_refinalize(
     assert any(item.outbox_id == pending[0].outbox_id for item in report.redispatched)
 
 
+@pytest.mark.asyncio
+async def test_semantic_recovery_without_diagnostic_evidence_cannot_retry(
+    recovery_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], tmp_path: Path
+) -> None:
+    """A retry flag cannot turn an evidence-free semantic failure into work."""
+    _, session_factory = recovery_db
+    fixture = await _recovery_fixture(
+        session_factory,
+        tmp_path,
+        "recovery-semantic-no-evidence",
+        recovery_reason="candidate_check_failed",
+        error_detail=None,
+        retry_after_recovery=True,
+    )
+    dispatcher = OutboxDispatcher(
+        session_factory,
+        _executor(session_factory, fixture.controller, fixture.repo, tmp_path),
+        FixedClock(),
+    )
+
+    await dispatcher.dispatch_pending(run_id="recovery-semantic-no-evidence")
+
+    projection = await fixture.controller.read_projection("recovery-semantic-no-evidence")
+    attempt = execution_attempts_view(projection)[fixture.execution_id]
+    assert attempt.state == "recovered"
+    assert node_states_view(projection)[attempt.node_id] == "failed"
+    assert not any(
+        event.event_type == "runtime_retry_scheduled"
+        for event in await _events(session_factory, "recovery-semantic-no-evidence")
+    )
+
+
+@pytest.mark.asyncio
+async def test_invalid_planner_recovery_without_diagnostic_evidence_cannot_retry(
+    recovery_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], tmp_path: Path
+) -> None:
+    """A legacy planner retry flag is not semantic authority by itself."""
+    _, session_factory = recovery_db
+    fixture = await _recovery_fixture(
+        session_factory,
+        tmp_path,
+        "recovery-planner-no-evidence",
+        recovery_reason="invalid_planner_proposal",
+        error_detail=None,
+        retry_after_recovery=True,
+    )
+    dispatcher = OutboxDispatcher(
+        session_factory,
+        _executor(session_factory, fixture.controller, fixture.repo, tmp_path),
+        FixedClock(),
+    )
+
+    await dispatcher.dispatch_pending(run_id="recovery-planner-no-evidence")
+
+    projection = await fixture.controller.read_projection("recovery-planner-no-evidence")
+    attempt = execution_attempts_view(projection)[fixture.execution_id]
+    assert attempt.state == "recovered"
+    assert node_states_view(projection)[attempt.node_id] == "failed"
+    assert not any(
+        event.event_type == "runtime_retry_scheduled"
+        for event in await _events(session_factory, "recovery-planner-no-evidence")
+    )
+
+
+@pytest.mark.asyncio
+async def test_semantic_recovery_with_bound_candidate_and_allowance_retries(
+    recovery_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], tmp_path: Path
+) -> None:
+    """A bounded semantic correction retains evidence and schedules one retry."""
+    _, session_factory = recovery_db
+    fixture = await _recovery_fixture(
+        session_factory,
+        tmp_path,
+        "recovery-semantic-valid",
+        recovery_reason="candidate_check_failed",
+        error_detail="the exact candidate failed the bound acceptance check",
+        retry_after_recovery=True,
+    )
+    dispatcher = OutboxDispatcher(
+        session_factory,
+        _executor(session_factory, fixture.controller, fixture.repo, tmp_path),
+        FixedClock(),
+    )
+
+    await dispatcher.dispatch_pending(run_id="recovery-semantic-valid")
+
+    projection = await fixture.controller.read_projection("recovery-semantic-valid")
+    attempt = execution_attempts_view(projection)[fixture.execution_id]
+    assert attempt.state == "recovered"
+    assert node_states_view(projection)[attempt.node_id] == "ready"
+    assert any(
+        event.event_type == "runtime_retry_scheduled"
+        for event in await _events(session_factory, "recovery-semantic-valid")
+    )
+    assert attempt.recovery_snapshot_ref is not None
+    assert _ref_exists(fixture.repo, attempt.recovery_snapshot_ref)
+
+
+@pytest.mark.asyncio
+async def test_semantic_recovery_at_attempt_limit_stops_dispatch(
+    recovery_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], tmp_path: Path
+) -> None:
+    """A valid correction cannot spend an exhausted execution allowance."""
+    _, session_factory = recovery_db
+    fixture = await _recovery_fixture(
+        session_factory,
+        tmp_path,
+        "recovery-semantic-exhausted",
+        recovery_reason="candidate_check_failed",
+        error_detail="the exact candidate failed the bound acceptance check",
+        retry_after_recovery=True,
+        max_attempts=1,
+    )
+    dispatcher = OutboxDispatcher(
+        session_factory,
+        _executor(session_factory, fixture.controller, fixture.repo, tmp_path),
+        FixedClock(),
+    )
+
+    await dispatcher.dispatch_pending(run_id="recovery-semantic-exhausted")
+
+    projection = await fixture.controller.read_projection("recovery-semantic-exhausted")
+    attempt = execution_attempts_view(projection)[fixture.execution_id]
+    assert node_states_view(projection)[attempt.node_id] == "failed"
+    assert not any(
+        event.event_type == "runtime_retry_scheduled"
+        for event in await _events(session_factory, "recovery-semantic-exhausted")
+    )
+
+
 def _executor(
     session_factory: async_sessionmaker[AsyncSession],
     controller: GraphController,
@@ -899,6 +1029,10 @@ async def _recovery_fixture(
     *,
     baseline_tree_sha: str | None = None,
     controller_type: type[GraphController] = GraphController,
+    recovery_reason: str | None = None,
+    error_detail: str | None = "the candidate failed its bound check",
+    retry_after_recovery: bool = True,
+    max_attempts: int = 3,
 ) -> RecoveryFixture:
     repo = tmp_path / run_id
     _init_repo(repo)
@@ -962,23 +1096,46 @@ async def _recovery_fixture(
         _entry("README.md", "modified", _fingerprint("changed by execution\n")),
         _entry("execution-created.txt", "untracked", _fingerprint("must be removed\n")),
     ]
-    result = await _command(
-        controller,
-        run_id,
-        "finalize_runner_execution",
-        {
-            "execution_id": execution_id,
-            "node_id": node_id,
-            "lease_id": lease_id,
-            "lease_generation": lease_generation,
-            "final_snapshot_id": final.id,
-            "final_snapshot_ref": final.ref,
-            "final_commit_sha": final.commit_sha,
-            "final_tree_sha": final.tree_sha,
-            "boundary_hash": boundary_manifest_hash(final.tree_sha, final_entries),
-            "boundary_entries": final_entries,
-        },
-    )
+    if recovery_reason is None:
+        result = await _command(
+            controller,
+            run_id,
+            "finalize_runner_execution",
+            {
+                "execution_id": execution_id,
+                "node_id": node_id,
+                "lease_id": lease_id,
+                "lease_generation": lease_generation,
+                "final_snapshot_id": final.id,
+                "final_snapshot_ref": final.ref,
+                "final_commit_sha": final.commit_sha,
+                "final_tree_sha": final.tree_sha,
+                "boundary_hash": boundary_manifest_hash(final.tree_sha, final_entries),
+                "boundary_entries": final_entries,
+            },
+        )
+    else:
+        result = await _command(
+            controller,
+            run_id,
+            "request_runner_recovery",
+            {
+                "execution_id": execution_id,
+                "node_id": node_id,
+                "lease_id": lease_id,
+                "lease_generation": lease_generation,
+                "reason": recovery_reason,
+                "error_detail": error_detail,
+                "max_attempts": max_attempts,
+                "retry_after_recovery": retry_after_recovery,
+                "recovery_snapshot_id": final.id,
+                "recovery_snapshot_ref": final.ref,
+                "recovery_commit_sha": final.commit_sha,
+                "final_tree_sha": final.tree_sha,
+                "boundary_hash": boundary_manifest_hash(final.tree_sha, final_entries),
+                "boundary_entries": final_entries,
+            },
+        )
     item = next(item for item in result.outbox_items if item.kind == "runner_recovery")
     await _complete_prior_agent_dispatches(session_factory, run_id)
     await OutboxDispatcher(

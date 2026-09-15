@@ -20,8 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from orchestrator.artifacts import FilesystemArtifactStore
-from orchestrator.config.enums import AgentRunnerType
-from orchestrator.config.models import RoutineConfig
+from orchestrator.config import AgentRunnerType, RoutineConfig
 from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
 from orchestrator.git import WorktreeError, delete_snapshot_ref, snapshot
 from orchestrator.graph import (
@@ -204,6 +203,8 @@ async def test_terminal_cancellation_before_recovery_request_converges_in_one_st
             is True
         )
     (fixture.repo / "README.md").write_text("cancelled execution residue\n")
+    canary_ref = f"refs/orchestrator/snapshots/cancellation-owner-canary-{phase}"
+    _git(fixture.repo, ["update-ref", canary_ref, fixture.baseline.commit_sha])
     await _command(fixture.controller, fixture.run_id, "cancel")
     await _command(fixture.controller, fixture.run_id, "cancel")
     dispatcher = _dispatcher(sessions, fixture, tmp_path)
@@ -229,6 +230,7 @@ async def test_terminal_cancellation_before_recovery_request_converges_in_one_st
     cleanup_rows = await _rows(sessions, fixture.run_id, "snapshot_cleanup")
     assert cleanup_rows and all(row.status == "completed" for row in cleanup_rows)
     assert not any(_ref_exists(fixture.repo, ref) for ref in _managed_refs(cleanup_rows))
+    assert _ref_exists(fixture.repo, canary_ref)
     assert all(
         row.status != "pending" for row in await _rows(sessions, fixture.run_id, "agent_dispatch")
     )
