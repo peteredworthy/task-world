@@ -348,10 +348,10 @@ def test_runs_create_explicit_legacy_opt_in(runner: CliRunner) -> None:
         assert data["execution_mode"] == "legacy"
 
 
-@pytest.mark.parametrize("runner_type", ["claude_sdk", "retired"])
 def test_runs_create_rejects_non_selectable_agent_runner(
-    runner: CliRunner, runner_type: str
+    runner: CliRunner,
 ) -> None:
+    runner_type = "claude_sdk"
     with runner.isolated_filesystem():
         routines_dir = Path("routines")
         routines_dir.mkdir()

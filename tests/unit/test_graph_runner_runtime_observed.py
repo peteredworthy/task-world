@@ -127,3 +127,30 @@ def test_incomplete_legacy_started_fails_closed_with_bounded_explicit_error(
     assert observation.root_error == observation.reason
     assert "legacy started" in observation.reason
     assert len(observation.reason) <= 1_000
+
+
+@pytest.mark.parametrize(
+    ("state", "reason"),
+    [
+        ("invalid_metadata", "process metadata must include a positive integer pid"),
+        ("unreported", "runner did not report within 0.01 seconds"),
+        ("never_started", "runner completed before reporting"),
+    ],
+)
+def test_process_runner_metadata_failure_states_are_explicit_and_rooted(
+    state: str, reason: str
+) -> None:
+    observation = GraphRunnerRuntimeObserved.model_validate(
+        _observation(
+            state=state,
+            pid=None,
+            process_create_time=None,
+            command_sha256=None,
+            reason=reason,
+            root_error=reason,
+        )
+    )
+
+    assert observation.state == state
+    assert observation.root_error == reason
+    assert observation.reason == reason

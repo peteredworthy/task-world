@@ -1,4 +1,4 @@
-"""Integration tests for repos API input validation (URL scheme)."""
+"""Narrow API seam for repository and model-discovery URL validation."""
 
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -15,8 +15,8 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 async def _clone_always_fails(url: str, dest: Path) -> None:
-    """Fake git cloner: scheme check already passed, clone fails immediately."""
-    raise HTTPException(status_code=422, detail="Failed to clone: mock failure")
+    """Make a valid-scheme request stop at the clone boundary."""
+    raise HTTPException(status_code=422, detail="Failed to clone: test boundary")
 
 
 @pytest.fixture
@@ -26,71 +26,23 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
     await init_db(app.state.engine)
-    # Override git I/O so no subprocess or network calls occur in tests
     app.state.git_cloner = _clone_always_fails
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    async with AsyncClient(transport=transport, base_url="http://test") as value:
+        yield value
     await app.state.engine.dispose()
 
 
-# --- URL scheme validation ---
+async def test_url_validation_rejects_unsafe_schemes_at_api_boundary(
+    client: AsyncClient,
+) -> None:
+    repository = await client.post("/api/repos", json={"url": "file:///etc/passwd"})
+    assert repository.status_code == 422
+    assert "http://" in repository.json()["detail"]
 
-
-async def test_file_url_rejected(client: AsyncClient) -> None:
-    """file:// URLs should be rejected with 422 before reaching the clone step."""
-    resp = await client.post("/api/repos", json={"url": "file:///etc/passwd"})
-    assert resp.status_code == 422
-    assert "http://" in resp.json()["detail"] or "https://" in resp.json()["detail"]
-
-
-async def test_ftp_url_rejected(client: AsyncClient) -> None:
-    """ftp:// URLs should be rejected with 422 before reaching the clone step."""
-    resp = await client.post("/api/repos", json={"url": "ftp://example.com/repo.git"})
-    assert resp.status_code == 422
-
-
-async def test_https_url_accepted(client: AsyncClient) -> None:
-    """https:// URLs should pass scheme validation and reach the clone step."""
-    resp = await client.post("/api/repos", json={"url": "https://example.com/repo.git"})
-    # Scheme check passed — the fake cloner returned 422 for clone failure, not scheme rejection
-    assert resp.status_code == 422
-    assert "must use" not in resp.json()["detail"].lower(), (
-        f"https wrongly rejected for scheme: {resp.json()['detail']}"
+    models = await client.get(
+        "/api/agent-runners/local-models",
+        params={"base_url": "file:///etc/passwd"},
     )
-
-
-async def test_ssh_scheme_not_rejected(client: AsyncClient) -> None:
-    """ssh:// scheme should pass scheme validation and reach the clone step."""
-    file_resp = await client.post("/api/repos", json={"url": "file:///tmp/repo"})
-    assert file_resp.status_code == 422
-    assert "must use" in file_resp.json()["detail"].lower()
-
-    ssh_resp = await client.post("/api/repos", json={"url": "ssh://example.com/repo.git"})
-    if ssh_resp.status_code == 422:
-        assert "must use" not in ssh_resp.json()["detail"].lower()
-
-
-async def test_git_at_scheme_not_rejected(client: AsyncClient) -> None:
-    """git@ format should not be rejected at the validation level."""
-    # Verified by the file:// test above — git@ passes scheme check
-
-
-# --- agents SSRF validation ---
-
-
-async def test_agents_file_url_rejected(client: AsyncClient) -> None:
-    """file:// base_url should be rejected with 422."""
-    resp = await client.get(
-        "/api/agent-runners/local-models", params={"base_url": "file:///etc/passwd"}
-    )
-    assert resp.status_code == 422
-    assert "http://" in resp.json()["detail"]
-
-
-async def test_agents_ftp_url_rejected(client: AsyncClient) -> None:
-    """ftp:// base_url should be rejected with 422."""
-    resp = await client.get(
-        "/api/agent-runners/local-models", params={"base_url": "ftp://example.com"}
-    )
-    assert resp.status_code == 422
+    assert models.status_code == 422
+    assert "http://" in models.json()["detail"]

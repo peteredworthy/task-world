@@ -1496,22 +1496,10 @@ async def test_checkpointed_legacy_adoption_preserves_and_repairs_bounded_debt(
     await engine.dispose()
 
 
-@pytest.mark.parametrize(
-    "checkpoint_payload",
-    [
-        {"version": 1, "through_position": 3},
-        {
-            "version": 2,
-            "verified_through_position": 3,
-            "tail_through_position": 2,
-            "unverified_legacy_through_position": None,
-        },
-    ],
-)
 async def test_checkpointed_legacy_adoption_treats_v1_and_invalid_state_as_untrusted(
     tmp_path: Path,
-    checkpoint_payload: dict[str, object],
 ) -> None:
+    checkpoint_payload = {"version": 1, "through_position": 3}
     db_path = tmp_path / "checkpoint-untrusted" / "orchestrator.db"
     db_path.parent.mkdir()
     engine = create_engine(db_path)

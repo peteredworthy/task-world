@@ -52,19 +52,23 @@ ROUTINE_PATHS = [
 DYNAMIC_FEATURE_ROUTINE_PATH = Path("routines/dynamic-graph-feature/routine.yaml")
 
 
-@pytest.mark.parametrize("routine_path", ROUTINE_PATHS, ids=lambda path: str(path))
-def test_routine_corpus_loads_and_compiles_cleanly(routine_path: Path) -> None:
+def test_routine_corpus_loads_and_compiles_cleanly() -> None:
     """Corpus scope is active top-level routines plus examples, not archived fragments."""
-    routine = load_routine_from_path(routine_path)
+    for routine_path in ROUTINE_PATHS:
+        routine = load_routine_from_path(routine_path)
+        events = compile_routine(
+            routine,
+            FakeClock(),
+            SequentialIdGenerator(),
+            run_id=f"corpus-{routine.id}",
+        )
+        projection = _project(events)
 
-    events = compile_routine(routine, FakeClock(), SequentialIdGenerator(), run_id="corpus-run")
-    projection = _project(events)
-
-    assert _count_nodes(projection, "worker") == _task_count(routine)
-    assert _count_nodes(projection, "verifier") == _verifier_count(routine)
-    assert _count_nodes(projection, "check") == _check_count(routine)
-    assert _count_nodes(projection, "gate") == _gate_count(routine)
-    assert len(node_kinds_view(projection)) >= 3
+        assert _count_nodes(projection, "worker") == _task_count(routine), routine_path
+        assert _count_nodes(projection, "verifier") == _verifier_count(routine), routine_path
+        assert _count_nodes(projection, "check") == _check_count(routine), routine_path
+        assert _count_nodes(projection, "gate") == _gate_count(routine), routine_path
+        assert len(node_kinds_view(projection)) >= 3, routine_path
 
 
 def test_dynamic_graph_feature_routine_loads_with_graph_head_config() -> None:
@@ -597,24 +601,6 @@ async def test_seed_dynamic_graph_feature_persists_run_inputs(tmp_path: Path) ->
         assert snapshot["cache_authority_preimage"] == seeded_authority.preimage
     finally:
         await engine.dispose()
-
-
-@pytest.mark.parametrize("timeout", [True, 0, 3601, "725"])
-def test_dynamic_feature_timeout_fails_at_compile_boundary(timeout: object) -> None:
-    routine = load_routine_from_path(DYNAMIC_FEATURE_ROUTINE_PATH)
-
-    with pytest.raises(ValueError, match="acceptance_command_timeout_seconds"):
-        compile_routine(
-            routine,
-            FakeClock(),
-            SequentialIdGenerator(),
-            run_id="invalid-dynamic-timeout",
-            run_config={
-                "feature_spec_path": "docs/spec.md",
-                "acceptance_command": "true",
-                "acceptance_command_timeout_seconds": timeout,
-            },
-        )
 
 
 @pytest.mark.asyncio

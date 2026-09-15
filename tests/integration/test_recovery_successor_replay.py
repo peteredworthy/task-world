@@ -20,6 +20,9 @@ from orchestrator.runners import (
     route_tool_call,
 )
 
+
+pytestmark = pytest.mark.slow
+
 _SPEC = importlib.util.spec_from_file_location(
     "successor_planner_probe_replay_test",
     Path("examples/recovery/successor_planner_probe.py"),

@@ -29,6 +29,12 @@ router = APIRouter(prefix="/api/repos", tags=["repos"])
 
 # Maximum branches to return before truncating
 MAX_BRANCHES = 100
+SUPPORTED_REPOSITORY_URL_PREFIXES = ("http://", "https://", "ssh://", "git@")
+
+
+def is_supported_repository_url(value: str) -> bool:
+    """Return whether a repository source uses an accepted clone scheme."""
+    return value.startswith(SUPPORTED_REPOSITORY_URL_PREFIXES)
 
 
 @router.get("", response_model=ReposListResponse)
@@ -58,7 +64,7 @@ async def add_repository(
     """Add a repository by cloning a URL or symlinking a local path."""
     if body.url:
         # Validate URL scheme
-        if not body.url.startswith(("http://", "https://", "ssh://", "git@")):
+        if not is_supported_repository_url(body.url):
             raise HTTPException(
                 status_code=422,
                 detail="Repository URL must use http://, https://, ssh://, or git@ format",

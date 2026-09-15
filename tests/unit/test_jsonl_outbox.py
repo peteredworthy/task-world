@@ -12,12 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.config.enums import RunStatus
 from orchestrator.db import (
+    EventV2Model,
     JsonlOutboxObserver,
     SqliteEventStore,
     StoredEvent,
     commit_with_event_outbox,
     create_engine,
     create_session_factory,
+    drain_committed_events_to_journal,
     init_db,
     rollback_with_event_outbox,
 )
@@ -336,3 +338,57 @@ async def test_commit_helper_writes_exact_committed_positions(
     lines = path.read_text().splitlines()
     positions = [json.loads(line)["position"] for line in lines]
     assert positions == [event.position for event in stored]
+
+
+@pytest.mark.parametrize(
+    "checkpoint_payload",
+    [
+        {"version": 1, "through_position": 3},
+        {
+            "version": 2,
+            "verified_through_position": 3,
+            "tail_through_position": 2,
+            "unverified_legacy_through_position": None,
+        },
+    ],
+    ids=["legacy-v1", "invalid-v2-frontier"],
+)
+async def test_untrusted_checkpoint_matrix_is_replaced_before_legacy_adoption(
+    session: AsyncSession,
+    tmp_path: Path,
+    checkpoint_payload: dict[str, object],
+) -> None:
+    journal_path = tmp_path / "history.jsonl"
+    journal_path.write_text(json.dumps({"position": 1}) + "\n")
+    journal_path.with_name("history.jsonl.checkpoint").write_text(
+        json.dumps(checkpoint_payload) + "\n"
+    )
+    session.add_all(
+        [
+            EventV2Model(
+                aggregate_id=f"run-{position}",
+                version=1,
+                event_type="run_created",
+                payload="{}",
+                timestamp="2026-07-20T00:00:00+00:00",
+            )
+            for position in range(1, 4)
+        ]
+    )
+    await session.commit()
+
+    assert (
+        await drain_committed_events_to_journal(
+            session,
+            journal_path,
+            use_checkpoint=True,
+            defer_untrusted_legacy_audit=True,
+        )
+        == 0
+    )
+    assert json.loads(journal_path.with_name("history.jsonl.checkpoint").read_text()) == {
+        "version": 2,
+        "verified_through_position": 0,
+        "tail_through_position": 3,
+        "unverified_legacy_through_position": 3,
+    }

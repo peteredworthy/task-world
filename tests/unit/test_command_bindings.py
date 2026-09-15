@@ -250,3 +250,80 @@ def test_command_alias_is_used_when_cmd_is_blank() -> None:
     )
 
     assert definition == {"cmd": "", "command": "printf alias"}
+
+
+@pytest.mark.parametrize(
+    ("case", "node_payload", "events", "expected"),
+    [
+        (
+            "missing-command-value",
+            {"node_id": "check-missing", "kind": "check", "command_definition": {}},
+            [],
+            "invalid",
+        ),
+        (
+            "blank-command-value",
+            {
+                "node_id": "check-blank",
+                "kind": "check",
+                "command_definition": {"cmd": "   "},
+            },
+            [],
+            "invalid",
+        ),
+        (
+            "malformed-argv",
+            {
+                "node_id": "check-argv",
+                "kind": "check",
+                "command_definition": {"argv": [" ", "true"]},
+            },
+            [],
+            "invalid",
+        ),
+        (
+            "explicit-command",
+            {
+                "node_id": "check-explicit",
+                "kind": "check",
+                "command_definition": {"cmd": "true"},
+            },
+            [],
+            "valid",
+        ),
+        (
+            "supported-hidden-oracle-binding",
+            _ORACLE_BOUND_CHECK,
+            [
+                _dynamic_feature_event(
+                    {"hidden_oracle_command": "true", "acceptance_command": "false"}
+                )
+            ],
+            "valid",
+        ),
+        (
+            "absent-oracle-unavailable",
+            _ORACLE_BOUND_CHECK,
+            [],
+            "unavailable",
+        ),
+    ],
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_check_admission_matrix_has_exact_command_and_binding_outcomes(
+    case: str,
+    node_payload: dict[str, Any],
+    events: list[EventEnvelope],
+    expected: str,
+) -> None:
+    del case
+    if expected == "valid":
+        definition = validate_check_command_binding(dict(node_payload), events)
+        assert definition is not None
+        return
+    with pytest.raises(CheckCommandBindingError, match="non-empty|unavailable") as raised:
+        validate_check_command_binding(dict(node_payload), events)
+    expected_code = (
+        "invalid_command_definition" if expected == "invalid" else "unavailable_command_binding"
+    )
+    assert raised.value.code == expected_code

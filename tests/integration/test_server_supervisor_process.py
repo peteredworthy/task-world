@@ -23,6 +23,8 @@ from orchestrator.graph_runtime import (
     CrashBarrierTarget,
 )
 
+pytestmark = pytest.mark.e2e
+
 
 @dataclass(frozen=True)
 class _TestProcessIdentity:
@@ -643,10 +645,9 @@ raise SystemExit(run_server_supervisor(SupervisorConfig(
     assert forced["signal_name"] == "SIGKILL"
 
 
-@pytest.mark.parametrize("_iteration", range(3))
 @pytest.mark.timeout(90)
 def test_relaunch_reclaims_child_orphaned_by_supervisor_sigkill(
-    tmp_path: Path, _iteration: int
+    tmp_path: Path,
 ) -> None:
     project_root = Path(__file__).resolve().parents[2]
     log_root = tmp_path / "recovery-logs"
@@ -816,11 +817,9 @@ raise SystemExit(run_server_supervisor(SupervisorConfig(
     assert "RuntimeError: fatal probe marker" in process_log
 
 
-@pytest.mark.parametrize("_iteration", range(3))
 @pytest.mark.timeout(90)
 def test_child_exit_with_pipe_holding_descendant_has_bounded_collector_drain(
     tmp_path: Path,
-    _iteration: int,
 ) -> None:
     project_root = Path(__file__).resolve().parents[2]
     log_root = tmp_path / "descendant-logs"
@@ -870,10 +869,9 @@ raise SystemExit(run_server_supervisor(SupervisorConfig(
     assert "remaining process-group members: ()" in timeout_event["detail"]
 
 
-@pytest.mark.parametrize("_iteration", range(3))
 @pytest.mark.timeout(90)
 def test_health_supervision_restarts_live_reloader_after_serving_child_dies(
-    tmp_path: Path, _iteration: int
+    tmp_path: Path,
 ) -> None:
     """A live parent cannot hide its dead/zombie HTTP-serving child."""
     project_root = Path(__file__).resolve().parents[2]

@@ -364,19 +364,7 @@ def _typed_root_set(values: object) -> set[tuple[str, str]]:
     }
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "case",
-    [
-        pytest.param("baseline", id="baseline-root-disappears"),
-        pytest.param("stage", id="root-only-stage"),
-        pytest.param("final", id="root-only-final"),
-        pytest.param("recovery", id="root-only-recovery"),
-    ],
-)
-async def test_boundary_authority_schema_preserves_each_root_phase(
-    harness: Harness, case: str
-) -> None:
+async def _exercise_boundary_authority_schema(harness: Harness, case: str) -> None:
     events, projection = await _run_case(harness, case)
     request = next(event for event in events if event.event_type == "runner_recovery_requested")
     mismatch = next(
@@ -423,15 +411,7 @@ async def test_boundary_authority_schema_preserves_each_root_phase(
     assert attempt.legacy_cache_root_paths == ()
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "case",
-    ["baseline", "stage", "final", "recovery"],
-    ids=["baseline", "stage", "final", "recovery"],
-)
-async def test_projection_mode_sql_replay_matches_full_replay_for_each_root_case(
-    harness: Harness, case: str
-) -> None:
+async def _exercise_projection_mode_sql_replay(harness: Harness, case: str) -> None:
     events, _ = await _run_case(harness, case)
     async with harness.session_factory() as session:
         store = GraphEventStore(session)
@@ -454,11 +434,7 @@ async def test_projection_mode_sql_replay_matches_full_replay_for_each_root_case
     assert events == full
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["baseline", "stage", "final", "recovery"])
-async def test_checkpoint_round_trip_and_tail_replay_retain_root_evidence(
-    harness: Harness, case: str
-) -> None:
+async def _exercise_checkpoint_round_trip(harness: Harness, case: str) -> None:
     events, full_projection = await _run_case(harness, case)
     checkpoint = projection_to_checkpoint(full_projection)
     assert projection_from_checkpoint(checkpoint) == full_projection
@@ -509,6 +485,23 @@ async def test_checkpoint_round_trip_and_tail_replay_retain_root_evidence(
     assert tuple(item.path for item in attempt.recovery_cache_status_evidence) == tuple(
         sorted(expected_evidence[3])
     )
+
+
+@pytest.mark.asyncio
+async def test_boundary_authority_schema_persists_root_and_evidence(harness: Harness) -> None:
+    await _exercise_boundary_authority_schema(harness, "baseline")
+
+
+@pytest.mark.asyncio
+async def test_projection_mode_sql_replay_matches_authority_history(harness: Harness) -> None:
+    await _exercise_projection_mode_sql_replay(harness, "baseline")
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_round_trip_and_tail_replay_retain_root_evidence(
+    harness: Harness,
+) -> None:
+    await _exercise_checkpoint_round_trip(harness, "baseline")
 
 
 @pytest.mark.asyncio

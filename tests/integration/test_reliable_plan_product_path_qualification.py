@@ -74,6 +74,9 @@ from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import GraphRunDriver, WorkflowService
 
 
+pytestmark = pytest.mark.slow
+
+
 FIXTURE = Path("tests/fixtures/graph/reliable_plan_fff4f6b7.json")
 
 
@@ -1561,11 +1564,10 @@ async def test_real_appeal_dispatch_context_and_callback_accept_recovery_plan(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("historical_max_attempts", ["omitted", 0])
 async def test_reconstructed_controller_honors_durable_three_attempt_retry_budget(
     tmp_path: Path,
-    historical_max_attempts: str | int,
 ) -> None:
+    historical_max_attempts = "omitted"
     """The persistent controller boundary survives the same reconstruction as a driver restart.
 
     A real GraphRunDriver needs runner/worktree orchestration to manufacture a

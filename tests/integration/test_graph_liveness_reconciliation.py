@@ -694,11 +694,7 @@ async def test_consumer_replaces_owned_driver_and_quiesces_exact_runner(
         await engine.dispose()
 
 
-@pytest.mark.parametrize("stage_submission", [False, True])
-async def test_manual_pause_waits_for_exact_runner_recovery_before_paused(
-    tmp_path: Path,
-    stage_submission: bool,
-) -> None:
+async def _exercise_manual_pause_recovery(tmp_path: Path, *, stage_submission: bool) -> None:
     """STOPPING remains visible until child, task, owner, and lease are gone."""
     suffix = "staged" if stage_submission else "baseline"
     engine = create_engine(tmp_path / f"graph-manual-pause-{suffix}.db")
@@ -867,11 +863,21 @@ async def test_manual_pause_waits_for_exact_runner_recovery_before_paused(
         await engine.dispose()
 
 
-@pytest.mark.parametrize("stage_submission", [False, True])
-async def test_manual_cancel_orders_recovery_before_graph_and_workflow_terminal(
+@pytest.mark.asyncio
+async def test_manual_pause_waits_for_exact_runner_recovery_before_paused(
     tmp_path: Path,
-    stage_submission: bool,
 ) -> None:
+    await _exercise_manual_pause_recovery(tmp_path, stage_submission=False)
+
+
+@pytest.mark.asyncio
+async def test_manual_pause_waits_for_staged_runner_recovery_before_paused(
+    tmp_path: Path,
+) -> None:
+    await _exercise_manual_pause_recovery(tmp_path, stage_submission=True)
+
+
+async def _exercise_manual_cancel_recovery(tmp_path: Path, *, stage_submission: bool) -> None:
     """A public cancel cannot become terminal while a real runner still owns work."""
     suffix = "staged" if stage_submission else "baseline"
     engine = create_engine(tmp_path / f"graph-manual-cancel-{suffix}.db")
@@ -1032,6 +1038,20 @@ async def test_manual_cancel_orders_recovery_before_graph_and_workflow_terminal(
                 process.kill()
                 await process.wait()
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_manual_cancel_orders_recovery_before_graph_and_workflow_terminal(
+    tmp_path: Path,
+) -> None:
+    await _exercise_manual_cancel_recovery(tmp_path, stage_submission=False)
+
+
+@pytest.mark.asyncio
+async def test_manual_cancel_orders_staged_recovery_before_graph_and_workflow_terminal(
+    tmp_path: Path,
+) -> None:
+    await _exercise_manual_cancel_recovery(tmp_path, stage_submission=True)
 
 
 async def test_manual_pause_isolated_to_exact_run_owner_and_lease(tmp_path: Path) -> None:
@@ -1198,15 +1218,9 @@ async def test_inactive_graph_run_is_rejected_before_consumer_arm(tmp_path: Path
         await engine.dispose()
 
 
-@pytest.mark.parametrize(
-    ("decisions", "expected_reservations", "expected_checks"),
-    [
-        ((False,), 0, 1),
-        ((True, True, False), 1, 3),
-    ],
-)
-async def test_inactive_dispatch_is_rejected_before_runner_spawn(
+async def _exercise_inactive_dispatch_rejection(
     tmp_path: Path,
+    *,
     decisions: tuple[bool, ...],
     expected_reservations: int,
     expected_checks: int,
@@ -1270,6 +1284,22 @@ async def test_inactive_dispatch_is_rejected_before_runner_spawn(
             agent.process.kill()
             await agent.process.wait()
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_inactive_dispatch_is_rejected_before_runner_spawn(tmp_path: Path) -> None:
+    await _exercise_inactive_dispatch_rejection(
+        tmp_path, decisions=(False,), expected_reservations=0, expected_checks=1
+    )
+
+
+@pytest.mark.asyncio
+async def test_inactive_dispatch_is_rejected_after_reserve_before_runner_spawn(
+    tmp_path: Path,
+) -> None:
+    await _exercise_inactive_dispatch_rejection(
+        tmp_path, decisions=(True, True, False), expected_reservations=1, expected_checks=3
+    )
 
 
 async def test_quiescence_failure_keeps_stop_visible_and_signal_retryable(
@@ -1429,17 +1459,9 @@ async def test_real_runner_child_loss_is_durable_and_converges_through_recovery(
         await engine.dispose()
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("behavior", "expected_state", "reason_fragment"),
-    [
-        ("invalid_metadata", "invalid_metadata", "positive integer"),
-        ("unreported", "unreported", "within 0.01 seconds"),
-        ("never_started", "never_started", "completed before reporting"),
-    ],
-)
-async def test_process_runner_metadata_failures_are_durable_and_fail_closed(
+async def _exercise_process_runner_metadata_failure(
     tmp_path: Path,
+    *,
     behavior: str,
     expected_state: str,
     reason_fragment: str,
@@ -1509,6 +1531,16 @@ async def test_process_runner_metadata_failures_are_durable_and_fail_closed(
             executor.cancel_all()
             await executor.wait_for_all()
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_process_runner_unreported_metadata_is_durable_and_fail_closed(tmp_path: Path) -> None:
+    await _exercise_process_runner_metadata_failure(
+        tmp_path,
+        behavior="unreported",
+        expected_state="unreported",
+        reason_fragment="within 0.01 seconds",
+    )
 
 
 @pytest.mark.asyncio

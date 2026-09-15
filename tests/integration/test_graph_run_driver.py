@@ -1117,20 +1117,13 @@ async def test_driver_crash_bridge_persists_pause_and_reraises(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("agent_runner_type", "expected_runner", "expected_status"),
-    [
-        (AgentRunnerType.OPENHANDS_LOCAL, "openhands_local", RunStatus.PAUSED),
-        (AgentRunnerType.RETIRED, "retired", RunStatus.DRAFT),
-    ],
-)
 async def test_driver_rejects_unsupported_graph_runner_before_seeding(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
-    agent_runner_type: AgentRunnerType,
-    expected_runner: str,
-    expected_status: RunStatus,
 ) -> None:
+    agent_runner_type = AgentRunnerType.OPENHANDS_LOCAL
+    expected_runner = "openhands_local"
+    expected_status = RunStatus.PAUSED
     _, session_factory = file_db
     repo = tmp_path / f"repo-unsupported-runner-{expected_runner}"
     _init_repo(repo)
@@ -1159,6 +1152,42 @@ async def test_driver_rejects_unsupported_graph_runner_before_seeding(
     assert events == []
     assert dispatch_order == []
     assert await _run_status(session_factory, run_id) == expected_status
+
+
+@pytest.mark.asyncio
+async def test_driver_rejects_retired_graph_runner_before_seeding(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """Historical retired runs remain readback-only and are not seeded."""
+    _, session_factory = file_db
+    repo = tmp_path / "repo-unsupported-runner-retired"
+    _init_repo(repo)
+    run_id = "graph-driver-unsupported-runner-retired"
+    await _create_graph_run(
+        session_factory,
+        _routine(),
+        run_id=run_id,
+        repo=repo,
+        agent_runner_type=AgentRunnerType.RETIRED,
+    )
+    dispatch_order: list[str] = []
+    driver = _driver(
+        session_factory,
+        repo=repo,
+        agents={"worker": SubmitAgent(), "verifier": GradingAgent("A")},
+        dispatch_order=dispatch_order,
+    )
+
+    outcome = await driver.run(run_id)
+    events = await _events(session_factory, run_id)
+
+    assert outcome.completed is False
+    assert outcome.blocked_reason is not None
+    assert "unsupported runner 'retired'" in outcome.blocked_reason
+    assert events == []
+    assert dispatch_order == []
+    assert await _run_status(session_factory, run_id) == RunStatus.DRAFT
 
 
 @pytest.mark.asyncio

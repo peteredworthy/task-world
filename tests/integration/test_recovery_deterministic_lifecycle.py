@@ -10,6 +10,9 @@ import sys
 import pytest
 
 
+pytestmark = pytest.mark.slow
+
+
 _SPEC = importlib.util.spec_from_file_location(
     "deterministic_lifecycle",
     Path("examples/recovery/deterministic_lifecycle.py"),

@@ -16,6 +16,7 @@ import asyncio
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
+from collections.abc import Sequence
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -24,7 +25,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 async def reproduce() -> None:
-    from orchestrator.config import AgentRunnerType
     from orchestrator.db import create_engine, create_session_factory
     from orchestrator.graph import (
         FakeClock,
@@ -36,13 +36,15 @@ async def reproduce() -> None:
     )
     from orchestrator.graph_runtime import GraphController
     from tests.integration.test_graph_decision_runtime import (
-        test_initial_discovery_brief_runs_through_production_dispatch_and_finalization,
+        _exercise_initial_discovery_brief,
     )
 
     with TemporaryDirectory(prefix="rejected-plan-gap-") as directory:
         root = Path(directory).resolve()
-        await test_initial_discovery_brief_runs_through_production_dispatch_and_finalization(
-            root, AgentRunnerType.CODEX_SERVER, "F", "failed", False, False
+        await _exercise_initial_discovery_brief(
+            root,
+            verifier_grade="F",
+            mutate_after_answer=False,
         )
         engine = create_engine(root / "initial-decision.db")
         try:
@@ -71,5 +73,29 @@ async def reproduce() -> None:
             await engine.dispose()
 
 
-if __name__ == "__main__":
+def check_entrypoint() -> None:
+    """Verify that standalone execution can resolve its runtime scenario."""
+    from tests.integration.test_graph_decision_runtime import (
+        _complete_rejected_initial_plan_scenario,
+        _exercise_initial_discovery_brief,
+    )
+
+    assert callable(_exercise_initial_discovery_brief)
+    assert callable(_complete_rejected_initial_plan_scenario)
+    print("Ready: rejected-plan reproducer imports resolve without PYTHONPATH")
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments == ["--check"]:
+        check_entrypoint()
+        return 0
+    if arguments:
+        print("usage: reproduce-rejected-plan-gap.py [--check]", file=sys.stderr)
+        return 2
     asyncio.run(reproduce())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

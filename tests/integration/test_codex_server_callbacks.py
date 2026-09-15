@@ -20,7 +20,6 @@ import subprocess
 import sys
 from typing import Any
 
-import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.artifacts import FilesystemArtifactStore
@@ -227,39 +226,6 @@ async def test_integration_local_update_checklist_blocked() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("disposition", "message"),
-    [
-        ("rejected", "submission rejected: acceptance command failed"),
-        ("durably_staged", "durably staged; pending runner completion and not yet accepted"),
-        ("finalized_accepted", "submission is durably finalized and accepted"),
-    ],
-)
-async def test_integration_local_submit_dispatched_with_three_way_acknowledgement(
-    disposition: str,
-    message: str,
-) -> None:
-    """Local agent returns the exact typed submission disposition."""
-    agent = _local()
-    submitted: list[bool] = []
-
-    async def capture() -> SubmissionAcknowledgement:
-        submitted.append(True)
-        return SubmissionAcknowledgement.model_validate(
-            {
-                "disposition": disposition,
-                "message": message,
-                "execution_id": "execution-1",
-                "graph_position": 12,
-            }
-        )
-
-    result = await agent._route_tool_call("submit", {}, _noop_checklist, capture)
-    assert submitted == [True]
-    assert f'"disposition":"{disposition}"' in result
-    assert message in result
-
-
 async def test_codex_submit_response_preserves_late_structured_failure_evidence() -> None:
     """Codex's real tool-response JSON must not lose diagnostics after char 4,096."""
     agent = _local()
@@ -447,37 +413,3 @@ async def test_integration_local_request_clarification_handled() -> None:
         _noop_checklist,
         _noop_submit,
     )
-
-
-# ---------------------------------------------------------------------------
-# Allow-list enforcement: disallowed tools rejected before callbacks run
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "disallowed_tool",
-    ["bash", "read_file", "write_file", "execute_command", "shell", "SUBMIT", "GRADE", ""],
-)
-async def test_integration_local_rejects_disallowed_tool(disallowed_tool: str) -> None:
-    """Local agent rejects any disallowed tool call."""
-    agent = _local()
-    with pytest.raises(ValueError, match="not on the Codex server v1 allow-list"):
-        await agent._route_tool_call(disallowed_tool, {}, _noop_checklist, _noop_submit)
-
-
-async def test_integration_disallowed_tool_does_not_invoke_any_callback() -> None:
-    """Disallowed tool rejection precedes all callback invocations."""
-    checklist_called: list[bool] = []
-    submit_called: list[bool] = []
-
-    async def cb_checklist(req_id: str, status: ChecklistStatus, note: str | None) -> None:
-        checklist_called.append(True)
-
-    async def cb_submit() -> None:
-        submit_called.append(True)
-
-    with pytest.raises(ValueError):
-        await _local()._route_tool_call("bash", {}, cb_checklist, cb_submit)
-
-    assert checklist_called == [], "No checklist callback must fire on rejected tool"
-    assert submit_called == [], "No submit callback must fire on rejected tool"

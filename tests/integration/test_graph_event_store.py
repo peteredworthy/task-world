@@ -413,11 +413,7 @@ async def test_compact_readers_filter_union_fields_by_event_type_and_mode(
             assert compact[1].payload == expected_outbox
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "recovery", [False, True], ids=["successful-finalization", "mismatch-recovery"]
-)
-async def test_full_and_projection_retained_codec_replay_match_cleanup_histories(
+async def _exercise_cleanup_replay(
     session_factory: async_sessionmaker[AsyncSession], recovery: bool
 ) -> None:
     run_id = f"cleanup-replay-{recovery}"
@@ -453,6 +449,20 @@ async def test_full_and_projection_retained_codec_replay_match_cleanup_histories
         {"snapshot_ref", "tree_sha", "commit_sha", "snapshot_role"}.issubset(event.payload)
         for event in applied
     )
+
+
+@pytest.mark.asyncio
+async def test_full_and_projection_retained_codec_replay_match_cleanup_histories(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _exercise_cleanup_replay(session_factory, False)
+
+
+@pytest.mark.asyncio
+async def test_projection_retained_codec_replay_matches_mismatch_recovery_history(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _exercise_cleanup_replay(session_factory, True)
 
 
 @pytest.mark.asyncio
@@ -785,11 +795,8 @@ async def test_projection_checkpoint_schema_mismatch_is_rebuilt(
     assert checkpoint.projection == _rebuild_projection(events)
 
 
-@pytest.mark.parametrize("corruption", ("position", "checksum"))
-@pytest.mark.asyncio
-async def test_corrupt_runtime_checkpoint_is_invalidated_without_deleting_public_snapshot(
-    session_factory: async_sessionmaker[AsyncSession],
-    corruption: str,
+async def _exercise_corrupt_runtime_checkpoint(
+    session_factory: async_sessionmaker[AsyncSession], corruption: str
 ) -> None:
     run_id = f"store-checkpoint-corrupt-{corruption}"
     events = [
@@ -825,6 +832,20 @@ async def test_corrupt_runtime_checkpoint_is_invalidated_without_deleting_public
     assert projection == repaired.projection
     assert [event.event_id for event in tail] == ["evt-active", "evt-worker"]
     assert position == 2
+
+
+@pytest.mark.asyncio
+async def test_corrupt_runtime_checkpoint_is_invalidated_without_deleting_public_snapshot(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _exercise_corrupt_runtime_checkpoint(session_factory, "position")
+
+
+@pytest.mark.asyncio
+async def test_checksum_corruption_rebuilds_without_deleting_public_snapshot(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _exercise_corrupt_runtime_checkpoint(session_factory, "checksum")
 
 
 @pytest.mark.asyncio

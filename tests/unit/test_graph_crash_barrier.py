@@ -115,6 +115,8 @@ async def test_exact_scoped_barrier_is_observable_releasable_and_one_shot(
     ("point", "attempt_state"),
     [
         ("pre_stage", "baseline_captured"),
+        ("after_staging_pre_witness", "submission_staged"),
+        ("after_witness_pre_finalization", "completion_witnessed"),
         ("after_commit_pre_ack", "finalized"),
     ],
 )

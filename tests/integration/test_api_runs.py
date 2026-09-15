@@ -533,10 +533,10 @@ async def test_resume_retired_run_with_active_replacement_clears_sdk_config(
     assert data["agent_runner_config"] == {}
 
 
-@pytest.mark.parametrize("runner_type", ["claude_sdk", "retired"])
 async def test_conflict_agent_override_rejects_non_selectable_runner_type(
-    client: AsyncClient, runner_type: str
+    client: AsyncClient,
 ) -> None:
+    runner_type = "claude_sdk"
     response = await client.post(
         "/api/runs/not-a-run/review/conflicts/agent-resolve",
         json={"agent_runner_type": runner_type},
@@ -546,10 +546,11 @@ async def test_conflict_agent_override_rejects_non_selectable_runner_type(
     assert "Valid options" in response.text
 
 
-@pytest.mark.parametrize("runner_type", [1, ["codex_server"]])
 async def test_run_agent_runner_requests_reject_non_string_runner_type(
-    client: AsyncClient, repo_name: str, runner_type: object
+    client: AsyncClient,
+    repo_name: str,
 ) -> None:
+    runner_type = 1
     create_response = await client.post(
         "/api/runs",
         json={

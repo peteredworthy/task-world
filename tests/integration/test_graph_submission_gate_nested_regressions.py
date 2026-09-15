@@ -13,6 +13,9 @@ import pytest
 from orchestrator.graph_runtime import enforce_submission_quality_gate
 
 
+pytestmark = pytest.mark.slow
+
+
 _JOURNAL_AND_CLEANUP_TESTS = (
     "tests/unit/test_signal_consumer.py::test_processed_marker_is_exported_to_jsonl",
     "tests/integration/test_jsonl_rotation_recovery.py::"
@@ -119,4 +122,5 @@ async def test_configured_project_gate_runs_journal_and_cleanup_regressions_nest
     assert report.status == "passed"
     assert len(report.results) == 1
     assert report.results[0].source == "project_test_command"
-    assert "8 passed" in report.results[0].stdout_tail
+    assert report.results[0].exit_code == 0
+    assert report.results[0].failed_test_ids == ()

@@ -19,6 +19,9 @@ from orchestrator.graph_runtime import (
 )
 
 
+pytestmark = pytest.mark.slow
+
+
 _SPEC = importlib.util.spec_from_file_location(
     "successor_planner_probe",
     Path("examples/recovery/successor_planner_probe.py"),

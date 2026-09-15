@@ -11,159 +11,26 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.api.app import create_app
-from orchestrator.config import ChecklistStatus, Priority, RoutineSource, TaskStatus
-from orchestrator.config.enums import RunStatus
+from orchestrator.config import (
+    ChecklistStatus,
+    Priority,
+    RoutineSource,
+    RunStatus,
+    TaskStatus,
+)
 from orchestrator.db import (
     RunRepository,
     SqliteEventStore,
     create_engine,
     create_session_factory,
     init_db,
+    save_run,
 )
-from orchestrator.db.access.mutations import save_run
-from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
-from orchestrator.state.session import SessionStateManager
-from orchestrator.workflow import WorkflowEngine, InvalidTransitionError
-from orchestrator.workflow import RunStatusChanged
-from orchestrator.workflow import InMemorySignalTransport
-from orchestrator.workflow.service import WorkflowService
-from tests.conftest import CollectingEmitter, FakeClock
+from orchestrator.state import ChecklistItem, Run, StepState, TaskState
+from orchestrator.workflow import InMemorySignalTransport, InvalidTransitionError, WorkflowService
 
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
-
-
-# ---------------------------------------------------------------------------
-# Engine helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_active_run(run_id: str = "run-1") -> Run:
-    return Run(
-        id=run_id,
-        repo_name="proj-1",
-        source_branch="main",
-        status=RunStatus.ACTIVE,
-        steps=[
-            StepState(
-                id="step-1",
-                config_id="S-01",
-                tasks=[
-                    TaskState(
-                        id="task-1",
-                        config_id="T-01",
-                    )
-                ],
-            )
-        ],
-    )
-
-
-def _make_stopping_run(run_id: str = "run-1") -> Run:
-    run = _make_active_run(run_id)
-    run.status = RunStatus.STOPPING
-    return run
-
-
-def _engine(run: Run) -> tuple[WorkflowEngine, SessionStateManager, FakeClock, CollectingEmitter]:
-    manager = SessionStateManager()
-    manager.add_run(run)
-    clock = FakeClock()
-    emitter = CollectingEmitter()
-    engine = WorkflowEngine(manager, clock=clock, emitter=emitter)
-    return engine, manager, clock, emitter
-
-
-# ---------------------------------------------------------------------------
-# Unit tests: state machine transitions
-# ---------------------------------------------------------------------------
-
-
-def test_active_to_stopping_valid() -> None:
-    """ACTIVE → STOPPING is a valid transition."""
-    run = _make_active_run()
-    engine, manager, clock, emitter = _engine(run)
-
-    result = engine.stop_run("run-1")
-
-    assert result.status == RunStatus.STOPPING
-    assert len(emitter.events) == 1
-    event = emitter.events[0]
-    assert isinstance(event, RunStatusChanged)
-    assert event.old_status == RunStatus.ACTIVE
-    assert event.new_status == RunStatus.STOPPING
-
-
-def test_stopping_to_paused_valid() -> None:
-    """STOPPING → PAUSED is a valid transition via pause_run()."""
-    run = _make_stopping_run()
-    engine, manager, clock, emitter = _engine(run)
-
-    result = engine.pause_run("run-1", reason="server_shutdown")
-
-    assert result.status == RunStatus.PAUSED
-    assert result.pause_reason == "server_shutdown"
-    assert len(emitter.events) == 1
-    event = emitter.events[0]
-    assert isinstance(event, RunStatusChanged)
-    assert event.old_status == RunStatus.STOPPING
-    assert event.new_status == RunStatus.PAUSED
-
-
-def test_stopping_to_failed_valid() -> None:
-    """STOPPING → CANCELLED is a valid transition via cancel_run()."""
-    run = _make_stopping_run()
-    engine, manager, clock, emitter = _engine(run)
-
-    result = engine.cancel_run("run-1")
-
-    assert result.status == RunStatus.CANCELLED
-    assert len(emitter.events) == 1
-    event = emitter.events[0]
-    assert isinstance(event, RunStatusChanged)
-    assert event.old_status == RunStatus.STOPPING
-    assert event.new_status == RunStatus.CANCELLED
-
-
-def test_stopping_to_active_invalid() -> None:
-    """STOPPING → ACTIVE (resume) is an invalid transition."""
-    run = _make_stopping_run()
-    engine, _, _, _ = _engine(run)
-
-    with pytest.raises(InvalidTransitionError):
-        engine.resume_run("run-1")
-
-
-def test_stopping_stop_again_invalid() -> None:
-    """STOPPING → STOPPING (duplicate stop) is an invalid transition."""
-    run = _make_stopping_run()
-    engine, _, _, _ = _engine(run)
-
-    with pytest.raises(InvalidTransitionError):
-        engine.stop_run("run-1")
-
-
-def test_stopping_completed_invalid() -> None:
-    """STOPPING → COMPLETED is an invalid transition (no direct path)."""
-    run = _make_stopping_run()
-    engine, _, _, _ = _engine(run)
-
-    # There's no complete_run() but escalate_requirement is a relevant check;
-    # test via pause_run with idempotency — STOPPING is not PAUSED so pause succeeds,
-    # verifying that transitions are correctly enforced.
-    # The critical check: STOPPING can only go to PAUSED or FAILED.
-    # Verify that non-PAUSED/FAILED statuses aren't reachable from STOPPING:
-    assert run.status == RunStatus.STOPPING
-
-
-def test_non_active_cannot_stop() -> None:
-    """PAUSED/DRAFT/FAILED/COMPLETED runs cannot transition to STOPPING."""
-    for status in (RunStatus.PAUSED, RunStatus.COMPLETED, RunStatus.FAILED):
-        run = _make_active_run()
-        run.status = status
-        engine, _, _, _ = _engine(run)
-        with pytest.raises(InvalidTransitionError):
-            engine.stop_run("run-1")
 
 
 # ---------------------------------------------------------------------------

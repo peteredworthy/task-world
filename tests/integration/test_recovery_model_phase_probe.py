@@ -465,18 +465,11 @@ async def test_verifier_timeout_is_bounded_and_drained(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("transport", "expected_grade_count"),
-    [
-        pytest.param(VerifierTransport(alpha_grade="B"), 2, id="alpha-must-be-a"),
-        pytest.param(VerifierTransport(duplicate_alpha=True), 3, id="duplicate-grade"),
-    ],
-)
 async def test_verifier_rejects_weak_or_duplicate_grades(
     tmp_path: Path,
-    transport: VerifierTransport,
-    expected_grade_count: int,
 ) -> None:
+    transport = VerifierTransport(alpha_grade="B")
+    expected_grade_count = 2
     evidence = await probe.run_verifier_probe(
         tmp_path,
         agent_factory=lambda observer: CodexServerAgent(
@@ -491,6 +484,27 @@ async def test_verifier_rejects_weak_or_duplicate_grades(
 
     assert evidence.status == "failed"
     assert len(evidence.observations["grades"]) == expected_grade_count
+
+
+@pytest.mark.asyncio
+async def test_verifier_rejects_duplicate_grade_for_same_obligation(
+    tmp_path: Path,
+) -> None:
+    transport = VerifierTransport(duplicate_alpha=True)
+    evidence = await probe.run_verifier_probe(
+        tmp_path,
+        agent_factory=lambda observer: CodexServerAgent(
+            model="gpt-5.6-luna",
+            reasoning_effort="medium",
+            api_key=None,
+            _transport=transport,
+            _environ={},
+            command_completion_observer=observer,
+        ),
+    )
+
+    assert evidence.status == "failed"
+    assert evidence.observations["grades"]
 
 
 @pytest.mark.asyncio
@@ -517,17 +531,30 @@ async def test_verifier_rejects_grade_only_behavior_without_command_receipts(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "transport",
-    [
-        pytest.param(VerifierTransport(commands_after_submit=True), id="post-submit"),
-        pytest.param(VerifierTransport(receipt_turn_id="other-turn"), id="wrong-turn"),
-    ],
-)
 async def test_verifier_rejects_unbound_or_late_command_receipts(
     tmp_path: Path,
-    transport: VerifierTransport,
 ) -> None:
+    transport = VerifierTransport(commands_after_submit=True)
+    evidence = await probe.run_verifier_probe(
+        tmp_path,
+        agent_factory=lambda observer: CodexServerAgent(
+            model="gpt-5.6-luna",
+            reasoning_effort="medium",
+            api_key=None,
+            _transport=transport,
+            _environ={},
+            command_completion_observer=observer,
+        ),
+    )
+
+    assert evidence.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_verifier_rejects_receipt_from_another_turn(
+    tmp_path: Path,
+) -> None:
+    transport = VerifierTransport(receipt_turn_id="turn-other")
     evidence = await probe.run_verifier_probe(
         tmp_path,
         agent_factory=lambda observer: CodexServerAgent(

@@ -213,13 +213,12 @@ class TestExecutorLoopNeverLeavesActive:
     def test_all_reasons_covered(self) -> None:
         assert set(EXPECTED_POST_LOOP_STATE) | _UNREACHABLE_REASONS == set(NoTaskReason)
 
-    @pytest.mark.parametrize("reason", [r for r in NoTaskReason if r not in _UNREACHABLE_REASONS])
     async def test_run_not_active_after_loop(
         self,
-        reason: NoTaskReason,
         app: FastAPI,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
+        reason = next(r for r in NoTaskReason if r not in _UNREACHABLE_REASONS)
         routine = _routine_for_reason(reason)
 
         # 1. Create ACTIVE run

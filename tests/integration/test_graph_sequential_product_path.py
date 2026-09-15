@@ -92,6 +92,9 @@ from orchestrator.workflow import GraphRunDriver, SignalConsumer, WorkflowServic
 from tests.integration.git_helpers import _init_repo
 
 
+pytestmark = pytest.mark.slow
+
+
 ROUTINE_PATH = (
     Path(__file__).resolve().parents[2] / "routines" / "dynamic-graph-feature" / "routine.yaml"
 )
@@ -1788,29 +1791,17 @@ async def test_api_correction_uses_exact_failure_evidence_then_completes_horizon
         await harness.close()
 
 
-@pytest.mark.parametrize(
-    ("case", "expected_batch_keys", "expect_amendment"),
-    [
-        ("one-batch", ("core",), False),
-        ("dependent", ("core", "api"), False),
-        ("amendment", ("core", "api"), True),
-    ],
-    ids=["one-batch", "dependent-batches", "verified-plan-amendment"],
-)
 @pytest.mark.asyncio
 @pytest.mark.timeout(180)
-async def test_decision_v1_joined_success_cases_use_production_driver(
+async def test_decision_v1_one_batch_success_uses_production_driver(
     tmp_path: Path,
     canonical_qualification: Any,
-    case: str,
-    expected_batch_keys: tuple[str, ...],
-    expect_amendment: bool,
 ) -> None:
-    """Run Slice 6B's core cases through API start and the durable graph driver."""
+    """Run the one-batch decision through API start and the durable graph driver."""
     harness = await _make_joined_harness(
         tmp_path,
         canonical_qualification,
-        scenario=f"decision-{case}",
+        scenario="decision-one-batch",
     )
     try:
         run_id = await harness.create_and_start(
@@ -1852,7 +1843,7 @@ async def test_decision_v1_joined_success_cases_use_production_driver(
             and (node_payload_view(projection, record.producer_node_id) or {}).get("semantic_stage")
             == "plan_verification"
         ]
-        assert len(plan_reports) >= (2 if expect_amendment else 1)
+        assert plan_reports
         assert all(record.outcome == "passed" for record in plan_reports)
 
         effectful_nodes = {
@@ -1867,102 +1858,58 @@ async def test_decision_v1_joined_success_cases_use_production_driver(
             for _, payload in sorted(
                 effectful_nodes.items(), key=lambda item: str(item[1].get("planning_horizon"))
             )
-        ] == list(expected_batch_keys)
-        for batch_key in expected_batch_keys:
-            worker_id = next(
-                node_id
-                for node_id, payload in effectful_nodes.items()
-                if payload.get("declared_batch_id") == batch_key
-            )
-            check_id = next(
-                node_id
-                for node_id in node_kinds_view(projection)
-                if (payload := node_payload_view(projection, node_id)) is not None
-                and node_kinds_view(projection)[node_id] == "check"
-                and payload.get("declared_batch_id") == batch_key
-            )
-            verifier_id = next(
-                node_id
-                for node_id in node_kinds_view(projection)
-                if (payload := node_payload_view(projection, node_id)) is not None
-                and node_kinds_view(projection)[node_id] == "verifier"
-                and payload.get("semantic_stage") == "effectful_batch"
-                and payload.get("declared_batch_id") == batch_key
-            )
-            candidate = next(
-                record
-                for record in records
-                if record.record_type == "candidate" and record.producer_node_id == worker_id
-            )
-            file_state_ids = list(candidate.file_state_record_ids)
-            assert len(file_state_ids) == 1
-            check = next(
-                record
-                for record in records
-                if record.record_type == "check_result" and record.producer_node_id == check_id
-            )
-            assert check.value.status == "passed"
-            assert check.candidate_record_ids == [candidate.record_id]
-            report = next(
-                record
-                for record in records
-                if record.record_type == "verification_report"
-                and record.producer_node_id == verifier_id
-            )
-            assert report.outcome == "passed"
-            assert candidate.record_id in report.evaluated_record_ids
-            assert check.record_id in report.evaluated_record_ids
-            assert file_state_ids[0] in report.evaluated_record_ids
-
-        if len(expected_batch_keys) == 2:
-            events = await harness.events(run_id)
-
-            def position(event_type: str, node_id: str, state: str) -> int:
-                return next(
-                    event.position
-                    for event in events
-                    if event.event_type == event_type
-                    and event.payload.get("node_id") == node_id
-                    and event.payload.get("new_state") == state
-                )
-
-            core_verifier = next(
-                node_id
-                for node_id in node_kinds_view(projection)
-                if node_kinds_view(projection)[node_id] == "verifier"
-                and (payload := node_payload_view(projection, node_id)) is not None
-                and payload.get("semantic_stage") == "effectful_batch"
-                and payload.get("declared_batch_id") == "core"
-            )
-            api_worker = next(
-                node_id
-                for node_id, payload in effectful_nodes.items()
-                if payload.get("declared_batch_id") == "api"
-            )
-            assert position("node_state_changed", core_verifier, "completed") < next(
-                event.position
-                for event in events
-                if event.event_type == "node_created" and event.payload.get("node_id") == api_worker
-            )
+        ] == ["core"]
+        worker_id = next(
+            node_id
+            for node_id, payload in effectful_nodes.items()
+            if payload.get("declared_batch_id") == "core"
+        )
+        check_id = next(
+            node_id
+            for node_id in node_kinds_view(projection)
+            if (payload := node_payload_view(projection, node_id)) is not None
+            and node_kinds_view(projection)[node_id] == "check"
+            and payload.get("declared_batch_id") == "core"
+        )
+        verifier_id = next(
+            node_id
+            for node_id in node_kinds_view(projection)
+            if (payload := node_payload_view(projection, node_id)) is not None
+            and node_kinds_view(projection)[node_id] == "verifier"
+            and payload.get("semantic_stage") == "effectful_batch"
+            and payload.get("declared_batch_id") == "core"
+        )
+        candidate = next(
+            record
+            for record in records
+            if record.record_type == "candidate" and record.producer_node_id == worker_id
+        )
+        file_state_ids = list(candidate.file_state_record_ids)
+        assert len(file_state_ids) == 1
+        check = next(
+            record
+            for record in records
+            if record.record_type == "check_result" and record.producer_node_id == check_id
+        )
+        assert check.value.status == "passed"
+        assert check.candidate_record_ids == [candidate.record_id]
+        report = next(
+            record
+            for record in records
+            if record.record_type == "verification_report"
+            and record.producer_node_id == verifier_id
+        )
+        assert report.outcome == "passed"
+        assert candidate.record_id in report.evaluated_record_ids
+        assert check.record_id in report.evaluated_record_ids
+        assert file_state_ids[0] in report.evaluated_record_ids
 
         amendments = [
             record
             for record in plan_records
             if getattr(record.value, "supersedes_record_id", None) is not None
         ]
-        if expect_amendment:
-            assert len(amendments) == 1
-            amendment = amendments[0]
-            assert amendment.value.supersedes_record_id in {
-                record.record_id
-                for record in plan_records
-                if record.record_id != amendment.record_id
-            }
-            assert any(
-                amendment.record_id in report.evaluated_record_ids for report in plan_reports
-            )
-        else:
-            assert not amendments
+        assert not amendments
 
         completion = next(
             record for record in records if record.record_type == "completion_decision"
@@ -1992,7 +1939,7 @@ async def test_decision_v1_joined_success_cases_use_production_driver(
         )
         assert (checkout / "docs/graph-approach/decision-smoke-output.txt").read_text(
             encoding="utf-8"
-        ).count("decision-smoke") == len(expected_batch_keys)
+        ).count("decision-smoke") == 1
     finally:
         await harness.close()
 

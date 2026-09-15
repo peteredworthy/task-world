@@ -1,9 +1,9 @@
-"""Integration tests for step-level tool and MCP configuration.
+"""Unit tests for step-level tool and MCP configuration.
 
-Tests the full data flow: YAML → StepConfig → Executor → ExecutionContext → Agent.
+Tests the Pydantic configuration contracts consumed by the execution pipeline.
 """
 
-from orchestrator.config.models import StepConfig, TaskConfig
+from orchestrator.config import StepConfig, TaskConfig
 
 
 class TestStepLevelAvailableTools:

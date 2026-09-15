@@ -130,6 +130,8 @@ __all__ = [
     "run_to_trace_response",
     "token_usage_to_schema",
     "validate_clarification_question_payloads",
+    "is_supported_repository_url",
+    "is_supported_model_base_url",
 ]
 
 # Symbols in this dict are lazy-loaded from routers.tasks to avoid circular
@@ -223,6 +225,24 @@ def is_clarification_pause_reason(*args: Any, **kwargs: Any) -> Any:
     import orchestrator.api.routers.clarifications as _clarifications_router  # noqa: PLC0415
 
     return _clarifications_router.is_clarification_pause_reason(*args, **kwargs)
+
+
+def is_supported_repository_url(value: str) -> bool:
+    """Return whether a repository URL uses a supported clone form."""
+    from orchestrator.api.routers.repos import (  # noqa: PLC0415
+        is_supported_repository_url as _is_supported_repository_url,
+    )
+
+    return _is_supported_repository_url(value)
+
+
+def is_supported_model_base_url(value: str) -> bool:
+    """Return whether model discovery may use the supplied URL."""
+    from orchestrator.api.routers.runners import (  # noqa: PLC0415
+        is_supported_model_base_url as _is_supported_model_base_url,
+    )
+
+    return _is_supported_model_base_url(value)
 
 
 async def load_cost_rollup_facts(

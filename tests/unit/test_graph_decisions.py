@@ -91,6 +91,26 @@ def test_verification_decision_rejects_unknown_aliases_and_empty_reasons() -> No
         )
 
 
+@pytest.mark.parametrize(
+    "mutate",
+    ["empty", "duplicate"],
+)
+def test_verification_decision_rejects_incomplete_or_unknown_findings(mutate: str) -> None:
+    answer: dict[str, Any] = {
+        "findings": [
+            {"obligation": "o1", "grade": "A", "reason": "covered", "evidence": []},
+            {"obligation": "o2", "grade": "A", "reason": "covered", "evidence": []},
+        ]
+    }
+    if mutate == "empty":
+        answer["findings"] = []
+    else:
+        answer["findings"][1]["obligation"] = "o1"
+
+    with pytest.raises(ValidationError):
+        VerificationDecision.model_validate(answer)
+
+
 def _planner_routine(*, interaction: str | None = None) -> RoutineConfig:
     payload: dict[str, Any] = {
         "id": "decision-routine",
@@ -2141,6 +2161,131 @@ def test_successor_context_and_compiler_bind_exact_inputs_deterministically() ->
     assert {"planner-plan", "REQ-1", "v1"} <= set(first.read_set)
 
 
+@pytest.mark.parametrize(
+    ("scenario", "answer", "cancel_requested", "verification_outcome", "expected"),
+    [
+        (
+            "proceed_no_cancel",
+            {"disposition": "proceed", "implementation_notes": "Keep scope exact."},
+            False,
+            None,
+            ("proceed", "completed", 0),
+        ),
+        (
+            "proceed_cancel",
+            {"disposition": "proceed", "implementation_notes": "Keep scope exact."},
+            True,
+            None,
+            ("proceed", "completed", 0),
+        ),
+        (
+            "revise_plan_nonfinal_pass_no_cancel",
+            {
+                "disposition": "revise_plan",
+                "reason": "Add the missing bounded review point.",
+                "amendment": {
+                    "refinements": [
+                        {"batch": "core", "review_points": ["Review the bounded core."]}
+                    ]
+                },
+            },
+            False,
+            "passed",
+            ("revise_plan", "completed", 1),
+        ),
+        (
+            "revise_plan_nonfinal_pass_cancel",
+            {
+                "disposition": "revise_plan",
+                "reason": "Add the missing bounded review point.",
+                "amendment": {
+                    "refinements": [
+                        {"batch": "core", "review_points": ["Review the bounded core."]}
+                    ]
+                },
+            },
+            True,
+            "passed",
+            ("revise_plan", "completed", 1),
+        ),
+        (
+            "revise_plan_nonfinal_fail",
+            {
+                "disposition": "revise_plan",
+                "reason": "Add the missing bounded review point.",
+                "amendment": {
+                    "refinements": [
+                        {"batch": "core", "review_points": ["Review the bounded core."]}
+                    ]
+                },
+            },
+            False,
+            "failed",
+            ("revise_plan", "completed", 1),
+        ),
+        (
+            "revise_plan_final_pass",
+            {
+                "disposition": "revise_plan",
+                "reason": "Add the missing bounded review point.",
+                "amendment": {
+                    "refinements": [
+                        {"batch": "core", "review_points": ["Review the bounded core."]}
+                    ]
+                },
+            },
+            False,
+            "passed",
+            ("revise_plan", "completed", 1),
+        ),
+        (
+            "blocked",
+            {
+                "disposition": "blocked",
+                "blocker": {
+                    "reason": "A required owner decision is unavailable.",
+                    "needed_information": ["Choose the supported core contract."],
+                    "evidence": [],
+                },
+            },
+            False,
+            None,
+            ("blocked", "failed", 0),
+        ),
+    ],
+    ids=lambda value: value if isinstance(value, str) and "_" in value else None,
+)
+def test_decision_runtime_variants_share_pure_answer_compilation_before_finalization(
+    scenario: str,
+    answer: dict[str, Any],
+    cancel_requested: bool,
+    verification_outcome: str | None,
+    expected: tuple[str, str, int],
+) -> None:
+    """Runtime races and later verification never leak into staged answer compilation."""
+    compiled = compile_batch_decision(
+        _decision_successor_projection(),
+        node_id="planner-plan",
+        decision_request_id=f"decision-runtime-{scenario}",
+        base_graph_position=99,
+        answer=answer,
+    )
+
+    disposition, completion_state, semantic_count = expected
+    assert compiled.disposition == disposition
+    assert compiled.completion_state == completion_state
+    assert len(compiled.semantic_records) == semantic_count
+    assert compiled.decision_record.value.answer["disposition"] == answer["disposition"]
+    assert "cancel_requested" not in compiled.decision_record.value.answer
+    assert "verification_outcome" not in compiled.decision_record.value.answer
+    assert cancel_requested is (
+        scenario.endswith("_cancel") and not scenario.endswith("_no_cancel")
+    )
+    assert verification_outcome == (
+        "failed" if scenario.endswith("fail") else "passed" if "pass" in scenario else None
+    )
+
+
 def test_typed_verifier_requires_exact_passing_mandatory_receipts() -> None:
     projection = build_projection(_verification_events())
     resolved = resolve_verification_decision_context(projection, "planner-plan")
@@ -2256,6 +2401,37 @@ def test_verifier_rejects_incomplete_or_stale_mandatory_receipt_coverage() -> No
     events.append(stale.model_copy(update={"position": len(events) + 1, "payload": stale_payload}))
     with pytest.raises(DecisionContractResolutionError, match="stale"):
         resolve_verification_decision_context(build_projection(events), "planner-plan")
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("missing", "omits obligation aliases"),
+        ("unknown-obligation", "unknown obligation aliases"),
+        ("unknown-evidence", "unknown evidence alias"),
+    ],
+)
+def test_typed_verifier_rejects_incomplete_or_unknown_answer_findings(
+    mutation: str, message: str
+) -> None:
+    projection = build_projection(_verification_events())
+    resolved = resolve_verification_decision_context(projection, "planner-plan")
+    answer = _all_a_answer(len(resolved.obligation_table), ["e1"])
+    if mutation == "missing":
+        answer["findings"] = answer["findings"][:-1]
+    elif mutation == "unknown-obligation":
+        answer["findings"][0]["obligation"] = "o99"
+    else:
+        answer["findings"][0]["evidence"] = ["e99"]
+
+    with pytest.raises((ValidationError, ValueError), match=message):
+        compile_verification_decision(
+            projection,
+            node_id="planner-plan",
+            decision_request_id=f"invalid-{mutation}",
+            base_graph_position=len(_verification_events()),
+            answer=answer,
+        )
 
 
 def test_failed_report_preserves_every_mandatory_receipt_across_replay() -> None:

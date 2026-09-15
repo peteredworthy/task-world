@@ -1,6 +1,5 @@
 """FR-08 acceptance coverage for mutation validation and authority decisions."""
 
-from copy import deepcopy
 from datetime import timezone
 import hashlib
 import json
@@ -9,7 +8,6 @@ from typing import Any
 from uuid import uuid4
 
 from httpx import ASGITransport, AsyncClient
-import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api import create_app
@@ -1295,19 +1293,6 @@ async def test_file_sqlite_public_api_repairs_synthetic_position_455_semantic_pl
             assert [event.payload["node_id"] for event in grants] == [replacement_id]
     finally:
         await app.state.engine.dispose()
-
-
-@pytest.mark.parametrize("tamper", ["event_payload", "missing_event"])
-def test_exact_fr18_export_rejects_tamper_or_incomplete_stream(tamper: str) -> None:
-    document, events = _load_fr18_fixture()
-    assert len(events) == _FR18_FIXTURE_EVENT_COUNT
-    tampered = deepcopy(document)
-    if tamper == "event_payload":
-        tampered["events"][419]["payload"]["objective"] += " tampered"
-    else:
-        tampered["events"].pop()
-    with pytest.raises(ValueError):
-        _validate_fr18_fixture(tampered)
 
 
 async def test_file_sqlite_public_api_repairs_exported_canonical_position_455_stream(

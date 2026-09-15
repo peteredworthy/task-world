@@ -23,6 +23,11 @@ leaked background executor task cannot outlive the engine it was using.
 The shared base repo (``_base_repo``) is session-scoped and read-only:
 ``git_repo`` copies it with ``shutil.copytree``. Reads from the shared base
 cannot mutate it.
+
+Integration tests deliberately exercise one representative value at each real
+boundary. Value matrices belong in unit tests, where they do not multiply app,
+database, repository, subprocess, or filesystem setup. Collection fails if a
+direct or indirect parametrization is introduced under this directory.
 """
 
 import shutil
@@ -48,6 +53,27 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 # Statuses considered "in flight" for teardown cleanup.
 _NON_TERMINAL_RUN_STATUSES = frozenset({"active", "paused", "draft", "queued"})
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Reject value matrices at integration boundaries.
+
+    ``callspec`` is attached by pytest for both direct ``parametrize``
+    decorators and parametrized fixtures, so this also catches indirect
+    parametrization without coupling the check to source spelling.
+    """
+    integration_dir = Path(__file__).parent
+    parametrized = [
+        item.nodeid
+        for item in items
+        if integration_dir in Path(str(item.path)).parents and hasattr(item, "callspec")
+    ]
+    if parametrized:
+        formatted = "\n".join(f"  - {nodeid}" for nodeid in parametrized)
+        raise pytest.UsageError(
+            "\nParameterized integration tests are forbidden. Keep one representative "
+            "boundary scenario and move value matrices to tests/unit/:\n" + formatted
+        )
 
 
 # ---------------------------------------------------------------------------

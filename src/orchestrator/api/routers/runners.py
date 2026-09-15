@@ -28,6 +28,11 @@ router = APIRouter(prefix="/api/agent-runners", tags=["agent-runners"])
 _LM_STUDIO_BASE_URL = "http://127.0.0.1:1234"
 
 
+def is_supported_model_base_url(value: str) -> bool:
+    """Return whether a local model discovery URL uses HTTP(S)."""
+    return value.startswith(("http://", "https://"))
+
+
 def _is_loaded_lmstudio_model(models_payload: dict[str, Any], model: str) -> bool:
     """Return whether LM Studio already has *model* loaded in an instance."""
     raw_models = models_payload.get("models")
@@ -192,7 +197,7 @@ async def discover_local_models(
     rather than a 4xx/5xx status code so the UI can surface the error
     without throwing an exception.
     """
-    if not base_url.startswith(("http://", "https://")):
+    if not is_supported_model_base_url(base_url):
         raise HTTPException(
             status_code=422,
             detail="base_url must start with http:// or https://",

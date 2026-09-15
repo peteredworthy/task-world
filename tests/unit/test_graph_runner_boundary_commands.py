@@ -540,6 +540,117 @@ def test_recovery_authority_uses_latest_phase_kind_for_the_same_root(
     assert projection_from_checkpoint(projection_to_checkpoint(recovered)) == recovered
 
 
+@pytest.mark.parametrize("phase", ["baseline", "stage", "final", "recovery"])
+def test_cache_authority_phase_matrix_retains_each_root_in_its_durable_slot(phase: str) -> None:
+    """The four legacy integration variants are pure reducer cases, not DB cases."""
+    projection = _projection()
+    baseline_roots = [_cache_root(".pytest_cache", "ignored")] if phase == "baseline" else []
+    baseline = _apply(
+        projection,
+        "record_runner_baseline",
+        {
+            "execution_id": "exec",
+            "node_id": "node",
+            "lease_id": "lease",
+            "lease_generation": 1,
+            "baseline_snapshot_id": "snap",
+            "baseline_tree_sha": OID,
+            "entries": [],
+            "cache_roots": baseline_roots,
+            "cache_status_evidence": [
+                _cache_root(".pytest_cache/entry", "ignored")
+            ]
+            if baseline_roots
+            else [],
+        },
+    )
+    projection = reduce_event(projection, baseline[0])
+    staged_roots = [_cache_root(".pytest_cache", "ignored")] if phase == "stage" else []
+    staged = _apply(
+        projection,
+        "stage_runner_submission",
+        {
+            "execution_id": "exec",
+            "node_id": "node",
+            "lease_id": "lease",
+            "lease_generation": 1,
+            "base_snapshot_id": "snap",
+            "observed_graph_position": 2,
+            "idempotency_key": "key",
+            "payload": {},
+            "is_mutating": False,
+            "complete_node": False,
+            "new_state": "completed",
+            "staged_snapshot_id": "staged",
+            "staged_tree_sha": OID,
+            "boundary_entries": [],
+            "cache_roots": staged_roots,
+            "cache_status_evidence": (
+                [_cache_root(".pytest_cache/entry", "ignored")] if staged_roots else []
+            ),
+        },
+    )
+    projection = reduce_event(projection, staged[0])
+    if phase == "final":
+        final_events = _apply(
+            projection,
+            "witness_runner_completion",
+            _witness_payload(
+                projection,
+                cache_roots=[_cache_root(".pytest_cache", "ignored")],
+                cache_status_evidence=[_cache_root(".pytest_cache/entry", "ignored")],
+            ),
+        )
+        for event in final_events:
+            projection = reduce_event(projection, event)
+    elif phase == "recovery":
+        entries = [_entry("changed.py", kind="untracked", status="created")]
+        recovery_events = _apply(
+            projection,
+            "request_runner_recovery",
+            {
+                "execution_id": "exec",
+                "node_id": "node",
+                "lease_id": "lease",
+                "lease_generation": 1,
+                "reason": "runner_died",
+                "max_attempts": 3,
+                "recovery_snapshot_id": "recovery",
+                "recovery_snapshot_ref": "refs/orchestrator/snapshots/recovery",
+                "recovery_commit_sha": OID,
+                "final_tree_sha": OID,
+                "boundary_hash": boundary_manifest_hash(
+                    OID, entries, [_cache_root(".pytest_cache/entry", "ignored")]
+                ),
+                "boundary_entries": entries,
+                    "observed_cache_roots": [_cache_root(".pytest_cache", "ignored")],
+                    "cache_status_evidence": [_cache_root(".pytest_cache/entry", "ignored")],
+            },
+        )
+        for event in recovery_events:
+            projection = reduce_event(projection, event)
+
+    attempt = execution_attempts_view(projection)["exec"]
+
+    def root_set(field: str) -> set[tuple[str, str]]:
+        return {(root.path, root.kind) for root in getattr(attempt, field)}
+
+    assert root_set("baseline_cache_roots") == (
+        {(".pytest_cache", "ignored")} if phase == "baseline" else set()
+    )
+    assert root_set("staged_cache_roots") == (
+        {(".pytest_cache", "ignored")} if phase == "stage" else set()
+    )
+    assert root_set("final_cache_roots") == (
+        {(".pytest_cache", "ignored")} if phase == "final" else set()
+    )
+    assert root_set("recovery_observed_cache_roots") == (
+        {(".pytest_cache", "ignored")} if phase == "recovery" else (
+            {(".pytest_cache", "ignored")} if phase == "final" else set()
+        )
+    )
+
+
 def test_recovery_authority_still_rejects_conflicts_within_one_phase() -> None:
     projection = _staged_cache_transition("ignored", "untracked")
     events = _apply(

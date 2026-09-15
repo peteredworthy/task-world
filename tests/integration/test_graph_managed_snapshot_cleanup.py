@@ -174,11 +174,10 @@ async def test_terminal_startup_reconciles_owned_recovery_without_agent_retry(
     assert all(row.status == "completed" for row in agent_rows)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("phase", ["baseline", "submission"])
-async def test_terminal_cancellation_before_recovery_request_converges_in_one_startup_reconcile(
+async def _exercise_terminal_cancellation_reconcile(
     managed_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
     phase: str,
 ) -> None:
     """A terminal owner restores and drains its refs without reviving an agent."""
@@ -237,6 +236,22 @@ async def test_terminal_cancellation_before_recovery_request_converges_in_one_st
 
 
 @pytest.mark.asyncio
+async def test_terminal_cancellation_before_recovery_request_converges_in_one_startup_reconcile(
+    managed_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    await _exercise_terminal_cancellation_reconcile(managed_db, tmp_path, phase="baseline")
+
+
+@pytest.mark.asyncio
+async def test_terminal_cancellation_after_submission_converges_in_one_startup_reconcile(
+    managed_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    await _exercise_terminal_cancellation_reconcile(managed_db, tmp_path, phase="submission")
+
+
+@pytest.mark.asyncio
 async def test_duplicate_delivery_and_crash_after_delete_are_idempotent(
     managed_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], tmp_path: Path
 ) -> None:
@@ -266,10 +281,11 @@ async def test_duplicate_delivery_and_crash_after_delete_are_idempotent(
     assert (await _event_types(sessions, fixture.run_id)).count("cleanup_applied") == 2
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("mutation", ["wrong-tree", "wrong-commit", "same-tree-other-commit"])
-async def test_changed_owned_ref_fails_safely_and_remains_retryable(
-    managed_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], tmp_path: Path, mutation: str
+async def _exercise_changed_owned_ref(
+    managed_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+    *,
+    mutation: str,
 ) -> None:
     _, sessions = managed_db
     fixture = await _managed_fixture(sessions, tmp_path, f"safe-{mutation}", mismatch=False)
@@ -292,6 +308,27 @@ async def test_changed_owned_ref_fails_safely_and_remains_retryable(
         _ref_exists(fixture.repo, ref)
         for ref in _managed_refs(await _rows(sessions, fixture.run_id, "snapshot_cleanup"))
     )
+
+
+@pytest.mark.asyncio
+async def test_changed_owned_ref_wrong_tree_fails_safely_and_remains_retryable(
+    managed_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], tmp_path: Path
+) -> None:
+    await _exercise_changed_owned_ref(managed_db, tmp_path, mutation="wrong-tree")
+
+
+@pytest.mark.asyncio
+async def test_changed_owned_ref_wrong_commit_fails_safely_and_remains_retryable(
+    managed_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], tmp_path: Path
+) -> None:
+    await _exercise_changed_owned_ref(managed_db, tmp_path, mutation="wrong-commit")
+
+
+@pytest.mark.asyncio
+async def test_changed_owned_ref_same_tree_other_commit_fails_safely_and_remains_retryable(
+    managed_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], tmp_path: Path
+) -> None:
+    await _exercise_changed_owned_ref(managed_db, tmp_path, mutation="same-tree-other-commit")
 
 
 @pytest.mark.asyncio

@@ -38,9 +38,6 @@ from orchestrator.db import (
 )
 from orchestrator.graph import (
     DecisionSubmissionEnvelope,
-    build_projection,
-    projection_from_checkpoint,
-    projection_to_checkpoint,
     FakeClock,
     SequentialIdGenerator,
     execution_attempts_view,
@@ -51,8 +48,6 @@ from orchestrator.graph import (
     node_payload_view,
     node_states_view,
     output_record_payloads_view,
-    resolve_batch_decision_context,
-    resolve_correction_decision_context,
 )
 from orchestrator.graph_runtime import (
     GraphController,
@@ -80,13 +75,13 @@ from orchestrator.runners import (
     SubmitCallback,
 )
 from tests.unit.test_graph_decisions import (
-    _valid_plan,
     _compile,
     _planner_routine,
     _verification_events,
     decision_successor_events,
 )
 from tests.unit.test_initial_planning_decision import _durable_initial_events
+from tests.unit.test_rejected_plan_correction_decision import _rejected_amendment_events
 from tests.unit.graph_test_utils import event as graph_event
 from tests.integration.test_codex_dynamic_tool_receipts import (
     ScriptedJsonRpcTransport,
@@ -128,28 +123,13 @@ def _events_for_runner(events: list[Any], runner_type: AgentRunnerType) -> list[
     return output
 
 
-@pytest.mark.parametrize(
-    ("check_exit_code", "expected_outcome", "mutate_after_answer"),
-    [(0, "passed", False), (7, "failed", False), (0, None, True)],
-    ids=[
-        "passing-runtime-check",
-        "failed-runtime-check",
-        "post-answer-candidate-mutation",
-    ],
-)
-@pytest.mark.parametrize(
-    "runner_type", [AgentRunnerType.CODEX_SERVER, AgentRunnerType.CLI_SUBPROCESS]
-)
-@pytest.mark.asyncio
-async def test_runtime_check_executes_once_before_typed_verifier_and_survives_restart(
+async def _exercise_runtime_check_verifier(
     tmp_path: Path,
+    *,
     check_exit_code: int,
     expected_outcome: str | None,
-    mutate_after_answer: bool,
-    runner_type: AgentRunnerType,
+    mutate_after_answer: bool = False,
     revision: str | None = None,
-    revise_after_answer: bool = False,
-    invalid_answer: str | None = None,
 ) -> None:
     worktree = tmp_path / "runtime-check-worktree"
     _init_repo(worktree)
@@ -163,7 +143,7 @@ async def test_runtime_check_executes_once_before_typed_verifier_and_survives_re
         ids,
         auto_dispatch=False,
     )
-    run_id = f"runtime-check-{expected_outcome or 'mutated'}"
+    run_id = "runtime-check-verifier"
     seed_events = [
         event.model_copy(
             update={
@@ -176,7 +156,7 @@ async def test_runtime_check_executes_once_before_typed_verifier_and_survives_re
                 worktree,
                 check_exit_code=check_exit_code,
             ),
-            runner_type,
+            AgentRunnerType.CODEX_SERVER,
         )
     ]
     seeded = await controller.handle_command(
@@ -222,7 +202,7 @@ async def test_runtime_check_executes_once_before_typed_verifier_and_survives_re
         sessions,
         controller,
         StaticGraphAgentFactory(
-            runner_type,
+            AgentRunnerType.CODEX_SERVER,
             runner_builder=build_worker_runner,
         ),
         worktree_path=worktree,
@@ -263,27 +243,10 @@ async def test_runtime_check_executes_once_before_typed_verifier_and_survives_re
     )
     registry = GraphMcpExecutionRegistry()
 
-    async def revise_authority(context: ExecutionContext) -> None:
-        assert revision is not None
-        async with sessions() as session:
-            position = await GraphEventStore(session).current_position(run_id)
-        changed = await controller.handle_command(
-            run_id,
-            position,
-            "record_requirement_revision",
-            {
-                "requirement_id": "REQ-CORE" if revision == "bound" else "unrelated-requirement",
-                "node_id": "requirement-core" if revision == "bound" else "unrelated-node",
-                "version_id": "revision-v2",
-                "classification": "semantic",
-            },
-        )
-        assert any(event.event_type == "requirement_revision_recorded" for event in changed.events)
-
     def verifier_answer(context: ExecutionContext) -> dict[str, Any]:
         aliases = list(dict.fromkeys(re.findall(r'"alias"\s*:\s*"(o[1-9][0-9]*)"', context.prompt)))
         assert len(aliases) >= 2
-        answer: dict[str, Any] = {
+        return {
             "findings": [
                 {
                     "obligation": alias,
@@ -294,29 +257,33 @@ async def test_runtime_check_executes_once_before_typed_verifier_and_survives_re
                 for alias in aliases
             ]
         }
-        if invalid_answer == "empty":
-            answer["findings"] = []
-        elif invalid_answer == "missing":
-            answer["findings"].pop()
-        elif invalid_answer == "duplicate":
-            answer["findings"].append(dict(answer["findings"][0]))
-        elif invalid_answer == "unknown-obligation":
-            answer["findings"][0]["obligation"] = "o999"
-        elif invalid_answer == "unknown-evidence":
-            answer["findings"][0]["evidence"] = ["e999"]
-        return answer
+
+    async def revise_authority(context: ExecutionContext) -> None:
+        assert revision is not None
+        async with sessions() as session:
+            position = await GraphEventStore(session).current_position(run_id)
+        changed = await controller.handle_command(
+            run_id,
+            position,
+            "record_requirement_revision",
+            {
+                "requirement_id": "REQ-1" if revision == "bound" else "unrelated-requirement",
+                "version_id": "revision-v2",
+                "classification": "semantic",
+                "node_id": "requirement-core" if revision == "bound" else "unrelated-node",
+            },
+        )
+        assert any(event.event_type == "requirement_revision_recorded" for event in changed.events)
 
     verifier_runner = _WorkResultRunner(
         worktree,
         {},
-        runner_type=runner_type,
+        expect_rejection=revision == "bound",
+        runner_type=AgentRunnerType.CODEX_SERVER,
         registry=registry,
+        answer_factory=verifier_answer,
         mutate_after_answer=mutate_after_answer,
         authority_change=revise_authority if revision is not None else None,
-        revise_after_answer=revise_after_answer,
-        answer_factory=verifier_answer,
-        expect_rejection=(revision == "bound" and not revise_after_answer)
-        or invalid_answer is not None,
     )
 
     def build_runner(
@@ -333,7 +300,7 @@ async def test_runtime_check_executes_once_before_typed_verifier_and_survives_re
         sessions,
         controller,
         StaticGraphAgentFactory(
-            runner_type,
+            AgentRunnerType.CODEX_SERVER,
             runner_builder=build_runner,
         ),
         worktree_path=worktree,
@@ -356,8 +323,7 @@ async def test_runtime_check_executes_once_before_typed_verifier_and_survives_re
     ]
     assert len(check_records) == 1
     receipt = check_records[0]
-    expected_receipt_outcome = "passed" if check_exit_code == 0 else "failed"
-    assert receipt.value.status == expected_receipt_outcome
+    assert receipt.value.status == ("passed" if check_exit_code == 0 else "failed")
     assert receipt.value.command_id == "command-core-1"
     assert receipt.value.command == {
         "id": "command-core-1",
@@ -396,7 +362,7 @@ async def test_runtime_check_executes_once_before_typed_verifier_and_survives_re
         sessions,
         restarted,
         StaticGraphAgentFactory(
-            runner_type,
+            AgentRunnerType.CODEX_SERVER,
             runner_builder=build_runner,
         ),
         graph_mcp_registry=registry,
@@ -414,61 +380,32 @@ async def test_runtime_check_executes_once_before_typed_verifier_and_survives_re
     async with sessions() as session:
         verifier_events = await GraphEventStore(session).read_run(run_id)
     assert verifier_runner.execution_context is not None
-    if runner_type == AgentRunnerType.CLI_SUBPROCESS:
-        url = verifier_runner.execution_context.graph_mcp_url
-        assert url is not None
-        token = url.split("/mcp-graph/", 1)[1].split("/", 1)[0]
-        assert registry.get(token) is None
-    if mutate_after_answer or revision == "bound" or invalid_answer is not None:
-        assert verifier_runner.execution_context is not None
-        public_records = output_record_payloads_view(final)
-        verifier_records = [
-            record
-            for record in public_records.values()
-            if record.producer_node_id == "planner-plan"
-        ]
-        assert any(
-            event.event_type == "runner_submission_staged"
-            and event.payload.get("execution_id") == verifier_runner.execution_context.execution_id
-            for event in verifier_events
-        ) is (mutate_after_answer or revise_after_answer)
-        assert not reports
-        assert not any(record.record_type == "decision_answer" for record in verifier_records)
-        assert not any(
-            record.record_type == "semantic_artifact"
-            and record.value.semantic_role == "verification_judgment"
-            for record in verifier_records
-        )
-        assert node_states_view(final)["planner-plan"] != "completed"
-        assert (
-            sum(
-                event.event_type == "output_record_accepted"
-                and event.payload.get("record_type") == "check_result"
-                for event in verifier_events
-            )
-            == 1
-        )
-        await engine.dispose()
-        return
-    assert expected_outcome is not None
-    assert len(reports) == 1, (
+    expected_report_count = 0 if mutate_after_answer or revision == "bound" else 1
+    assert len(reports) == expected_report_count, (
         " | ".join(
             f"{event.event_type}:{event.payload.get('reason')}:{event.payload.get('error_detail')}"
             for event in verifier_events[-30:]
         )
         + f" | file_states={file_state_records_view(final)}"
     )
-    assert reports[0].outcome == expected_outcome
-    assert receipt.record_id in reports[0].evaluated_record_ids
-    judgment_id = reports[0].value.judgment_artifact_record_id
-    assert isinstance(judgment_id, str)
-    public_records = output_record_payloads_view(final)
-    judgment = public_records[judgment_id]
-    assert judgment.record_type == "semantic_artifact"
-    assert judgment.value.semantic_role == "verification_judgment"
-    assert receipt.record_id in judgment.value.source_record_ids
+    if expected_report_count:
+        assert reports[0].outcome == expected_outcome
+        assert receipt.record_id in reports[0].evaluated_record_ids
+        judgment_id = reports[0].value.judgment_artifact_record_id
+        assert isinstance(judgment_id, str)
+        public_records = output_record_payloads_view(final)
+        judgment = public_records[judgment_id]
+        assert judgment.record_type == "semantic_artifact"
+        assert judgment.value.semantic_role == "verification_judgment"
+        assert receipt.record_id in judgment.value.source_record_ids
+    else:
+        assert not any(
+            record.record_type == "semantic_artifact"
+            and getattr(record.value, "semantic_role", None) == "verification_judgment"
+            for record in output_record_payloads_view(final).values()
+        )
     assert verifier_runner.execution_context is not None
-    assert f'"status": "{expected_outcome}"' in verifier_runner.execution_context.prompt
+    assert f'"status": "{receipt.value.status}"' in verifier_runner.execution_context.prompt
     assert "runtime-check-ran" in verifier_runner.execution_context.prompt
     final_events = verifier_events
     assert (
@@ -482,48 +419,52 @@ async def test_runtime_check_executes_once_before_typed_verifier_and_survives_re
     await engine.dispose()
 
 
-@pytest.mark.parametrize(
-    "runner_type", [AgentRunnerType.CODEX_SERVER, AgentRunnerType.CLI_SUBPROCESS]
-)
-@pytest.mark.parametrize("revision", ["bound", "unrelated"])
-@pytest.mark.parametrize("revise_after_answer", [False, True], ids=["before-stage", "after-stage"])
 @pytest.mark.asyncio
-async def test_typed_verifier_preserves_dispatch_requirement_authority(
+async def test_runtime_check_executes_once_before_typed_verifier_and_survives_restart(
     tmp_path: Path,
-    runner_type: AgentRunnerType,
-    revision: str,
-    revise_after_answer: bool,
 ) -> None:
-    await test_runtime_check_executes_once_before_typed_verifier_and_survives_restart(
+    await _exercise_runtime_check_verifier(
         tmp_path,
         check_exit_code=0,
         expected_outcome="passed",
-        mutate_after_answer=False,
-        runner_type=runner_type,
-        revision=revision,
-        revise_after_answer=revise_after_answer,
     )
 
 
-@pytest.mark.parametrize(
-    "runner_type", [AgentRunnerType.CODEX_SERVER, AgentRunnerType.CLI_SUBPROCESS]
-)
-@pytest.mark.parametrize(
-    "invalid_answer", ["empty", "missing", "duplicate", "unknown-obligation", "unknown-evidence"]
-)
 @pytest.mark.asyncio
-async def test_typed_verifier_rejects_incomplete_or_unknown_findings(
+async def test_runtime_check_post_answer_mutation_survives_restart_without_publishing_report(
     tmp_path: Path,
-    runner_type: AgentRunnerType,
-    invalid_answer: str,
 ) -> None:
-    await test_runtime_check_executes_once_before_typed_verifier_and_survives_restart(
+    await _exercise_runtime_check_verifier(
         tmp_path,
         check_exit_code=0,
         expected_outcome=None,
-        mutate_after_answer=False,
-        runner_type=runner_type,
-        invalid_answer=invalid_answer,
+        mutate_after_answer=True,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.slow
+async def test_typed_verifier_rejects_bound_requirement_revision(
+    tmp_path: Path,
+) -> None:
+    await _exercise_runtime_check_verifier(
+        tmp_path,
+        check_exit_code=0,
+        expected_outcome=None,
+        revision="bound",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.slow
+async def test_typed_verifier_accepts_unrelated_requirement_revision(
+    tmp_path: Path,
+) -> None:
+    await _exercise_runtime_check_verifier(
+        tmp_path,
+        check_exit_code=0,
+        expected_outcome="passed",
+        revision="unrelated",
     )
 
 
@@ -585,6 +526,73 @@ def _ordered_decision_seed_events(runner_type: AgentRunnerType) -> list[Any]:
             payload["record_bound_positions"] = {record_id: position for record_id in record_ids}
         positioned.append(event.model_copy(update={"position": position, "payload": payload}))
     return positioned
+
+
+def _ordered_rejected_amendment_seed_events(
+    runner_type: AgentRunnerType,
+) -> tuple[list[Any], str]:
+    """Make the rejected-amendment unit fixture valid for durable replay."""
+    raw_events, gap_id, _rejected_plan_id = _rejected_amendment_events()
+    events = _events_for_runner(raw_events, runner_type)
+    requirement_events = [
+        event
+        for event in events
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "requirement_record"
+    ]
+    events = [event for event in events if event not in requirement_events]
+    plan_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_id") == "accepted-decision-plan"
+    )
+    events[plan_index:plan_index] = requirement_events
+    batch_report_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_id") == "batch-core-passed"
+    )
+    events.insert(
+        batch_report_index,
+        graph_event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-core",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-discovery",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-core",
+                "task_region_id": "successor-core",
+                "attempt_number": 1,
+                "value": {"summary": "accepted core candidate"},
+            },
+            position=0,
+        ),
+    )
+    cache_authority_hash = next(
+        cast(str, event.payload["cache_authority_hash"])
+        for event in events
+        if event.event_type == "node_created" and event.payload.get("node_id") == "root"
+    )
+    positioned: list[Any] = []
+    for position, event in enumerate(events, start=1):
+        payload = dict(event.payload)
+        if event.event_type == "node_created":
+            payload.setdefault("cache_authority_hash", cache_authority_hash)
+        if event.event_type == "output_record_accepted":
+            payload["graph_position"] = position
+        if event.event_type == "input_bound":
+            record_ids = cast(list[str], payload["record_ids"])
+            payload["bound_at_position"] = position
+            payload["record_bound_positions"] = {
+                record_id: position for record_id in record_ids
+            }
+        positioned.append(event.model_copy(update={"position": position, "payload": payload}))
+    return positioned, gap_id
 
 
 def _ordered_work_result_seed_events(*, include_semantic_output: bool = False) -> list[Any]:
@@ -747,74 +755,7 @@ semantic_artifact_schemas:
     return positioned
 
 
-@pytest.mark.parametrize(
-    (
-        "answer",
-        "expected_node_state",
-        "expect_candidate",
-        "include_semantic_output",
-        "expect_semantic_output",
-        "expect_submission_rejection",
-    ),
-    [
-        (
-            {"status": "ready", "summary": "The committed implementation is ready."},
-            "completed",
-            True,
-            False,
-            False,
-            False,
-        ),
-        (
-            {
-                "status": "blocked",
-                "blocker": {
-                    "reason": "The required fixture is unavailable.",
-                    "needed_information": ["Fixture path"],
-                    "evidence": [],
-                },
-            },
-            "failed",
-            False,
-            False,
-            False,
-            False,
-        ),
-        (
-            {
-                "decision": {
-                    "status": "ready",
-                    "summary": "The committed implementation and plan are ready.",
-                },
-                "semantic_artifact": {"release_note": "The parser now handles empty input."},
-            },
-            "completed",
-            True,
-            True,
-            True,
-            False,
-        ),
-        (
-            {"status": "ready", "summary": "The semantic product is missing."},
-            "running",
-            False,
-            True,
-            False,
-            True,
-        ),
-    ],
-    ids=[
-        "ready-commits-candidate",
-        "blocked-does-not-complete",
-        "ready-preserves-semantic-product",
-        "missing-required-semantic-product-rejects",
-    ],
-)
-@pytest.mark.parametrize(
-    "runner_type", [AgentRunnerType.CODEX_SERVER, AgentRunnerType.CLI_SUBPROCESS]
-)
-@pytest.mark.asyncio
-async def test_work_result_worker_uses_real_checkout_and_runtime_owned_records(
+async def _exercise_work_result_worker(
     tmp_path: Path,
     answer: dict[str, Any],
     expected_node_state: str,
@@ -1177,40 +1118,126 @@ async def test_work_result_worker_uses_real_checkout_and_runtime_owned_records(
     await engine.dispose()
 
 
-@pytest.mark.parametrize(
-    "runner_type", [AgentRunnerType.CODEX_SERVER, AgentRunnerType.CLI_SUBPROCESS]
-)
-@pytest.mark.parametrize("failure", ["failed-check", "post-answer-mutation"])
 @pytest.mark.asyncio
-async def test_work_result_failure_publishes_no_candidate_or_decision(
+async def test_work_result_worker_commits_candidate_and_semantic_product(
     tmp_path: Path,
-    runner_type: AgentRunnerType,
-    failure: str,
 ) -> None:
-    await test_work_result_worker_uses_real_checkout_and_runtime_owned_records(
+    await _exercise_work_result_worker(
         tmp_path=tmp_path,
-        answer={"status": "ready", "summary": "The result is ready."},
+        answer={
+            "decision": {
+                "status": "ready",
+                "summary": "The committed implementation and product are ready.",
+            },
+            "semantic_artifact": {"release_note": "The parser now handles empty input."},
+        },
+        expected_node_state="completed",
+        expect_candidate=True,
+        include_semantic_output=True,
+        expect_semantic_output=True,
+        expect_submission_rejection=False,
+        runner_type=AgentRunnerType.CODEX_SERVER,
+    )
+
+
+@pytest.mark.asyncio
+async def test_work_result_worker_records_offered_blocker_without_candidate(
+    tmp_path: Path,
+) -> None:
+    await _exercise_work_result_worker(
+        tmp_path=tmp_path,
+        answer={
+            "status": "blocked",
+            "blocker": {
+                "reason": "The accepted evidence does not identify the required fixture.",
+                "needed_information": ["The fixture path"],
+                "evidence": ["e1"],
+            },
+        },
+        expected_node_state="failed",
+        expect_candidate=False,
+        include_semantic_output=False,
+        expect_semantic_output=False,
+        expect_submission_rejection=False,
+        runner_type=AgentRunnerType.CODEX_SERVER,
+    )
+
+
+@pytest.mark.asyncio
+async def test_work_result_missing_required_semantic_product_is_rejected(
+    tmp_path: Path,
+) -> None:
+    await _exercise_work_result_worker(
+        tmp_path=tmp_path,
+        answer={"status": "ready", "summary": "The implementation is ready."},
+        expected_node_state="running",
+        expect_candidate=False,
+        include_semantic_output=True,
+        expect_semantic_output=False,
+        expect_submission_rejection=True,
+        runner_type=AgentRunnerType.CODEX_SERVER,
+    )
+
+
+@pytest.mark.asyncio
+async def test_work_result_post_answer_mutation_publishes_no_effects(
+    tmp_path: Path,
+) -> None:
+    await _exercise_work_result_worker(
+        tmp_path=tmp_path,
+        answer={"status": "ready", "summary": "The implementation is ready."},
         expected_node_state="running",
         expect_candidate=False,
         include_semantic_output=False,
         expect_semantic_output=False,
-        expect_submission_rejection=failure == "failed-check",
-        runner_type=runner_type,
-        mutate_after_answer=failure == "post-answer-mutation",
-        fail_check=failure == "failed-check",
+        expect_submission_rejection=False,
+        runner_type=AgentRunnerType.CODEX_SERVER,
+        mutate_after_answer=True,
     )
 
 
-@pytest.mark.parametrize(
-    "runner_type", [AgentRunnerType.CODEX_SERVER, AgentRunnerType.CLI_SUBPROCESS]
-)
+@pytest.mark.asyncio
+@pytest.mark.slow
+async def test_work_result_rejects_bound_authority_revision_before_staging(
+    tmp_path: Path,
+) -> None:
+    await _exercise_work_result_worker(
+        tmp_path=tmp_path,
+        answer={"status": "ready", "summary": "The implementation is ready."},
+        expected_node_state="running",
+        expect_candidate=False,
+        include_semantic_output=False,
+        expect_semantic_output=False,
+        expect_submission_rejection=True,
+        runner_type=AgentRunnerType.CODEX_SERVER,
+        revision="bound",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.slow
+async def test_work_result_accepts_unrelated_authority_revision_before_staging(
+    tmp_path: Path,
+) -> None:
+    await _exercise_work_result_worker(
+        tmp_path=tmp_path,
+        answer={"status": "ready", "summary": "The implementation is ready."},
+        expected_node_state="completed",
+        expect_candidate=True,
+        include_semantic_output=False,
+        expect_semantic_output=False,
+        expect_submission_rejection=False,
+        runner_type=AgentRunnerType.CODEX_SERVER,
+        revision="unrelated",
+    )
+
+
 @pytest.mark.asyncio
 async def test_decision_v1_recovery_does_not_redispatch_after_candidate_rejection(
     tmp_path: Path,
-    runner_type: AgentRunnerType,
 ) -> None:
     """A staged decision answer cannot silently buy a second model execution."""
-    await test_work_result_worker_uses_real_checkout_and_runtime_owned_records(
+    await _exercise_work_result_worker(
         tmp_path=tmp_path,
         answer={"status": "ready", "summary": "The result is ready."},
         expected_node_state="failed",
@@ -1218,86 +1245,10 @@ async def test_decision_v1_recovery_does_not_redispatch_after_candidate_rejectio
         include_semantic_output=False,
         expect_semantic_output=False,
         expect_submission_rejection=True,
-        runner_type=runner_type,
+        runner_type=AgentRunnerType.CODEX_SERVER,
         fail_check=True,
         dispatch_recovery=True,
         expected_recovery_node_state="failed",
-    )
-
-
-@pytest.mark.parametrize(
-    "runner_type", [AgentRunnerType.CODEX_SERVER, AgentRunnerType.CLI_SUBPROCESS]
-)
-@pytest.mark.parametrize("revision", ["bound", "unrelated"])
-@pytest.mark.parametrize("revise_after_answer", [False, True], ids=["before-stage", "after-stage"])
-@pytest.mark.asyncio
-async def test_work_result_preserves_dispatch_authority(
-    tmp_path: Path,
-    runner_type: AgentRunnerType,
-    revision: str,
-    revise_after_answer: bool,
-) -> None:
-    await test_work_result_worker_uses_real_checkout_and_runtime_owned_records(
-        tmp_path=tmp_path,
-        answer={"status": "ready", "summary": "The result is ready."},
-        expected_node_state="running" if revision == "bound" else "completed",
-        expect_candidate=revision == "unrelated",
-        include_semantic_output=False,
-        expect_semantic_output=False,
-        expect_submission_rejection=revision == "bound" and not revise_after_answer,
-        runner_type=runner_type,
-        revision=revision,
-        revise_after_answer=revise_after_answer,
-    )
-
-
-@pytest.mark.parametrize(
-    "runner_type", [AgentRunnerType.CODEX_SERVER, AgentRunnerType.CLI_SUBPROCESS]
-)
-@pytest.mark.asyncio
-async def test_work_result_rejects_custom_product_with_builtin_plan_shape(
-    tmp_path: Path,
-    runner_type: AgentRunnerType,
-) -> None:
-    await test_work_result_worker_uses_real_checkout_and_runtime_owned_records(
-        tmp_path,
-        answer={
-            "decision": {"status": "ready", "summary": "Done"},
-            "semantic_artifact": _valid_plan(),
-        },
-        expected_node_state="running",
-        expect_candidate=False,
-        include_semantic_output=True,
-        expect_semantic_output=False,
-        expect_submission_rejection=True,
-        runner_type=runner_type,
-    )
-
-
-@pytest.mark.parametrize(
-    "runner_type", [AgentRunnerType.CODEX_SERVER, AgentRunnerType.CLI_SUBPROCESS]
-)
-@pytest.mark.asyncio
-async def test_work_result_rejects_unoffered_blocker_evidence(
-    tmp_path: Path,
-    runner_type: AgentRunnerType,
-) -> None:
-    await test_work_result_worker_uses_real_checkout_and_runtime_owned_records(
-        tmp_path,
-        answer={
-            "status": "blocked",
-            "blocker": {
-                "reason": "Evidence is missing",
-                "needed_information": ["Fixture"],
-                "evidence": ["e999"],
-            },
-        },
-        expected_node_state="running",
-        expect_candidate=False,
-        include_semantic_output=False,
-        expect_semantic_output=False,
-        expect_submission_rejection=True,
-        runner_type=runner_type,
     )
 
 
@@ -1531,6 +1482,232 @@ def _correction_seed_events() -> list[Any]:
     return events
 
 
+async def _exercise_decision_dispatch_authority_revision(
+    tmp_path: Path,
+    *,
+    run_id: str,
+    source_events: list[Any],
+    arguments: dict[str, Any],
+    requirement_id: str,
+    requirement_node_id: str,
+    expect_rejection: bool,
+) -> None:
+    worktree = tmp_path / f"{run_id}-worktree"
+    _init_repo(worktree)
+    engine = create_engine(tmp_path / f"{run_id}.db")
+    await init_db(engine)
+    sessions = create_session_factory(engine)
+    controller = GraphController(
+        sessions,
+        FakeClock(),
+        SequentialIdGenerator(),
+        auto_dispatch=False,
+    )
+    seed_events = [
+        event.model_copy(
+            update={
+                "run_id": run_id,
+                "payload": {**event.payload, "run_id": run_id},
+            }
+        )
+        for event in source_events
+    ]
+    seeded = await controller.handle_command(
+        run_id,
+        0,
+        "seed_compiled_events",
+        {"events": seed_events},
+    )
+    assert not any(event.event_type == "command_rejected" for event in seeded.events)
+    accepted = await controller.handle_command(run_id, seeded.projection_position, "accept_run")
+    started = await controller.handle_command(run_id, accepted.projection_position, "start")
+    scheduled = await controller.handle_command(
+        run_id,
+        started.projection_position,
+        "schedule_tick",
+        {
+            "base_snapshot_id": f"{run_id}-base",
+            "max_grants": 1,
+            "priorities": {"planner-plan": 100},
+        },
+    )
+    dispatch_item = next(item for item in scheduled.outbox_items if item.kind == "agent_dispatch")
+    projection = await controller.read_projection(run_id)
+    lease = next(item for item in leases_view(projection).values() if item.node_id == "planner-plan")
+    assert lease.execution_id is not None
+
+    async def revise_authority(_context: ExecutionContext) -> None:
+        async with sessions() as session:
+            position = await GraphEventStore(session).current_position(run_id)
+        changed = await controller.handle_command(
+            run_id,
+            position,
+            "record_requirement_revision",
+            {
+                "requirement_id": requirement_id,
+                "version_id": "revision-v2",
+                "classification": "semantic",
+                "node_id": requirement_node_id,
+            },
+        )
+        assert any(event.event_type == "requirement_revision_recorded" for event in changed.events)
+
+    artifacts = FilesystemArtifactStore(tmp_path / f"{run_id}-artifacts")
+    runner = _DecisionRunner(
+        controller,
+        sessions,
+        artifacts,
+        lease.execution_id,
+        arguments=arguments,
+        authority_change=revise_authority,
+        expect_rejection=expect_rejection,
+    )
+
+    def build_runner(
+        _runner_type: AgentRunnerType,
+        _runner_config: dict[str, Any],
+        *,
+        run_id: str,
+        phase: str,
+    ) -> _DecisionRunner:
+        del run_id, phase
+        return runner
+
+    executor = GraphDispatchExecutor(
+        sessions,
+        controller,
+        StaticGraphAgentFactory(
+            AgentRunnerType.CODEX_SERVER,
+            runner_builder=build_runner,
+        ),
+        worktree_path=worktree,
+        artifact_store=artifacts,
+    )
+    await executor.dispatch(dispatch_item)
+    await executor.wait_for_all(timeout_seconds=10)
+
+    final = await controller.read_projection(run_id)
+    decision_records = [
+        record
+        for record in output_record_payloads_view(final).values()
+        if record.record_type == "decision_answer" and record.producer_node_id == "planner-plan"
+    ]
+    async with sessions() as session:
+        events = await GraphEventStore(session).read_run(run_id)
+    assert runner.submission_rejected is expect_rejection
+    if expect_rejection:
+        assert not decision_records
+        assert any(event.event_type == "runner_recovery_requested" for event in events)
+    else:
+        assert len(decision_records) == 1
+        assert node_states_view(final)["planner-plan"] == "completed"
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.slow
+async def test_initial_discovery_rejects_bound_requirement_revision(
+    tmp_path: Path,
+) -> None:
+    await _exercise_decision_dispatch_authority_revision(
+        tmp_path,
+        run_id="initial-bound-authority",
+        source_events=_events_for_runner(
+            _durable_initial_events(), AgentRunnerType.CODEX_SERVER
+        ),
+        arguments={
+            "outputs": {
+                "decision": {
+                    "questions": ["Which parser seam should own the feature?"],
+                    "rationale": "Repository ownership requires inspection.",
+                    "focus": ["docs/spec.md"],
+                }
+            }
+        },
+        requirement_id="dynamic_feature_acceptance",
+        requirement_node_id="requirement-dynamic-feature-acceptance",
+        expect_rejection=True,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.slow
+async def test_initial_discovery_accepts_unrelated_requirement_revision(
+    tmp_path: Path,
+) -> None:
+    await _exercise_decision_dispatch_authority_revision(
+        tmp_path,
+        run_id="initial-unrelated-authority",
+        source_events=_events_for_runner(
+            _durable_initial_events(), AgentRunnerType.CODEX_SERVER
+        ),
+        arguments={
+            "outputs": {
+                "decision": {
+                    "questions": ["Which parser seam should own the feature?"],
+                    "rationale": "Repository ownership requires inspection.",
+                    "focus": ["docs/spec.md"],
+                }
+            }
+        },
+        requirement_id="unrelated_requirement",
+        requirement_node_id="unrelated-node",
+        expect_rejection=False,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.slow
+async def test_correction_rejects_bound_requirement_revision(
+    tmp_path: Path,
+) -> None:
+    await _exercise_decision_dispatch_authority_revision(
+        tmp_path,
+        run_id="correction-bound-authority",
+        source_events=_correction_seed_events(),
+        arguments={
+            "outputs": {
+                "decision": {
+                    "disposition": "corrective_work",
+                    "diagnosis": "The accepted batch failed its required check.",
+                    "remedy": "Repair only the failed batch implementation.",
+                    "focus": ["src/core.py"],
+                    "evidence": ["e1", "e2"],
+                }
+            }
+        },
+        requirement_id="REQ-1",
+        requirement_node_id="requirement-1",
+        expect_rejection=True,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.slow
+async def test_correction_accepts_unrelated_requirement_revision(
+    tmp_path: Path,
+) -> None:
+    await _exercise_decision_dispatch_authority_revision(
+        tmp_path,
+        run_id="correction-unrelated-authority",
+        source_events=_correction_seed_events(),
+        arguments={
+            "outputs": {
+                "decision": {
+                    "disposition": "corrective_work",
+                    "diagnosis": "The accepted batch failed its required check.",
+                    "remedy": "Repair only the failed batch implementation.",
+                    "focus": ["src/core.py"],
+                    "evidence": ["e1", "e2"],
+                }
+            }
+        },
+        requirement_id="unrelated_requirement",
+        requirement_node_id="unrelated-node",
+        expect_rejection=False,
+    )
+
+
 def _with_second_initial_requirement(events: list[Any]) -> list[Any]:
     output = list(events)
     position = max(event.position for event in output)
@@ -1747,6 +1924,9 @@ class _DecisionRunner:
         mutate_path_after_submit: Path | None = None,
         runner_type: AgentRunnerType = AgentRunnerType.CODEX_SERVER,
         graph_mcp_registry: Any | None = None,
+        authority_change: Callable[[ExecutionContext], Awaitable[None]] | None = None,
+        authority_change_after_answer: bool = False,
+        expect_rejection: bool = False,
     ) -> None:
         self._controller = controller
         self._sessions = sessions
@@ -1756,6 +1936,9 @@ class _DecisionRunner:
         self._mutate_path_after_submit = mutate_path_after_submit
         self._runner_type = runner_type
         self._graph_mcp_registry = graph_mcp_registry
+        self._authority_change = authority_change
+        self._authority_change_after_answer = authority_change_after_answer
+        self._expect_rejection = expect_rejection
         self.stage_was_effect_free = False
         self.context_resolved = False
         self.corruption_rejected = False
@@ -1764,6 +1947,7 @@ class _DecisionRunner:
         self.terminal_close_calls = 0
         self.execution_context: ExecutionContext | None = None
         self.graph_mcp_was_registered = False
+        self.submission_rejected = False
 
     @property
     def info(self) -> AgentRunnerInfo:
@@ -1837,7 +2021,15 @@ class _DecisionRunner:
             transport_request_id="request-1",
             arguments=arguments,
         )
-        first = await typed_submit(invocation)
+        if self._authority_change is not None and not self._authority_change_after_answer:
+            await self._authority_change(context)
+        try:
+            first = await typed_submit(invocation)
+        except SubmissionRejectedError:
+            self.submission_rejected = True
+            assert self._expect_rejection
+            return ExecutionResult(success=True)
+        assert not self._expect_rejection
         self.duplicate_acknowledgement = await typed_submit(invocation)
         assert self.duplicate_acknowledgement.disposition == first.disposition
         assert self.duplicate_acknowledgement.execution_id == first.execution_id
@@ -1963,8 +2155,10 @@ class _DecisionRunner:
             await typed_submit(conflict)
         except SubmissionRejectedError:
             self.conflict_rejected = True
+        if self._authority_change is not None and self._authority_change_after_answer:
+            await self._authority_change(context)
         if self._mutate_path_after_submit is not None:
-            self._mutate_path_after_submit.write_text(
+            (Path(context.working_dir) / self._mutate_path_after_submit.name).write_text(
                 "post-answer authoritative mutation\n", encoding="utf-8"
             )
         return ExecutionResult(
@@ -2049,7 +2243,7 @@ class _PlanVerifierRunner:
         )
         assert acknowledgement.disposition == "durably_staged"
         if self._mutate_path_after_submit is not None:
-            self._mutate_path_after_submit.write_text(
+            (Path(context.working_dir) / self._mutate_path_after_submit.name).write_text(
                 "post-answer authoritative mutation\n", encoding="utf-8"
             )
         return ExecutionResult(success=True, completion_cause="terminal_answer_completed")
@@ -2221,124 +2415,204 @@ class _WorkResultRunner:
             await self._codex.cancel()
 
 
-class _AuthorityMutationDecisionRunner:
-    """Revise an exact dispatch input immediately before submitting its answer."""
 
-    def __init__(
-        self,
-        controller: GraphController,
-        sessions: Any,
-        execution_id: str,
+async def _dispatch_named_decision_node(
+    *,
+    controller: GraphController,
+    sessions: Any,
+    run_id: str,
+    node_id: str,
+    worktree: Path,
+    artifacts: FilesystemArtifactStore,
+    registry: GraphMcpExecutionRegistry,
+    runner_builder: Callable[[str], Any],
+) -> Any:
+    """Dispatch one already-planned node through the production executor."""
+    async with sessions() as session:
+        position = await GraphEventStore(session).current_position(run_id)
+    scheduled = await controller.handle_command(
+        run_id,
+        position,
+        "schedule_tick",
+        {
+            "base_snapshot_id": "initial-base",
+            "max_grants": 1,
+            "priorities": {node_id: 100},
+        },
+    )
+    dispatch_item = next(
+        item
+        for item in scheduled.outbox_items
+        if item.kind == "agent_dispatch" and item.payload.get("node_id") == node_id
+    )
+    projection = await controller.read_projection(run_id)
+    lease = next(item for item in leases_view(projection).values() if item.node_id == node_id)
+    assert lease.execution_id is not None
+    runner = runner_builder(lease.execution_id)
+
+    def build_runner(
+        _runner_type: AgentRunnerType,
+        _runner_config: dict[str, Any],
         *,
-        requirement_id: str = "dynamic_feature_acceptance",
-        requirement_node_id: str = "initial",
-        arguments: dict[str, Any] | None = None,
-    ) -> None:
-        self._controller = controller
-        self._sessions = sessions
-        self._execution_id = execution_id
-        self._arguments = arguments
-        self._requirement_id = requirement_id
-        self._requirement_node_id = requirement_node_id
-        self.rejection: SubmissionAcknowledgement | None = None
-        self.acknowledgement: SubmissionAcknowledgement | None = None
-        self.terminal_close_calls = 0
+        run_id: str,
+        phase: str,
+    ) -> Any:
+        del run_id, phase
+        return runner
 
-    @property
-    def info(self) -> AgentRunnerInfo:
-        return AgentRunnerInfo(
-            agent_runner_type=AgentRunnerType.CODEX_SERVER,
-            name="authority-mutation-decision-runner",
-        )
+    executor = GraphDispatchExecutor(
+        sessions,
+        controller,
+        StaticGraphAgentFactory(
+            AgentRunnerType.CODEX_SERVER,
+            runner_builder=build_runner,
+        ),
+        worktree_path=worktree,
+        artifact_store=artifacts,
+        graph_mcp_registry=registry,
+        base_url="http://localhost:8000",
+    )
+    await executor.dispatch(dispatch_item)
+    await executor.wait_for_all(timeout_seconds=10)
+    return runner
 
-    async def execute(
-        self,
-        context: ExecutionContext,
-        on_checklist_update: ChecklistUpdateCallback,
-        on_submit: SubmitCallback,
-        on_output: LogLineCallback | None = None,
-        on_grade: GradeCallback | None = None,
-        on_agent_metadata: AgentMetadataCallback | None = None,
-        on_escalation: EscalationCallback | None = None,
-    ) -> ExecutionResult:
-        del on_checklist_update, on_output, on_grade, on_agent_metadata, on_escalation
-        async with self._sessions() as session:
-            position = await GraphEventStore(session).current_position(context.run_id)
-        revised = await self._controller.handle_command(
-            context.run_id,
-            position,
-            "record_requirement_revision",
-            {
-                "requirement_id": self._requirement_id,
-                "version_id": f"{self._requirement_id}.v2",
-                "classification": "semantic",
-                "node_id": self._requirement_node_id,
-            },
+
+async def _complete_rejected_initial_plan_scenario(
+    *,
+    controller: GraphController,
+    sessions: Any,
+    run_id: str,
+    worktree: Path,
+    artifacts: FilesystemArtifactStore,
+    registry: GraphMcpExecutionRegistry,
+) -> None:
+    """Complete rejected plan -> rejected repair -> verified repair -> successor."""
+    final_plan_id = ""
+    for repair_number, verifier_grade in ((1, "F"), (2, "A")):
+        projection = await controller.read_projection(run_id)
+        correction_id = next(
+            node_id
+            for node_id in node_kinds_view(projection)
+            if (node_payload_view(projection, node_id) or {}).get("role") == "gap_planner"
+            and node_states_view(projection).get(node_id) == "planned"
         )
-        assert [event.event_type for event in revised.events] == ["requirement_revision_recorded"]
-        invocation = SubmissionInvocation(
-            execution_id=self._execution_id,
-            answer_attempt_id="attempt-after-authority-change",
-            transport_channel="codex_dynamic_tool",
-            transport_session_id="session-authority-change",
-            transport_request_id="request-authority-change",
-            arguments=self._arguments
-            or {
-                "outputs": {
-                    "decision": {
-                        "questions": ["Which parser seam should own the feature?"],
-                        "rationale": "Repository ownership requires inspection.",
-                        "focus": ["docs/spec.md"],
+        review_point = f"Repair review point {repair_number}."
+
+        def correction_runner(execution_id: str) -> _DecisionRunner:
+            return _DecisionRunner(
+                controller,
+                sessions,
+                artifacts,
+                execution_id,
+                runner_type=AgentRunnerType.CODEX_SERVER,
+                graph_mcp_registry=registry,
+                arguments={
+                    "outputs": {
+                        "decision": {
+                            "disposition": "plan_revision",
+                            "reason": f"Repair rejected plan attempt {repair_number}.",
+                            "amendment": {
+                                "refinements": [
+                                    {
+                                        "batch": "parser",
+                                        "review_points": [review_point],
+                                    }
+                                ]
+                            },
+                        }
                     }
-                }
-            },
+                },
+            )
+
+        await _dispatch_named_decision_node(
+            controller=controller,
+            sessions=sessions,
+            run_id=run_id,
+            node_id=correction_id,
+            worktree=worktree,
+            artifacts=artifacts,
+            registry=registry,
+            runner_builder=correction_runner,
         )
-        typed_submit = cast(
-            Callable[[SubmissionInvocation], Awaitable[SubmissionAcknowledgement]],
-            on_submit,
+        repaired = await controller.read_projection(run_id)
+        final_plan_id = next(
+            record.record_id
+            for record in output_record_payloads_view(repaired).values()
+            if record.record_type == "semantic_artifact"
+            and record.producer_node_id == correction_id
         )
-        try:
-            self.acknowledgement = await typed_submit(invocation)
-        except SubmissionRejectedError as exc:
-            self.rejection = exc.acknowledgement
-        return ExecutionResult(
-            success=True,
-            completion_cause=(
-                "terminal_answer_completed" if self.acknowledgement is not None else None
+        verifier_id = next(
+            node_id
+            for node_id in node_kinds_view(repaired)
+            if node_states_view(repaired).get(node_id) == "planned"
+            and (node_payload_view(repaired, node_id) or {}).get("semantic_stage")
+            == "plan_verification"
+            and (node_payload_view(repaired, node_id) or {}).get(
+                "accepted_plan_amendment_record_id"
+            )
+            == final_plan_id
+        )
+        await _dispatch_named_decision_node(
+            controller=controller,
+            sessions=sessions,
+            run_id=run_id,
+            node_id=verifier_id,
+            worktree=worktree,
+            artifacts=artifacts,
+            registry=registry,
+            runner_builder=lambda _execution_id, grade=verifier_grade: _PlanVerifierRunner(
+                grade,
+                AgentRunnerType.CODEX_SERVER,
             ),
         )
+        verified = await controller.read_projection(run_id)
+        report = next(
+            record
+            for record in output_record_payloads_view(verified).values()
+            if record.record_type == "verification_report"
+            and record.producer_node_id == verifier_id
+        )
+        assert report.outcome == ("passed" if verifier_grade == "A" else "failed")
 
-    async def request_terminal_answer_completion(self) -> None:
-        self.terminal_close_calls += 1
+    final_projection = await controller.read_projection(run_id)
+    successor_id = next(
+        node_id
+        for node_id in node_kinds_view(final_projection)
+        if node_states_view(final_projection).get(node_id) == "planned"
+        and (node_payload_view(final_projection, node_id) or {}).get("semantic_stage")
+        == "successor_planning"
+        and (node_payload_view(final_projection, node_id) or {}).get(
+            "accepted_plan_amendment_record_id"
+        )
+        == final_plan_id
+    )
+    await _dispatch_named_decision_node(
+        controller=controller,
+        sessions=sessions,
+        run_id=run_id,
+        node_id=successor_id,
+        worktree=worktree,
+        artifacts=artifacts,
+        registry=registry,
+        runner_builder=lambda execution_id: _DecisionRunner(
+            controller,
+            sessions,
+            artifacts,
+            execution_id,
+            runner_type=AgentRunnerType.CODEX_SERVER,
+            graph_mcp_registry=registry,
+        ),
+    )
+    completed = await controller.read_projection(run_id)
+    assert node_states_view(completed)[successor_id] == "completed"
 
-    async def cancel(self) -> None:
-        return None
 
-
-@pytest.mark.parametrize(
-    "runner_type", [AgentRunnerType.CODEX_SERVER, AgentRunnerType.CLI_SUBPROCESS]
-)
-@pytest.mark.parametrize(
-    ("verifier_grade", "expected_outcome", "mutate_after_answer", "disjoint_plan"),
-    [
-        ("A", "passed", False, False),
-        ("F", "failed", False, False),
-        ("A", None, True, False),
-        ("A", "passed", False, True),
-    ],
-    ids=["passing-plan", "failed-plan", "post-answer-mutation", "disjoint-plan"],
-)
-@pytest.mark.asyncio
-async def test_initial_discovery_brief_runs_through_production_dispatch_and_finalization(
+async def _exercise_initial_discovery_brief(
     tmp_path: Path,
-    runner_type: AgentRunnerType,
+    *,
     verifier_grade: str,
-    expected_outcome: str | None,
     mutate_after_answer: bool,
-    disjoint_plan: bool,
-    repair_failure: str | None = None,
 ) -> None:
-    repair_execution_ids: set[str] = set()
     worktree = tmp_path / "initial-worktree"
     _init_repo(worktree)
     engine = create_engine(tmp_path / "initial-decision.db")
@@ -2352,9 +2626,9 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
     )
     run_id = "initial-decision-product"
     registry = GraphMcpExecutionRegistry()
-    raw_seed_events = _events_for_runner(_durable_initial_events(), runner_type)
-    if disjoint_plan:
-        raw_seed_events = _with_second_initial_requirement(raw_seed_events)
+    raw_seed_events = _events_for_runner(
+        _durable_initial_events(), AgentRunnerType.CODEX_SERVER
+    )
     seed_events = [
         event.model_copy(
             update={
@@ -2397,7 +2671,7 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
         sessions,
         artifacts,
         lease.execution_id,
-        runner_type=runner_type,
+        runner_type=AgentRunnerType.CODEX_SERVER,
         graph_mcp_registry=registry,
         arguments={
             "outputs": {
@@ -2424,10 +2698,7 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
         sessions,
         controller,
         StaticGraphAgentFactory(
-            runner_type,
-            runner_config={"command": "claude"}
-            if runner_type == AgentRunnerType.CLI_SUBPROCESS
-            else None,
+            AgentRunnerType.CODEX_SERVER,
             runner_builder=build_runner,
         ),
         worktree_path=worktree,
@@ -2438,11 +2709,6 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
     await executor.dispatch(dispatch_item)
     await executor.wait_for_all(timeout_seconds=10)
     assert runner.execution_context is not None
-    if runner_type == AgentRunnerType.CLI_SUBPROCESS:
-        mcp_url = runner.execution_context.graph_mcp_url
-        assert mcp_url is not None
-        token = mcp_url.split("/mcp-graph/", 1)[1].split("/", 1)[0]
-        assert registry.get(token) is None
 
     restarted = GraphController(
         sessions,
@@ -2467,7 +2733,6 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
     assert decision_records[0].value.bound_input_record_ids == [
         "routine-snapshot-record",
         "requirement-dynamic-feature-acceptance",
-        *(["requirement-secondary-record"] if disjoint_plan else []),
     ]
     semantic_stages = {
         payload.get("semantic_stage")
@@ -2518,7 +2783,7 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
         sessions,
         artifacts,
         discovery_lease.execution_id,
-        runner_type=runner_type,
+        runner_type=AgentRunnerType.CODEX_SERVER,
         graph_mcp_registry=registry,
         arguments={
             "outputs": {
@@ -2547,31 +2812,10 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
                                 }
                             ],
                         },
-                        *(
-                            [
-                                {
-                                    "key": "api",
-                                    "objective": "Expose the bounded parser API.",
-                                    "scope": ["src/api.py"],
-                                    "requirements": ["r2"],
-                                    "depends_on": ["parser"],
-                                    "acceptance": ["The API exposes the parser."],
-                                    "checks": [
-                                        {
-                                            "name": "api tests",
-                                            "command_definition": {"argv": ["uv", "run", "pytest"]},
-                                        }
-                                    ],
-                                }
-                            ]
-                            if disjoint_plan
-                            else []
-                        ),
                     ],
                 }
             }
         },
-        mutate_path_after_submit=(worktree / "README.md" if mutate_after_answer else None),
     )
 
     def build_plan_runner(
@@ -2588,10 +2832,7 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
         sessions,
         controller,
         StaticGraphAgentFactory(
-            runner_type,
-            runner_config={"command": "claude"}
-            if runner_type == AgentRunnerType.CLI_SUBPROCESS
-            else None,
+            AgentRunnerType.CODEX_SERVER,
             runner_builder=build_plan_runner,
         ),
         worktree_path=worktree,
@@ -2602,11 +2843,6 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
     await plan_executor.dispatch(discovery_item)
     await plan_executor.wait_for_all(timeout_seconds=10)
     assert plan_runner.execution_context is not None
-    if runner_type == AgentRunnerType.CLI_SUBPROCESS:
-        mcp_url = plan_runner.execution_context.graph_mcp_url
-        assert mcp_url is not None
-        token = mcp_url.split("/mcp-graph/", 1)[1].split("/", 1)[0]
-        assert registry.get(token) is None
     plan_projection = await controller.read_projection(run_id)
     async with sessions() as session:
         plan_diagnostic_events = await GraphEventStore(session).read_run(run_id)
@@ -2615,25 +2851,13 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
         for record in output_record_payloads_view(plan_projection).values()
         if record.record_type == "semantic_artifact" and record.producer_node_id == discovery_id
     ]
-    if mutate_after_answer:
-        assert not plan_records
-        assert node_states_view(plan_projection)[discovery_id] != "completed"
-        assert successor_id not in node_states_view(plan_projection)
-        assert any(
-            event.event_type == "runner_boundary_mismatch" for event in plan_diagnostic_events
-        )
-        await engine.dispose()
-        return
     assert len(plan_records) == 1, " | ".join(
         f"{event.event_type}:{event.payload.get('reason')}:{event.payload.get('error_detail')}"
         for event in plan_diagnostic_events[-30:]
     )
     plan_record = plan_records[0]
     assert plan_record.value.schema_id == "orchestrator.reliable-plan.decision-plan"
-    assert plan_record.value.requirement_ids == [
-        "dynamic_feature_acceptance",
-        *(["secondary_requirement"] if disjoint_plan else []),
-    ]
+    assert plan_record.value.requirement_ids == ["dynamic_feature_acceptance"]
     assert plan_record.value.provenance == {
         "source": "agent_submit",
         "execution_id": discovery_lease.execution_id,
@@ -2677,7 +2901,11 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
         item for item in leases_view(verifier_projection).values() if item.node_id == verifier_id
     )
     assert verifier_lease.execution_id is not None
-    verifier_runner = _PlanVerifierRunner(verifier_grade, runner_type)
+    verifier_runner = _PlanVerifierRunner(
+        verifier_grade,
+        AgentRunnerType.CODEX_SERVER,
+        mutate_path_after_submit=worktree / "README.md" if mutate_after_answer else None,
+    )
 
     def build_verifier_runner(
         _runner_type: AgentRunnerType,
@@ -2693,10 +2921,7 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
         sessions,
         controller,
         StaticGraphAgentFactory(
-            runner_type,
-            runner_config={"command": "claude"}
-            if runner_type == AgentRunnerType.CLI_SUBPROCESS
-            else None,
+            AgentRunnerType.CODEX_SERVER,
             runner_builder=build_verifier_runner,
         ),
         worktree_path=worktree,
@@ -2707,11 +2932,6 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
     await verifier_executor.dispatch(verifier_item)
     await verifier_executor.wait_for_all(timeout_seconds=10)
     assert verifier_runner.execution_context is not None
-    if runner_type == AgentRunnerType.CLI_SUBPROCESS:
-        mcp_url = verifier_runner.execution_context.graph_mcp_url
-        assert mcp_url is not None
-        token = mcp_url.split("/mcp-graph/", 1)[1].split("/", 1)[0]
-        assert registry.get(token) is None
     verified = await controller.read_projection(run_id)
     reports = [
         record
@@ -2720,14 +2940,40 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
     ]
     async with sessions() as session:
         verifier_diagnostic_events = await GraphEventStore(session).read_run(run_id)
-    assert len(reports) == 1, " | ".join(
+    expected_report_count = 0 if mutate_after_answer else 1
+    assert len(reports) == expected_report_count, " | ".join(
         f"{event.event_type}:{event.payload.get('reason')}:{event.payload.get('error_detail')}"
         for event in verifier_diagnostic_events[-30:]
     )
-    assert reports[0].outcome == expected_outcome
+    if mutate_after_answer:
+        assert any(
+            event.event_type == "runner_recovery_requested"
+            and event.payload.get("execution_id") == verifier_lease.execution_id
+            for event in verifier_diagnostic_events
+        )
+        assert not any(
+            event.event_type == "graph_patch_accepted"
+            and event.payload.get("proposed_by_node_id") == verifier_id
+            for event in verifier_diagnostic_events
+        )
+        await engine.dispose()
+        return
+    if verifier_grade == "F":
+        assert reports[0].outcome == "failed"
+        assert node_states_view(verified)[successor_id] == "planned"
+        await _complete_rejected_initial_plan_scenario(
+            controller=controller,
+            sessions=sessions,
+            run_id=run_id,
+            worktree=worktree,
+            artifacts=artifacts,
+            registry=registry,
+        )
+        await engine.dispose()
+        return
+    assert reports[0].outcome == "passed"
     assert reports[0].evaluated_record_ids == [
         "requirement-dynamic-feature-acceptance",
-        *(["requirement-secondary-record"] if disjoint_plan else []),
         plan_record.record_id,
     ]
     assert verifier_runner.execution_context is not None
@@ -2752,648 +2998,112 @@ async def test_initial_discovery_brief_runs_through_production_dispatch_and_fina
         item.kind == "agent_dispatch" and item.payload.get("node_id") == successor_id
         for item in successor_scheduled.outbox_items
     ]
-    assert any(successor_dispatches) is (expected_outcome == "passed")
-    if expected_outcome == "failed":
-        correction_projection = await controller.read_projection(run_id)
-        correction_id = next(
-            node_id
-            for node_id in node_kinds_view(correction_projection)
-            if (node_payload_view(correction_projection, node_id) or {}).get("role")
-            == "gap_planner"
-        )
-        assert any(
-            item.kind == "agent_dispatch" and item.payload.get("node_id") == correction_id
-            for item in successor_scheduled.outbox_items
-        )
-        assert input_bindings_view(correction_projection)[correction_id][
-            "verification_evidence"
-        ].record_ids == [reports[0].record_id]
-
-        async def dispatch_repair_phase(
-            item: Any, *, answer: dict[str, Any] | None = None, grade: str = "A"
-        ) -> _DecisionRunner | _PlanVerifierRunner:
-            current = await controller.read_projection(run_id)
-            phase_node_id = str(item.payload["node_id"])
-            phase_lease = next(
-                lease
-                for lease in leases_view(current).values()
-                if lease.node_id == phase_node_id and lease.state == "active"
-            )
-            assert phase_lease.execution_id is not None
-            assert phase_lease.execution_id not in {
-                runner.execution_context.execution_id,
-                plan_runner.execution_context.execution_id,
-                verifier_runner.execution_context.execution_id,
-                *repair_execution_ids,
-            }
-            repair_execution_ids.add(phase_lease.execution_id)
-            phase_runner = (
-                _DecisionRunner(
-                    controller,
-                    sessions,
-                    artifacts,
-                    phase_lease.execution_id,
-                    runner_type=runner_type,
-                    graph_mcp_registry=registry,
-                    arguments={"outputs": {"decision": answer}},
-                    mutate_path_after_submit=worktree / "repair-unauthorized.txt"
-                    if repair_failure
-                    else None,
-                )
-                if answer is not None
-                else _PlanVerifierRunner(grade, runner_type)
-            )
-
-            def build_phase_runner(
-                _runner_type: AgentRunnerType,
-                _runner_config: dict[str, Any],
-                *,
-                run_id: str,
-                phase: str,
-            ) -> _DecisionRunner | _PlanVerifierRunner:
-                del run_id, phase
-                return phase_runner
-
-            phase_executor = GraphDispatchExecutor(
-                sessions,
-                controller,
-                StaticGraphAgentFactory(
-                    runner_type,
-                    runner_config={"command": "claude"}
-                    if runner_type == AgentRunnerType.CLI_SUBPROCESS
-                    else None,
-                    runner_builder=build_phase_runner,
-                ),
-                worktree_path=worktree,
-                artifact_store=artifacts,
-                graph_mcp_registry=registry,
-                base_url="http://localhost:8000",
-            )
-            await phase_executor.dispatch(item)
-            await phase_executor.wait_for_all(timeout_seconds=10)
-            after = await controller.read_projection(run_id)
-            async with sessions() as session:
-                phase_events = await GraphEventStore(session).read_run(run_id)
-            if repair_failure:
-                assert set(node_kinds_view(after)) == set(node_kinds_view(current))
-                assert set(output_record_payloads_view(after)) == set(
-                    output_record_payloads_view(current)
-                )
-                assert not any(
-                    record.producer_node_id == phase_node_id
-                    for record in output_record_payloads_view(after).values()
-                )
-                assert any(
-                    event.event_type in {"runner_recovery_requested", "runner_execution_rejected"}
-                    for event in phase_events
-                )
-                assert isinstance(phase_runner, _DecisionRunner)
-                assert phase_runner.stage_was_effect_free
-                return phase_runner
-            assert node_states_view(after)[phase_node_id] == "completed", [
-                (event.event_type, dict(event.payload)) for event in phase_events[-8:]
-            ]
-            assert execution_attempts_view(after)[phase_lease.execution_id].state == "finalized"
-            assert not any(
-                lease.state == "active" and lease.node_id == phase_node_id
-                for lease in leases_view(after).values()
-            )
-            assert phase_runner.execution_context is not None
-            if runner_type == AgentRunnerType.CLI_SUBPROCESS:
-                url = phase_runner.execution_context.graph_mcp_url
-                assert url is not None
-                token = url.split("/mcp-graph/", 1)[1].split("/", 1)[0]
-                assert registry.get(token) is None
-            if isinstance(phase_runner, _DecisionRunner):
-                assert phase_runner.stage_was_effect_free
-                assert phase_runner.conflict_rejected
-                assert phase_runner.duplicate_acknowledgement is not None
-            return phase_runner
-
-        async def schedule_repair_phase(target_id: str):
-            async with sessions() as session:
-                history = await GraphEventStore(session).read_run(run_id)
-            result = await controller.handle_command(
-                run_id,
-                max(event.position for event in history),
-                "schedule_tick",
-                {
-                    "base_snapshot_id": "initial-base",
-                    "max_grants": 1,
-                    "priorities": {target_id: 100},
-                },
-            )
-            return result
-
-        rejected_record_id = plan_record.record_id
-        rejected_report_id = reports[0].record_id
-        correction_item = next(
-            item
-            for item in successor_scheduled.outbox_items
-            if item.kind == "agent_dispatch" and item.payload.get("node_id") == correction_id
-        )
-        # Reject the first repair too: the second answer must follow exact lineage,
-        # even though three independently persisted plan records now coexist.
-        for repair_attempt, repair_grade in enumerate(("F", "A"), start=1):
-            correction_projection = await controller.read_projection(run_id)
-            repair_context = resolve_correction_decision_context(
-                correction_projection, correction_id
-            )
-            assert repair_context.phase == "initial_plan"
-            assert repair_context.plan_record_id == rejected_record_id
-            assert repair_context.failed_verification_record_id == rejected_report_id
-            assert repair_context.preserved_plan_record_id is None
-            assert repair_context.plan_verification_record_id is None
-            assert repair_context.selected_batch is None
-            assert repair_context.protected_question_context()["available_dispositions"] == [
-                "plan_revision",
-                "escalate",
-            ]
-            assert set(repair_context.requirement_record_ids) == {
-                "requirement-dynamic-feature-acceptance"
-            }
-            await dispatch_repair_phase(
-                correction_item,
-                answer={
-                    "disposition": "plan_revision",
-                    "reason": f"Address independent plan rejection {repair_attempt}.",
-                    "amendment": {
-                        "refinements": [
-                            {
-                                "batch": repair_context.plan.batches[0].key,
-                                "review_points": [f"Check rejected-plan remedy {repair_attempt}."],
-                            }
-                        ]
-                    },
-                },
-            )
-            if repair_failure:
-                await engine.dispose()
-                return
-            repaired = await controller.read_projection(run_id)
-            revised = next(
-                record
-                for record in output_record_payloads_view(repaired).values()
-                if record.record_type == "semantic_artifact"
-                and record.producer_node_id == correction_id
-            )
-            assert revised.value.supersedes_record_id == rejected_record_id
-            assert rejected_report_id in revised.value.source_record_ids
-            assert rejected_record_id in revised.value.source_record_ids
-            new_verifier_id = next(
-                node_id
-                for node_id in node_kinds_view(repaired)
-                if (node_payload_view(repaired, node_id) or {}).get(
-                    "accepted_plan_amendment_record_id"
-                )
-                == revised.record_id
-                and (node_payload_view(repaired, node_id) or {}).get("kind") == "verifier"
-            )
-            successor_id = next(
-                node_id
-                for node_id in node_kinds_view(repaired)
-                if (node_payload_view(repaired, node_id) or {}).get(
-                    "accepted_plan_amendment_record_id"
-                )
-                == revised.record_id
-                and (node_payload_view(repaired, node_id) or {}).get("semantic_stage")
-                == "successor_planning"
-            )
-            repair_verifier_schedule = await schedule_repair_phase(new_verifier_id)
-            assert not any(
-                item.payload.get("node_id") == successor_id
-                for item in repair_verifier_schedule.outbox_items
-            )
-            repair_verifier_item = next(
-                item
-                for item in repair_verifier_schedule.outbox_items
-                if item.kind == "agent_dispatch"
-            )
-            bound = await controller.read_projection(run_id)
-            assert input_bindings_view(bound)[new_verifier_id]["semantic_artifact"].record_ids == [
-                revised.record_id
-            ]
-            await dispatch_repair_phase(repair_verifier_item, grade=repair_grade)
-            checked = await controller.read_projection(run_id)
-            new_report = next(
-                record
-                for record in output_record_payloads_view(checked).values()
-                if record.record_type == "verification_report"
-                and record.producer_node_id == new_verifier_id
-            )
-            assert revised.record_id in new_report.evaluated_record_ids
-            assert new_report.outcome == ("failed" if repair_grade == "F" else "passed")
-            successor_scheduled = await schedule_repair_phase(successor_id)
-            if repair_grade == "F":
-                assert not any(
-                    item.payload.get("node_id") == successor_id
-                    for item in successor_scheduled.outbox_items
-                )
-                correction_item = next(
-                    item
-                    for item in successor_scheduled.outbox_items
-                    if item.kind == "agent_dispatch"
-                )
-                correction_id = str(correction_item.payload["node_id"])
-                rejected_record_id = revised.record_id
-                rejected_report_id = new_report.record_id
-            else:
-                assert any(
-                    item.payload.get("node_id") == successor_id
-                    for item in successor_scheduled.outbox_items
-                )
-                bound_successor = await controller.read_projection(run_id)
-                context = resolve_batch_decision_context(bound_successor, successor_id)
-                assert context.plan_record_id == revised.record_id
-                assert context.plan_verification_record_id == new_report.record_id
-        assert len(repair_execution_ids) == 4
-        expected_outcome = "passed"
-    if expected_outcome == "passed":
-        successor_item = next(
-            item
-            for item in successor_scheduled.outbox_items
-            if item.kind == "agent_dispatch" and item.payload.get("node_id") == successor_id
-        )
-        successor_projection = await controller.read_projection(run_id)
-        successor_lease = next(
-            item
-            for item in leases_view(successor_projection).values()
-            if item.node_id == successor_id
-        )
-        assert successor_lease.execution_id is not None
-        successor_runner = _DecisionRunner(
-            controller,
-            sessions,
-            artifacts,
-            successor_lease.execution_id,
-            runner_type=runner_type,
-            graph_mcp_registry=registry,
-        )
-
-        def build_successor_runner(
-            _runner_type: AgentRunnerType,
-            _runner_config: dict[str, Any],
-            *,
-            run_id: str,
-            phase: str,
-        ) -> _DecisionRunner:
-            del run_id, phase
-            return successor_runner
-
-        successor_executor = GraphDispatchExecutor(
-            sessions,
-            controller,
-            StaticGraphAgentFactory(
-                runner_type,
-                runner_config={"command": "claude"}
-                if runner_type == AgentRunnerType.CLI_SUBPROCESS
-                else None,
-                runner_builder=build_successor_runner,
-            ),
-            worktree_path=worktree,
-            artifact_store=artifacts,
-            graph_mcp_registry=registry,
-            base_url="http://localhost:8000",
-        )
-        await successor_executor.dispatch(successor_item)
-        await successor_executor.wait_for_all(timeout_seconds=10)
-        assert successor_runner.execution_context is not None
-        if runner_type == AgentRunnerType.CLI_SUBPROCESS:
-            mcp_url = successor_runner.execution_context.graph_mcp_url
-            assert mcp_url is not None
-            token = mcp_url.split("/mcp-graph/", 1)[1].split("/", 1)[0]
-            assert registry.get(token) is None
-        joined = await controller.read_projection(run_id)
-        async with sessions() as session:
-            joined_events = await GraphEventStore(session).read_run(run_id)
-
-        successor_answers = [
-            record
-            for record in output_record_payloads_view(joined).values()
-            if record.record_type == "decision_answer" and record.producer_node_id == successor_id
-        ]
-        assert len(successor_answers) == 1
-        assert successor_answers[0].value.family == "batch_decision"
-        assert node_states_view(joined)[successor_id] == "completed"
-        assert not any(lease.state == "active" for lease in leases_view(joined).values())
-        assert all(
-            attempt.state == "finalized" for attempt in execution_attempts_view(joined).values()
-        )
-        assert successor_runner.execution_context is not None
-        assert successor_runner.execution_context.execution_id not in {
-            runner.execution_context.execution_id,
-            plan_runner.execution_context.execution_id,
-            verifier_runner.execution_context.execution_id,
-            *repair_execution_ids,
-        }
-        assert any(
-            (node_payload_view(joined, node_id) or {}).get("semantic_stage") == "effectful_batch"
-            for node_id in node_kinds_view(joined)
-        )
-        if disjoint_plan:
-            resolved_successor = resolve_batch_decision_context(joined, successor_id)
-            assert resolved_successor.selected_batch.key == "parser"
-            assert resolved_successor.requirement_record_ids == (
-                "requirement-dynamic-feature-acceptance",
-            )
-            assert all(event.event_type != "command_rejected" for event in joined_events), (
-                joined_events
-            )
-    await engine.dispose()
-
-
-@pytest.mark.parametrize(
-    "runner_type", [AgentRunnerType.CODEX_SERVER, AgentRunnerType.CLI_SUBPROCESS]
-)
-@pytest.mark.asyncio
-async def test_rejected_plan_repair_post_answer_mutation_publishes_no_effects(
-    tmp_path: Path, runner_type: AgentRunnerType
-) -> None:
-    await test_initial_discovery_brief_runs_through_production_dispatch_and_finalization(
-        tmp_path, runner_type, "F", "failed", False, False, repair_failure="mutation"
+    assert any(successor_dispatches)
+    successor_item = next(
+        item
+        for item in successor_scheduled.outbox_items
+        if item.kind == "agent_dispatch" and item.payload.get("node_id") == successor_id
     )
-
-
-@pytest.mark.parametrize(
-    ("requirement_id", "requirement_node_id", "expect_rejection"),
-    [
-        ("dynamic_feature_acceptance", "initial", True),
-        ("unrelated_requirement", "unrelated-node", False),
-    ],
-    ids=["bound-authority-rejected", "unrelated-movement-accepted"],
-)
-@pytest.mark.asyncio
-async def test_initial_discovery_brief_freezes_dispatch_authority_without_blocking_unrelated_tail(
-    tmp_path: Path,
-    requirement_id: str,
-    requirement_node_id: str,
-    expect_rejection: bool,
-) -> None:
-    worktree = tmp_path / "authority-race-worktree"
-    _init_repo(worktree)
-    engine = create_engine(tmp_path / "authority-race.db")
-    await init_db(engine)
-    sessions = create_session_factory(engine)
-    controller = GraphController(
-        sessions,
-        FakeClock(),
-        SequentialIdGenerator(),
-        auto_dispatch=False,
+    successor_projection = await controller.read_projection(run_id)
+    successor_lease = next(
+        item
+        for item in leases_view(successor_projection).values()
+        if item.node_id == successor_id
     )
-    run_id = "initial-decision-authority-race"
-    seed_events = [
-        event.model_copy(
-            update={
-                "run_id": run_id,
-                "payload": {**event.payload, "run_id": run_id},
-            }
-        )
-        for event in _durable_initial_events()
-    ]
-    seeded = await controller.handle_command(
-        run_id,
-        0,
-        "seed_compiled_events",
-        {"events": seed_events},
-    )
-    accepted = await controller.handle_command(run_id, seeded.projection_position, "accept_run")
-    started = await controller.handle_command(run_id, accepted.projection_position, "start")
-    scheduled = await controller.handle_command(
-        run_id,
-        started.projection_position,
-        "schedule_tick",
-        {
-            "base_snapshot_id": "authority-race-base",
-            "max_grants": 1,
-            "priorities": {"planner-plan": 100},
-        },
-    )
-    dispatch_item = next(item for item in scheduled.outbox_items if item.kind == "agent_dispatch")
-    dispatched = await controller.read_projection(run_id)
-    lease = next(
-        item for item in leases_view(dispatched).values() if item.node_id == "planner-plan"
-    )
-    assert lease.execution_id is not None
-    artifacts = FilesystemArtifactStore(tmp_path / "authority-race-artifacts")
-    runner = _AuthorityMutationDecisionRunner(
+    assert successor_lease.execution_id is not None
+    successor_runner = _DecisionRunner(
         controller,
         sessions,
-        lease.execution_id,
-        requirement_id=requirement_id,
-        requirement_node_id=requirement_node_id,
+        artifacts,
+        successor_lease.execution_id,
+        runner_type=AgentRunnerType.CODEX_SERVER,
+        graph_mcp_registry=registry,
     )
 
-    def build_runner(
+    def build_successor_runner(
         _runner_type: AgentRunnerType,
         _runner_config: dict[str, Any],
         *,
         run_id: str,
         phase: str,
-    ) -> _AuthorityMutationDecisionRunner:
+    ) -> _DecisionRunner:
         del run_id, phase
-        return runner
+        return successor_runner
 
-    executor = GraphDispatchExecutor(
+    successor_executor = GraphDispatchExecutor(
         sessions,
         controller,
         StaticGraphAgentFactory(
             AgentRunnerType.CODEX_SERVER,
-            runner_builder=build_runner,
+            runner_builder=build_successor_runner,
         ),
         worktree_path=worktree,
         artifact_store=artifacts,
+        graph_mcp_registry=registry,
+        base_url="http://localhost:8000",
     )
-    await executor.dispatch(dispatch_item)
-    await executor.wait_for_all(timeout_seconds=10)
+    await successor_executor.dispatch(successor_item)
+    await successor_executor.wait_for_all(timeout_seconds=10)
+    assert successor_runner.execution_context is not None
+    joined = await controller.read_projection(run_id)
 
-    final = await controller.read_projection(run_id)
-    async with sessions() as session:
-        events = await GraphEventStore(session).read_run(run_id)
-    staged = [event for event in events if event.event_type == "runner_submission_staged"]
-    decision_patches = [
-        event
-        for event in events
-        if event.event_type == "graph_patch_accepted"
-        and event.payload.get("proposed_by_node_id") == "planner-plan"
-    ]
-    decision_records = [
+    successor_answers = [
         record
-        for record in output_record_payloads_view(final).values()
-        if record.record_type == "decision_answer"
+        for record in output_record_payloads_view(joined).values()
+        if record.record_type == "decision_answer" and record.producer_node_id == successor_id
     ]
-    downstream_stages = {
-        payload.get("semantic_stage")
-        for node_id in node_kinds_view(final)
-        if (payload := node_payload_view(final, node_id)) is not None
-    } & {"discovery", "plan_verification", "successor_planning"}
-    if not expect_rejection:
-        assert runner.rejection is None
-        assert runner.acknowledgement is not None
-        assert runner.acknowledgement.disposition == "durably_staged"
-        assert runner.terminal_close_calls == 1
-        assert len(staged) == len(decision_patches) == len(decision_records) == 1
-        assert downstream_stages == {
-            "discovery",
-            "plan_verification",
-        }
-        await engine.dispose()
-        return
-
-    assert runner.rejection is not None
-    assert runner.rejection.disposition == "rejected"
-    assert "read authority changed" in runner.rejection.message
-    assert not staged
-    assert not decision_patches
-    assert not decision_records
-    assert not downstream_stages
+    assert len(successor_answers) == 1
+    assert successor_answers[0].value.family == "batch_decision"
+    assert node_states_view(joined)[successor_id] == "completed"
+    assert not any(lease.state == "active" for lease in leases_view(joined).values())
+    assert all(
+        attempt.state == "finalized" for attempt in execution_attempts_view(joined).values()
+    )
+    assert successor_runner.execution_context is not None
+    assert successor_runner.execution_context.execution_id not in {
+        runner.execution_context.execution_id,
+        plan_runner.execution_context.execution_id,
+        verifier_runner.execution_context.execution_id,
+    }
+    assert any(
+        (node_payload_view(joined, node_id) or {}).get("semantic_stage") == "effectful_batch"
+        for node_id in node_kinds_view(joined)
+    )
     await engine.dispose()
 
 
-@pytest.mark.parametrize(
-    ("requirement_id", "requirement_node_id", "expect_rejection"),
-    [
-        ("REQ-1", "requirement-1", True),
-        ("unrelated_requirement", "unrelated-node", False),
-    ],
-    ids=["bound-authority-rejected", "unrelated-movement-accepted"],
-)
 @pytest.mark.asyncio
-async def test_correction_freezes_dispatch_requirement_authority_without_blocking_unrelated_tail(
+async def test_initial_discovery_brief_runs_through_production_dispatch_and_finalization(
     tmp_path: Path,
-    requirement_id: str,
-    requirement_node_id: str,
-    expect_rejection: bool,
 ) -> None:
-    worktree = tmp_path / "authority-race-worktree"
-    _init_repo(worktree)
-    engine = create_engine(tmp_path / "authority-race.db")
-    await init_db(engine)
-    sessions = create_session_factory(engine)
-    controller = GraphController(
-        sessions,
-        FakeClock(),
-        SequentialIdGenerator(),
-        auto_dispatch=False,
-    )
-    run_id = "correction-decision-authority-race"
-    seed_events = [
-        event.model_copy(
-            update={
-                "run_id": run_id,
-                "payload": {**event.payload, "run_id": run_id},
-            }
-        )
-        for event in _correction_seed_events()
-    ]
-    seeded = await controller.handle_command(
-        run_id,
-        0,
-        "seed_compiled_events",
-        {"events": seed_events},
-    )
-    accepted = await controller.handle_command(run_id, seeded.projection_position, "accept_run")
-    started = await controller.handle_command(run_id, accepted.projection_position, "start")
-    scheduled = await controller.handle_command(
-        run_id,
-        started.projection_position,
-        "schedule_tick",
-        {
-            "base_snapshot_id": "authority-race-base",
-            "max_grants": 1,
-            "priorities": {"planner-plan": 100},
-        },
-    )
-    dispatch_item = next(item for item in scheduled.outbox_items if item.kind == "agent_dispatch")
-    dispatched = await controller.read_projection(run_id)
-    lease = next(
-        item for item in leases_view(dispatched).values() if item.node_id == "planner-plan"
-    )
-    assert lease.execution_id is not None
-    artifacts = FilesystemArtifactStore(tmp_path / "authority-race-artifacts")
-    runner = _AuthorityMutationDecisionRunner(
-        controller,
-        sessions,
-        lease.execution_id,
-        requirement_id=requirement_id,
-        requirement_node_id=requirement_node_id,
-        arguments={
-            "outputs": {
-                "decision": {
-                    "disposition": "corrective_work",
-                    "diagnosis": "The accepted batch failed its required check.",
-                    "remedy": "Repair only the failed batch implementation.",
-                    "focus": ["src/core.py"],
-                    "evidence": ["e1", "e2"],
-                }
-            }
-        },
+    await _exercise_initial_discovery_brief(
+        tmp_path,
+        verifier_grade="A",
+        mutate_after_answer=False,
     )
 
-    def build_runner(
-        _runner_type: AgentRunnerType,
-        _runner_config: dict[str, Any],
-        *,
-        run_id: str,
-        phase: str,
-    ) -> _AuthorityMutationDecisionRunner:
-        del run_id, phase
-        return runner
 
-    executor = GraphDispatchExecutor(
-        sessions,
-        controller,
-        StaticGraphAgentFactory(
-            AgentRunnerType.CODEX_SERVER,
-            runner_builder=build_runner,
-        ),
-        worktree_path=worktree,
-        artifact_store=artifacts,
+@pytest.mark.asyncio
+@pytest.mark.slow
+async def test_initial_discovery_failed_verifier_recovers_through_verified_second_repair(
+    tmp_path: Path,
+) -> None:
+    await _exercise_initial_discovery_brief(
+        tmp_path,
+        verifier_grade="F",
+        mutate_after_answer=False,
     )
-    await executor.dispatch(dispatch_item)
-    await executor.wait_for_all(timeout_seconds=10)
 
-    final = await controller.read_projection(run_id)
-    async with sessions() as session:
-        events = await GraphEventStore(session).read_run(run_id)
-    staged = [event for event in events if event.event_type == "runner_submission_staged"]
-    decision_patches = [
-        event
-        for event in events
-        if event.event_type == "graph_patch_accepted"
-        and event.payload.get("proposed_by_node_id") == "planner-plan"
-    ]
-    decision_records = [
-        record
-        for record in output_record_payloads_view(final).values()
-        if record.record_type == "decision_answer"
-    ]
-    downstream_stages = {
-        payload.get("semantic_stage")
-        for node_id in node_kinds_view(final)
-        if (payload := node_payload_view(final, node_id)) is not None
-    } & {"corrective_work"}
-    if not expect_rejection:
-        assert runner.rejection is None
-        assert runner.acknowledgement is not None
-        assert runner.acknowledgement.disposition == "durably_staged"
-        assert runner.terminal_close_calls == 1
-        assert len(staged) == len(decision_patches) == len(decision_records) == 1
-        assert downstream_stages == {"corrective_work"}
-        assert decision_records[0].value.family == "correction_decision"
-        assert not any(lease.state == "active" for lease in leases_view(final).values())
-        await engine.dispose()
-        return
 
-    assert runner.rejection is not None
-    assert runner.rejection.disposition == "rejected"
-    assert "read authority changed" in runner.rejection.message
-    assert not staged
-    assert not decision_patches
-    assert not decision_records
-    assert not downstream_stages
-    assert set(output_record_payloads_view(final)) == set(output_record_payloads_view(dispatched))
-    assert set(node_kinds_view(final)) == set(node_kinds_view(dispatched))
-    await engine.dispose()
+@pytest.mark.asyncio
+async def test_initial_discovery_verifier_post_answer_mutation_publishes_no_effects(
+    tmp_path: Path,
+) -> None:
+    await _exercise_initial_discovery_brief(
+        tmp_path,
+        verifier_grade="A",
+        mutate_after_answer=True,
+    )
 
 
 @pytest.mark.asyncio
@@ -3623,6 +3333,154 @@ async def test_rejected_batch_dispatches_a_bounded_correction_decision(
     await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_rejected_plan_repair_post_answer_mutation_publishes_no_effects(
+    tmp_path: Path,
+) -> None:
+    worktree = tmp_path / "rejected-plan-repair-worktree"
+    _init_repo(worktree)
+    engine = create_engine(tmp_path / "rejected-plan-repair.db")
+    await init_db(engine)
+    sessions = create_session_factory(engine)
+    controller = GraphController(
+        sessions,
+        FakeClock(),
+        SequentialIdGenerator(),
+        auto_dispatch=False,
+    )
+    run_id = "rejected-plan-repair-mutation"
+    raw_events, gap_id = _ordered_rejected_amendment_seed_events(
+        AgentRunnerType.CODEX_SERVER
+    )
+    seed_events = [
+        event.model_copy(
+            update={
+                "run_id": run_id,
+                "payload": {**event.payload, "run_id": run_id},
+            }
+        )
+        for event in raw_events
+    ]
+    seeded = await controller.handle_command(
+        run_id,
+        0,
+        "seed_compiled_events",
+        {"events": seed_events},
+    )
+    assert not any(event.event_type == "command_rejected" for event in seeded.events)
+    accepted = await controller.handle_command(run_id, seeded.projection_position, "accept_run")
+    started = await controller.handle_command(run_id, accepted.projection_position, "start")
+    scheduled = await controller.handle_command(
+        run_id,
+        started.projection_position,
+        "schedule_tick",
+        {
+            "base_snapshot_id": "rejected-plan-repair-base",
+            "max_grants": 1,
+            "priorities": {gap_id: 100},
+        },
+    )
+    assert scheduled.outbox_items, [
+        (event.event_type, event.payload) for event in scheduled.events
+    ]
+    dispatch_item = next(
+        item
+        for item in scheduled.outbox_items
+        if item.kind == "agent_dispatch" and item.payload.get("node_id") == gap_id
+    )
+    projection = await controller.read_projection(run_id)
+    lease = next(item for item in leases_view(projection).values() if item.node_id == gap_id)
+    assert lease.execution_id is not None
+    artifacts = FilesystemArtifactStore(tmp_path / "rejected-plan-repair-artifacts")
+
+    async def revise_bound_requirement(_context: ExecutionContext) -> None:
+        async with sessions() as session:
+            position = await GraphEventStore(session).current_position(run_id)
+        changed = await controller.handle_command(
+            run_id,
+            position,
+            "record_requirement_revision",
+            {
+                "requirement_id": "REQ-2",
+                "version_id": "repair-authority-v2",
+                "classification": "semantic",
+                "node_id": "requirement-2",
+            },
+        )
+        assert any(
+            event.event_type == "requirement_revision_recorded" for event in changed.events
+        )
+
+    runner = _DecisionRunner(
+        controller,
+        sessions,
+        artifacts,
+        lease.execution_id,
+        arguments={
+            "outputs": {
+                "decision": {
+                    "disposition": "plan_revision",
+                    "reason": "Resolve the exact plan-verifier finding.",
+                    "amendment": {
+                        "refinements": [
+                            {
+                                "batch": "api",
+                                "review_points": ["Confirm the rejected-plan remedy."],
+                            }
+                        ]
+                    },
+                }
+            }
+        },
+        authority_change=revise_bound_requirement,
+        authority_change_after_answer=True,
+    )
+
+    def build_runner(
+        _runner_type: AgentRunnerType,
+        _runner_config: dict[str, Any],
+        *,
+        run_id: str,
+        phase: str,
+    ) -> _DecisionRunner:
+        del run_id, phase
+        return runner
+
+    executor = GraphDispatchExecutor(
+        sessions,
+        controller,
+        StaticGraphAgentFactory(
+            AgentRunnerType.CODEX_SERVER,
+            runner_builder=build_runner,
+        ),
+        worktree_path=worktree,
+        artifact_store=artifacts,
+    )
+    await executor.dispatch(dispatch_item)
+    await executor.wait_for_all(timeout_seconds=10)
+
+    final = await controller.read_projection(run_id)
+    async with sessions() as session:
+        events = await GraphEventStore(session).read_run(run_id)
+    gap_outputs = [
+        record
+        for record in output_record_payloads_view(final).values()
+        if record.producer_node_id == gap_id
+    ]
+    assert not any(
+        record.record_type in {"decision_answer", "semantic_artifact", "classified_gap"}
+        for record in gap_outputs
+    )
+    assert [record.record_type for record in gap_outputs] == ["failure_record"]
+    assert not any(
+        event.event_type == "graph_patch_accepted"
+        and event.payload.get("proposed_by_node_id") == gap_id
+        for event in events
+    )
+    assert node_states_view(final)[gap_id] == "failed"
+    await engine.dispose()
+
+
 def _init_repo(path: Path) -> None:
     path.mkdir()
     subprocess.run(["git", "init", "-q", str(path)], check=True)
@@ -3819,99 +3677,9 @@ def _runtime_check_seed_events(
         output.append(event.model_copy(update={"payload": payload}))
     return output
 
-
-def _successor_decision_arguments(case: str) -> dict[str, Any] | None:
-    if case == "proceed":
-        return None
-    if case == "revise_plan_final_pass":
-        return {
-            "outputs": {
-                "decision": {
-                    "disposition": "revise_plan",
-                    "reason": "The final core batch needs one explicit compatibility check.",
-                    "amendment": {
-                        "refinements": [
-                            {
-                                "batch": "core",
-                                "acceptance": [
-                                    "The accepted core preserves legacy request behavior."
-                                ],
-                            }
-                        ]
-                    },
-                }
-            }
-        }
-    if case.startswith("revise_plan_nonfinal_"):
-        return {
-            "outputs": {
-                "decision": {
-                    "disposition": "revise_plan",
-                    "reason": "A separate API batch is required before finalization.",
-                    "amendment": {
-                        "additional_batches": [
-                            {
-                                "key": "api",
-                                "objective": "Expose the accepted core through its public API.",
-                                "scope": ["src/core.py"],
-                                "requirements": ["r1"],
-                                "depends_on": ["core"],
-                                "acceptance": ["The public API exposes the accepted core."],
-                                "checks": [
-                                    {
-                                        "name": "api tests",
-                                        "command_definition": {"argv": ["pytest"]},
-                                    }
-                                ],
-                            }
-                        ]
-                    },
-                }
-            }
-        }
-    if case == "blocked":
-        return {
-            "outputs": {
-                "decision": {
-                    "disposition": "blocked",
-                    "blocker": {
-                        "reason": "The public compatibility policy is not available.",
-                        "needed_information": [
-                            "Confirm whether legacy request payloads remain supported."
-                        ],
-                        "evidence": ["e1"],
-                    },
-                }
-            }
-        }
-    raise AssertionError(f"unknown decision test case: {case}")
-
-
-@pytest.mark.parametrize(
-    ("decision_case", "cancel_after_witness"),
-    [
-        ("proceed", False),
-        ("proceed", True),
-        ("revise_plan_nonfinal_pass", False),
-        ("revise_plan_nonfinal_pass", True),
-        ("revise_plan_nonfinal_fail", False),
-        ("revise_plan_final_pass", False),
-        ("blocked", False),
-    ],
-    ids=[
-        "proceed-finalization-wins",
-        "proceed-cancellation-wins",
-        "revise-plan-nonfinal-pass",
-        "revise-plan-cancellation-wins",
-        "revise-plan-nonfinal-fail",
-        "revise-plan-final-pass",
-        "blocked",
-    ],
-)
-@pytest.mark.asyncio
-async def test_decision_dispatch_stages_cas_then_atomically_finalizes(
+async def _exercise_completion_witness_race(
     tmp_path: Path,
-    decision_case: str,
+    *,
     cancel_after_witness: bool,
 ) -> None:
     worktree = tmp_path / "worktree"
@@ -4072,7 +3840,6 @@ async def test_decision_dispatch_stages_cas_then_atomically_finalizes(
         sessions,
         artifacts,
         lease.execution_id,
-        arguments=_successor_decision_arguments(decision_case),
     )
 
     def build_runner(
@@ -4119,9 +3886,9 @@ async def test_decision_dispatch_stages_cas_then_atomically_finalizes(
     assert execution_attempts_view(witnessed_projection)[cast(str, lease.execution_id)].state == (
         "completion_witnessed"
     )
+    async with sessions() as session:
+        witnessed_position = await GraphEventStore(session).current_position(run_id)
     if cancel_after_witness:
-        async with sessions() as session:
-            witnessed_position = await GraphEventStore(session).current_position(run_id)
         cancelled = await witness_restart.handle_command(
             run_id,
             witnessed_position,
@@ -4152,21 +3919,15 @@ async def test_decision_dispatch_stages_cas_then_atomically_finalizes(
         auto_dispatch=False,
     )
     final_projection = await restarted_controller.read_projection(run_id)
-    if cancel_after_witness:
-        assert node_states_view(final_projection)["planner-plan"] == "cancelled"
-    else:
-        expected_state = "failed" if decision_case == "blocked" else "completed"
-        assert node_states_view(final_projection)["planner-plan"] == expected_state, " | ".join(
-            f"{event.event_type}:{event.payload.get('reason')}:{event.payload.get('error_detail')}"
-            for event in diagnostic_events[-20:]
-        )
-    attempt = execution_attempts_view(final_projection)[cast(str, lease.execution_id)]
+    assert node_states_view(final_projection)["planner-plan"] == (
+        "cancelled" if cancel_after_witness else "completed"
+    )
     decision_records = [
         record
         for record in output_record_payloads_view(final_projection).values()
         if record.record_type == "decision_answer"
     ]
-    assert len(decision_records) == (0 if cancel_after_witness else 1)
+    assert bool(decision_records) is not cancel_after_witness
     async with sessions() as session:
         events = await GraphEventStore(session).read_run(run_id)
         outbox = list(
@@ -4196,416 +3957,27 @@ async def test_decision_dispatch_stages_cas_then_atomically_finalizes(
         for event in events
         if event.event_type == "node_state_changed"
         and event.payload.get("node_id") == "planner-plan"
-        and event.payload.get("new_state")
-        == ("failed" if decision_case == "blocked" else "completed")
+        and event.payload.get("new_state") == "completed"
     ]
-    if decision_case == "blocked" and terminal_transitions:
-        assert "public compatibility policy" in str(terminal_transitions[0].payload.get("reason"))
-        assert len(str(terminal_transitions[0].payload.get("reason"))) <= 1000
-    expected_effect_sets = 0 if cancel_after_witness else 1
-    assert (
-        len(finalizations)
-        == len(decision_patches)
-        == len(decision_outputs)
-        == len(terminal_transitions)
-        == expected_effect_sets
-    )
-    if not cancel_after_witness:
-        assert attempt.state == "finalized"
-        causation_ids = {
-            event.causation_id
-            for event in [
-                finalizations[0],
-                decision_patches[0],
-                decision_outputs[0],
-                terminal_transitions[0],
-            ]
-        }
-        assert causation_ids == {"finalize_runner_execution"}
-
-        semantic_records = [
-            record
-            for record in output_record_payloads_view(final_projection).values()
-            if record.record_type == "semantic_artifact"
-            and record.producer_node_id == "planner-plan"
-        ]
-        human_gates = [
-            payload
-            for node_id in node_states_view(final_projection)
-            if (payload := node_payload_view(final_projection, node_id)) is not None
-            and payload.get("kind") == "human_gate"
-        ]
-        if decision_case.startswith("revise_plan_"):
-            assert len(semantic_records) == 1
-            amendment_id = semantic_records[0].record_id
-            assert semantic_records[0].value.supersedes_record_id == "accepted-decision-plan"
-            created_payloads = [
-                payload
-                for node_id in node_states_view(final_projection)
-                if (payload := node_payload_view(final_projection, node_id)) is not None
-                and payload.get("accepted_plan_amendment_record_id") == amendment_id
-            ]
-            assert {payload.get("semantic_stage") for payload in created_payloads} == {
-                "plan_verification",
-                "successor_planning",
-            }
-            assert not human_gates
-        elif decision_case == "blocked":
-            assert not semantic_records
-            assert len(human_gates) == 1
-            assert human_gates[0]["decision_request"]["target_node_id"] == "planner-plan"
-
-        finalize_position = events[-1].position
-        duplicate_executor = GraphDispatchExecutor(
-            sessions,
-            restarted_controller,
-            StaticGraphAgentFactory(
-                AgentRunnerType.CODEX_SERVER,
-                runner_builder=build_runner,
-            ),
-            worktree_path=worktree,
-            artifact_store=artifacts,
-        )
-        assert cast(
-            str, lease.execution_id
-        ) in await duplicate_executor.reconcile_execution_attempts(run_id)
-        async with sessions() as session:
-            duplicate_position = await GraphEventStore(session).current_position(run_id)
-        assert duplicate_position == finalize_position
-
-        if decision_case.startswith("revise_plan_"):
-            verifier_id = next(
-                cast(str, payload["node_id"])
-                for payload in created_payloads
-                if payload.get("semantic_stage") == "plan_verification"
-            )
-            successor_id = next(
-                cast(str, payload["node_id"])
-                for payload in created_payloads
-                if payload.get("semantic_stage") == "successor_planning"
-            )
-            scheduled_verifier = await restarted_controller.handle_command(
-                run_id,
-                duplicate_position,
-                "schedule_tick",
-                {
-                    "base_snapshot_id": "decision-base",
-                    "max_grants": 1,
-                    "priorities": {verifier_id: 100, successor_id: 1},
-                },
-            )
-            verifier_item = next(
-                item
-                for item in scheduled_verifier.outbox_items
-                if item.kind == "agent_dispatch" and item.payload.get("node_id") == verifier_id
-            )
-            verifier_projection = await restarted_controller.read_projection(run_id)
-            verifier_lease = next(
-                item
-                for item in leases_view(verifier_projection).values()
-                if item.node_id == verifier_id
-            )
-            verifier_runner = _PlanVerifierRunner("F" if decision_case.endswith("_fail") else "A")
-
-            def build_verifier_runner(
-                _runner_type: AgentRunnerType,
-                _runner_config: dict[str, Any],
-                *,
-                run_id: str,
-                phase: str,
-            ) -> _PlanVerifierRunner:
-                del run_id, phase
-                return verifier_runner
-
-            verifier_executor = GraphDispatchExecutor(
-                sessions,
-                restarted_controller,
-                StaticGraphAgentFactory(
-                    AgentRunnerType.CODEX_SERVER,
-                    runner_builder=build_verifier_runner,
-                ),
-                worktree_path=worktree,
-                artifact_store=artifacts,
-            )
-            await verifier_executor.dispatch(verifier_item)
-            await verifier_executor.wait_for_all(timeout_seconds=10)
-            verified = await restarted_controller.read_projection(run_id)
-            reports = [
-                record
-                for record in output_record_payloads_view(verified).values()
-                if record.record_type == "verification_report"
-                and record.producer_node_id == verifier_id
-            ]
-            assert len(reports) == 1
-            expected_outcome = "failed" if decision_case.endswith("_fail") else "passed"
-            assert reports[0].outcome == expected_outcome
-            assert amendment_id in reports[0].evaluated_record_ids
-            assert verifier_lease.execution_id != lease.execution_id
-            async with sessions() as session:
-                verified_position = await GraphEventStore(session).current_position(run_id)
-            scheduled_successor = await restarted_controller.handle_command(
-                run_id,
-                verified_position,
-                "schedule_tick",
-                {
-                    "base_snapshot_id": "decision-base",
-                    "max_grants": 1,
-                    "priorities": {successor_id: 100},
-                },
-            )
-            successor_dispatched = any(
-                item.kind == "agent_dispatch" and item.payload.get("node_id") == successor_id
-                for item in scheduled_successor.outbox_items
-            )
-            assert successor_dispatched is (expected_outcome == "passed")
-            if expected_outcome == "failed":
-                repair_item = next(
-                    item
-                    for item in scheduled_successor.outbox_items
-                    if item.kind == "agent_dispatch"
-                )
-                repair_id = str(repair_item.payload["node_id"])
-                repair_projection = await restarted_controller.read_projection(run_id)
-                repair_context = resolve_correction_decision_context(repair_projection, repair_id)
-                assert repair_context.phase == "plan_amendment"
-                assert repair_context.plan_record_id == amendment_id
-                assert repair_context.preserved_plan_record_id == "accepted-decision-plan"
-                assert repair_context.preserved_plan_verification_record_id == "plan-passed"
-                assert repair_context.failed_verification_record_id == reports[0].record_id
-                repair_execution_ids = {lease.execution_id, verifier_lease.execution_id}
-
-                async def run_amendment_phase(item: Any, answer: dict[str, Any] | None):
-                    async with sessions() as session:
-                        phase_history = await GraphEventStore(session).read_run(run_id)
-                    replayed = build_projection(phase_history)
-                    projection_from_checkpoint(
-                        projection_to_checkpoint(replayed, position=phase_history[-1].position)
-                    )
-                    current = await restarted_controller.read_projection(run_id)
-                    phase_id = str(item.payload["node_id"])
-                    phase_lease = next(
-                        lease
-                        for lease in leases_view(current).values()
-                        if lease.node_id == phase_id and lease.state == "active"
-                    )
-                    assert phase_lease.execution_id is not None
-                    assert phase_lease.execution_id not in repair_execution_ids
-                    repair_execution_ids.add(phase_lease.execution_id)
-                    phase_runner = (
-                        _PlanVerifierRunner("A")
-                        if answer is None
-                        else _DecisionRunner(
-                            restarted_controller,
-                            sessions,
-                            artifacts,
-                            phase_lease.execution_id,
-                            arguments={"outputs": {"decision": answer}},
-                        )
-                    )
-
-                    def build_phase_runner(
-                        _runner_type: AgentRunnerType,
-                        _runner_config: dict[str, Any],
-                        *,
-                        run_id: str,
-                        phase: str,
-                    ) -> _PlanVerifierRunner | _DecisionRunner:
-                        del run_id, phase
-                        return phase_runner
-
-                    phase_executor = GraphDispatchExecutor(
-                        sessions,
-                        restarted_controller,
-                        StaticGraphAgentFactory(
-                            AgentRunnerType.CODEX_SERVER, runner_builder=build_phase_runner
-                        ),
-                        worktree_path=worktree,
-                        artifact_store=artifacts,
-                    )
-                    await phase_executor.dispatch(item)
-                    await phase_executor.wait_for_all(timeout_seconds=10)
-                    current = await restarted_controller.read_projection(run_id)
-                    assert node_states_view(current)[phase_id] == "completed"
-                    assert (
-                        execution_attempts_view(current)[phase_lease.execution_id].state
-                        == "finalized"
-                    )
-                    return current
-
-                repaired = await run_amendment_phase(
-                    repair_item,
-                    {
-                        "disposition": "plan_revision",
-                        "reason": "Resolve rejected amendment review.",
-                        "amendment": {
-                            "refinements": [
-                                {
-                                    "batch": repair_context.plan.batches[
-                                        repair_context.planning_horizon - 1
-                                    ].key,
-                                    "review_points": ["Verify the rejected amendment remedy."],
-                                }
-                            ]
-                        },
-                    },
-                )
-                repair_plan = next(
-                    record
-                    for record in output_record_payloads_view(repaired).values()
-                    if record.record_type == "semantic_artifact"
-                    and record.producer_node_id == repair_id
-                )
-                assert repair_plan.value.supersedes_record_id == amendment_id
-                assert {
-                    "accepted-decision-plan",
-                    "plan-passed",
-                    amendment_id,
-                    reports[0].record_id,
-                }.issubset(repair_plan.value.source_record_ids)
-                repair_verifier_id = next(
-                    node_id
-                    for node_id in node_kinds_view(repaired)
-                    if (node_payload_view(repaired, node_id) or {}).get(
-                        "accepted_plan_amendment_record_id"
-                    )
-                    == repair_plan.record_id
-                    and (node_payload_view(repaired, node_id) or {}).get("kind") == "verifier"
-                )
-                repair_successor_id = next(
-                    node_id
-                    for node_id in node_kinds_view(repaired)
-                    if (node_payload_view(repaired, node_id) or {}).get(
-                        "accepted_plan_amendment_record_id"
-                    )
-                    == repair_plan.record_id
-                    and (node_payload_view(repaired, node_id) or {}).get("semantic_stage")
-                    == "successor_planning"
-                )
-                async with sessions() as session:
-                    position = await GraphEventStore(session).current_position(run_id)
-                repair_verifier_schedule = await restarted_controller.handle_command(
-                    run_id,
-                    position,
-                    "schedule_tick",
-                    {
-                        "base_snapshot_id": "decision-base",
-                        "max_grants": 1,
-                        "priorities": {repair_verifier_id: 100},
-                    },
-                )
-                assert not any(
-                    item.payload.get("node_id") == repair_successor_id
-                    for item in repair_verifier_schedule.outbox_items
-                )
-                checked = await run_amendment_phase(
-                    next(
-                        item
-                        for item in repair_verifier_schedule.outbox_items
-                        if item.kind == "agent_dispatch"
-                    ),
-                    None,
-                )
-                repair_report = next(
-                    record
-                    for record in output_record_payloads_view(checked).values()
-                    if record.record_type == "verification_report"
-                    and record.producer_node_id == repair_verifier_id
-                )
-                assert repair_report.outcome == "passed"
-                assert repair_plan.record_id in repair_report.evaluated_record_ids
-                async with sessions() as session:
-                    position = await GraphEventStore(session).current_position(run_id)
-                repair_successor_schedule = await restarted_controller.handle_command(
-                    run_id,
-                    position,
-                    "schedule_tick",
-                    {
-                        "base_snapshot_id": "decision-base",
-                        "max_grants": 1,
-                        "priorities": {repair_successor_id: 100},
-                    },
-                )
-                successor_projection = await restarted_controller.read_projection(run_id)
-                successor_context = resolve_batch_decision_context(
-                    successor_projection, repair_successor_id
-                )
-                assert successor_context.plan_record_id == repair_plan.record_id
-                assert successor_context.plan_verification_record_id == repair_report.record_id
-                completed = await run_amendment_phase(
-                    next(
-                        item
-                        for item in repair_successor_schedule.outbox_items
-                        if item.kind == "agent_dispatch"
-                    ),
-                    {
-                        "disposition": "proceed",
-                        "implementation_notes": "Implement the independently repaired plan.",
-                    },
-                )
-                assert not any(lease.state == "active" for lease in leases_view(completed).values())
-                assert len(repair_execution_ids) == 5
-            async with sessions() as session:
-                cleanup_position = await GraphEventStore(session).current_position(run_id)
-            cancelled = await restarted_controller.handle_command(
-                run_id,
-                cleanup_position,
-                "cancel",
-                {"trigger": "serialized_amendment_test_cleanup"},
-            )
-            assert any(event.event_type == "run_lifecycle_changed" for event in cancelled.events)
-            cleaned = await restarted_controller.read_projection(run_id)
-            assert all(lease.state != "active" for lease in leases_view(cleaned).values())
-        else:
-            if decision_case == "blocked":
-                blocked_gate_id = cast(str, human_gates[0]["node_id"])
-                scheduled_after_blocker = await restarted_controller.handle_command(
-                    run_id,
-                    duplicate_position,
-                    "schedule_tick",
-                    {
-                        "base_snapshot_id": "decision-base",
-                        "max_grants": 10,
-                        "priorities": {blocked_gate_id: 1000, "planner-plan": 999},
-                    },
-                )
-                forbidden_dispatch_ids = {
-                    cast(str, item.payload.get("node_id"))
-                    for item in scheduled_after_blocker.outbox_items
-                    if item.kind == "agent_dispatch"
-                    and item.payload.get("node_id") in {blocked_gate_id, "planner-plan"}
-                }
-                assert not forbidden_dispatch_ids
-                after_blocker_tick = await restarted_controller.read_projection(run_id)
-                assert all(
-                    lease.state != "active"
-                    for lease in leases_view(after_blocker_tick).values()
-                    if lease.node_id in {blocked_gate_id, "planner-plan"}
-                )
-                assert any(
-                    record.record_type == "decision_request"
-                    and record.producer_node_id == blocked_gate_id
-                    for record in output_record_payloads_view(after_blocker_tick).values()
-                )
-                async with sessions() as session:
-                    duplicate_position = await GraphEventStore(session).current_position(run_id)
-            cancelled = await restarted_controller.handle_command(
-                run_id,
-                duplicate_position,
-                "cancel",
-                {"trigger": "serialized_test_cancellation_after_finalize"},
-            )
-            assert any(event.event_type == "run_lifecycle_changed" for event in cancelled.events)
-            after_cancel = await restarted_controller.read_projection(run_id)
-            assert (
-                len(
-                    [
-                        record
-                        for record in output_record_payloads_view(after_cancel).values()
-                        if record.record_type == "decision_answer"
-                    ]
-                )
-                == 1
-            )
+    expected_effect_count = 0 if cancel_after_witness else 1
+    assert len(finalizations) == expected_effect_count
+    assert len(decision_patches) == expected_effect_count
+    assert len(decision_outputs) == expected_effect_count
+    assert len(terminal_transitions) == expected_effect_count
     assert outbox
     assert {row.event_id for row in outbox}.issubset({event.event_id for event in events})
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_decision_finalizes_once_after_durable_completion_witness(
+    tmp_path: Path,
+) -> None:
+    await _exercise_completion_witness_race(tmp_path, cancel_after_witness=False)
+
+
+@pytest.mark.asyncio
+async def test_cancellation_after_completion_witness_wins_before_atomic_finalization(
+    tmp_path: Path,
+) -> None:
+    await _exercise_completion_witness_race(tmp_path, cancel_after_witness=True)

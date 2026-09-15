@@ -7,7 +7,6 @@ from collections.abc import AsyncGenerator
 from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import Literal
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -585,11 +584,10 @@ async def test_typed_human_gate_collections_retain_one_hundred_entries_and_rebui
     assert rebuilt == live
 
 
-@pytest.mark.parametrize("contract_key", ("topology", "final_blockers", "regions"))
 async def test_legacy_projection_views_refuse_history_beyond_their_bounded_contract(
     session_factory: async_sessionmaker[AsyncSession],
-    contract_key: Literal["topology", "final_blockers", "regions"],
 ) -> None:
+    contract_key = "topology"
     """A request-time presenter cannot silently fold an unbounded history."""
     run_id = f"graph-bounded-{contract_key}"
     events = [

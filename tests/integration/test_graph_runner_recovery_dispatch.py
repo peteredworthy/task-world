@@ -714,16 +714,12 @@ async def test_runner_recovery_wraps_real_controller_completion_rejection(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("restorer", "cause_type"),
-    [(FailingGitRecoveryRestorer(), GitError), (FailingWorktreeRecoveryRestorer(), WorktreeError)],
-)
 async def test_runner_recovery_wraps_concrete_restore_failures(
     recovery_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
-    restorer: object,
-    cause_type: type[GitError],
 ) -> None:
+    restorer = FailingGitRecoveryRestorer()
+    cause_type = GitError
     _, session_factory = recovery_db
     fixture = await _recovery_fixture(session_factory, tmp_path, f"recovery-{cause_type.__name__}")
 
@@ -739,6 +735,30 @@ async def test_runner_recovery_wraps_concrete_restore_failures(
     assert not any(
         event.event_type == "runner_recovery_completed"
         for event in await _events(session_factory, f"recovery-{cause_type.__name__}")
+    )
+
+
+@pytest.mark.asyncio
+async def test_runner_recovery_wraps_concrete_worktree_restore_failures(
+    recovery_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """A worktree restore failure keeps recovery retryable and preserves its cause."""
+    _, session_factory = recovery_db
+    run_id = "recovery-WorktreeError"
+    fixture = await _recovery_fixture(session_factory, tmp_path, run_id)
+
+    with pytest.raises(RecoveryRestoreError) as caught:
+        await _executor(
+            session_factory,
+            fixture.controller,
+            fixture.repo,
+            tmp_path,
+            runner_recovery_restorer=FailingWorktreeRecoveryRestorer(),
+        ).dispatch(fixture.item)
+    assert isinstance(caught.value.__cause__, WorktreeError)
+    assert not any(
+        event.event_type == "runner_recovery_completed" for event in await _events(session_factory, run_id)
     )
 
 

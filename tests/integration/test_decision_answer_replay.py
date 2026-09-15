@@ -350,19 +350,28 @@ async def test_replay_requires_durable_event_authorization(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mismatch", ["diagnostic", "evidence"])
-async def test_replay_rejects_mismatched_owner_diagnostic_or_evidence(
+async def test_replay_rejects_mismatched_owner_evidence(
     tmp_path: Path,
-    mismatch: str,
 ) -> None:
     store, ref, source, sessions, isolated_sessions = await _capture(
-        tmp_path / mismatch,
+        tmp_path / "evidence",
         status="rejected",
         response="answer validation failed",
-        owner_diagnostic_message=(
-            "A different failure was recorded." if mismatch == "diagnostic" else None
-        ),
-        owner_extra_evidence_ref=("evidence:different-owner" if mismatch == "evidence" else None),
+        owner_extra_evidence_ref="evidence:different-owner",
+    )
+
+    with pytest.raises(ValueError, match="owner diagnostic mismatch"):
+        await _replay(store, ref, source, sessions, isolated_sessions)
+
+
+@pytest.mark.asyncio
+async def test_replay_rejects_mismatched_owner_diagnostic(tmp_path: Path) -> None:
+    """Replay must also reject a durable rejection with a changed diagnostic."""
+    store, ref, source, sessions, isolated_sessions = await _capture(
+        tmp_path / "diagnostic",
+        status="rejected",
+        response="answer validation failed",
+        owner_diagnostic_message="A different failure was recorded.",
     )
 
     with pytest.raises(ValueError, match="owner diagnostic mismatch"):

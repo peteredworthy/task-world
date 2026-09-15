@@ -248,20 +248,7 @@ def _decision_seed(run_id: str) -> list[Any]:
     return final
 
 
-@pytest.mark.parametrize(
-    "point",
-    [
-        "pre_stage",
-        "after_staging_pre_witness",
-        "after_witness_pre_finalization",
-        "after_commit_pre_ack",
-    ],
-)
-@pytest.mark.asyncio
-async def test_decision_v1_crash_matrix_replays_without_duplicate_effects(
-    tmp_path: Path,
-    point: CrashBarrierPoint,
-) -> None:
+async def _exercise_decision_v1_crash_matrix(tmp_path: Path, point: str) -> None:
     worktree = tmp_path / "worktree"
     _init_repo(worktree)
     engine = create_engine(tmp_path / "decision-crash.db")
@@ -390,13 +377,18 @@ async def test_decision_v1_crash_matrix_replays_without_duplicate_effects(
         if point == "pre_stage":
             assert attempt.state == "recovered"
             assert counts["runner_submission_staged"] == 0
+            assert counts["runner_completion_witnessed"] == 0
             assert counts["runner_execution_finalized"] == 0
+            assert counts["decision_answer"] == 0
+            assert counts["decision_patch"] == 0
             assert node_states_view(final_projection)["planner-plan"] == "failed"
         elif point == "after_staging_pre_witness":
             assert attempt.state == "recovered"
             assert counts["runner_submission_staged"] == 1
             assert counts["runner_completion_witnessed"] == 0
             assert counts["runner_execution_finalized"] == 0
+            assert counts["decision_answer"] == 0
+            assert counts["decision_patch"] == 0
             assert node_states_view(final_projection)["planner-plan"] == "failed"
         else:
             assert attempt.state == "finalized"
@@ -406,15 +398,23 @@ async def test_decision_v1_crash_matrix_replays_without_duplicate_effects(
             assert counts["decision_answer"] == 1
             assert counts["decision_patch"] == 1
             assert node_states_view(final_projection)["planner-plan"] == "completed"
-        assert len(
-            [
-                record
-                for record in output_record_payloads_view(final_projection).values()
-                if record.record_type == "decision_answer"
-            ]
-        ) == (1 if point in {"after_witness_pre_finalization", "after_commit_pre_ack"} else 0)
+        assert (
+            len(
+                [
+                    record
+                    for record in output_record_payloads_view(final_projection).values()
+                    if record.record_type == "decision_answer"
+                ]
+            )
+            == (1 if point in {"after_witness_pre_finalization", "after_commit_pre_ack"} else 0)
+        )
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_decision_v1_replays_after_commit_without_duplicate_effects(tmp_path: Path) -> None:
+    await _exercise_decision_v1_crash_matrix(tmp_path, "after_commit_pre_ack")
 
 
 @pytest.mark.asyncio
@@ -602,21 +602,9 @@ async def test_rejection_budget_survives_redelivery_restart_recovery_and_replays
         await engine.dispose()
 
 
-@pytest.mark.parametrize(
-    ("failure_kind", "recovery_reason", "category", "next_action"),
-    [
-        (
-            "environment",
-            "validation_environment_blocked",
-            "infrastructure_environment",
-            "resolve_environment",
-        ),
-        ("runner", "runner_died", "execution", "retry_or_recover"),
-    ],
-)
-@pytest.mark.asyncio
-async def test_noncorrectable_decision_rejection_enters_and_completes_recovery(
+async def _exercise_noncorrectable_decision_recovery(
     tmp_path: Path,
+    *,
     failure_kind: str,
     recovery_reason: str,
     category: str,
@@ -724,3 +712,29 @@ async def test_noncorrectable_decision_rejection_enters_and_completes_recovery(
         assert not any(event.event_type == "decision_answer_rejected" for event in events)
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_noncorrectable_environment_rejection_enters_and_completes_recovery(
+    tmp_path: Path,
+) -> None:
+    await _exercise_noncorrectable_decision_recovery(
+        tmp_path,
+        failure_kind="environment",
+        recovery_reason="validation_environment_blocked",
+        category="infrastructure_environment",
+        next_action="resolve_environment",
+    )
+
+
+@pytest.mark.asyncio
+async def test_noncorrectable_runner_failure_enters_and_completes_recovery(
+    tmp_path: Path,
+) -> None:
+    await _exercise_noncorrectable_decision_recovery(
+        tmp_path,
+        failure_kind="runner",
+        recovery_reason="runner_died",
+        category="execution",
+        next_action="retry_or_recover",
+    )

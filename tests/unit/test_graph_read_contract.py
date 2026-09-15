@@ -1,13 +1,28 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncGenerator
+from typing import Literal
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import store
-from orchestrator.graph_runtime.store import summarize_graph_event
+from orchestrator.graph_runtime import GraphEventStore
+from orchestrator.graph_runtime.store import GraphReadModelUnavailable, summarize_graph_event
 import orchestrator.api.routers.graph as graph_router
+
+
+@pytest.fixture
+async def bounded_session() -> AsyncGenerator[AsyncSession, None]:
+    engine = create_engine(":memory:")
+    await init_db(engine)
+    factory = create_session_factory(engine)
+    async with factory() as session:
+        yield session
+    await engine.dispose()
 
 
 @pytest.mark.parametrize(
@@ -83,8 +98,14 @@ def test_bound_graph_json_replaces_over_budget_values_deterministically(value: o
     )
 
 
-def test_candidate_identity_compaction_preserves_r1_namespace_metadata() -> None:
-    candidate_id = "candidate-" + ("候" * 1_000)
+@pytest.mark.parametrize(
+    "candidate_id",
+    ["candidate-" + ("x" * 1_000), "候" * 100],
+    ids=["ascii-over-budget", "utf8-over-budget"],
+)
+def test_candidate_identity_compaction_preserves_r1_namespace_metadata(
+    candidate_id: str,
+) -> None:
     event = EventEnvelope(
         event_id="verification-1",
         event_type="verification_passed",
@@ -106,6 +127,39 @@ def test_candidate_identity_compaction_preserves_r1_namespace_metadata() -> None
     assert first["candidate_id_original_bytes"] == len(candidate_id.encode())
     assert len(first["candidate_id_sha256"]) == 64
     assert candidate_id not in json.dumps(first, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("contract_key", ["topology", "final_blockers", "regions"])
+async def test_bounded_projection_history_refuses_each_over_cap_contract(
+    bounded_session: AsyncSession,
+    contract_key: Literal["topology", "final_blockers", "regions"],
+) -> None:
+    run_id = f"bounded-{contract_key}"
+    events = [
+        EventEnvelope(
+            event_id=f"node-{index}",
+            event_type="node_created",
+            run_id=run_id,
+            position=-1,
+            schema_version=1,
+            actor=Actor(kind=ActorKind.CONTROLLER),
+            timestamp=FakeClock().now(),
+            payload={
+                "node_id": f"node-{index}",
+                "kind": "worker",
+                "role": "builder",
+                "state": "planned",
+            },
+        )
+        for index in range(101)
+    ]
+    await GraphEventStore(bounded_session).append_events(run_id, 0, events)
+
+    with pytest.raises(GraphReadModelUnavailable, match="history_exceeds_bounded_view_cap"):
+        await GraphEventStore(bounded_session).read_current_bounded_projection_history(
+            run_id,
+            contract_key=contract_key,
+        )
 
 
 def test_typed_graph_collections_declare_pydantic_native_contracts() -> None:

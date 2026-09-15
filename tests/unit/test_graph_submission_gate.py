@@ -224,7 +224,7 @@ def test_source_specific_timeouts_are_validated_and_project_default_is_long(
         PROJECT_SUBMISSION_GATE_TIMEOUT_SECONDS,
     ]
 
-    for invalid in (True, 0, 3601, "30"):
+    for invalid in (True, 0, 3601, "725"):
         with pytest.raises(SubmissionQualityGateError, match="timeout"):
             resolve_submission_gate_commands(
                 node_payload={**node, "acceptance_command_timeout_seconds": invalid},

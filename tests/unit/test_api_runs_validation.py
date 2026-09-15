@@ -12,6 +12,8 @@ from orchestrator.api import (
     RecoverRequest,
     ResumeRunRequest,
 )
+from orchestrator.api.schemas.model_profiles import AgentRunnerModelProfileDefaultsSchema
+from orchestrator.api.schemas.review import AgentResolveConflictsRequest
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +66,33 @@ def test_non_selectable_agent_runner_type_rejected(
     with pytest.raises(ValidationError) as exc_info:
         build_request(agent_runner_type)
     assert "Invalid agent_runner_type" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("invalid", [1, ["codex_server"]])
+def test_non_string_agent_runner_type_rejected_at_every_run_request_boundary(
+    invalid: object,
+) -> None:
+    """JSON numbers and arrays must not be coerced into runner identifiers."""
+    builders = (
+        lambda value: CreateRunRequest(
+            routine_id="r", repo_name="proj", branch="main", agent_runner_type=value
+        ),
+        lambda value: ResumeRunRequest(agent_runner_type=value),
+        lambda value: RecoverRequest(target_task_id="T-01", agent_runner_type=value),
+        lambda value: AgentResolveConflictsRequest(agent_runner_type=value),
+    )
+    for build in builders:
+        with pytest.raises(ValidationError, match="must be a string"):
+            build(invalid)
+
+
+@pytest.mark.parametrize("invalid", [1, ["codex_server"]])
+def test_model_profile_defaults_reject_non_string_runner_type(invalid: object) -> None:
+    with pytest.raises(ValidationError, match="must be a string"):
+        AgentRunnerModelProfileDefaultsSchema(
+            agent_runner_type=invalid,
+            model_profile_defaults={},
+        )
 
 
 def test_valid_lowercase_agent_runner_type_accepted() -> None:

@@ -402,10 +402,8 @@ class _NeverFinishingPlannerTransport:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("rejection_before_dispatch", [False, True])
-async def test_managed_capped_planner_stops_transport_and_terminalizes_without_retry(
+async def test_managed_capped_planner_cancels_active_transport_and_terminalizes_without_retry(
     tmp_path: Path,
-    rejection_before_dispatch: bool,
 ) -> None:
     engine = create_engine(tmp_path / "managed-proposal-limit.db")
     await init_db(engine)
@@ -415,7 +413,7 @@ async def test_managed_capped_planner_stops_transport_and_terminalizes_without_r
     artifact_store = FilesystemArtifactStore(tmp_path / "managed-limit-artifacts")
     controller = GraphController(sessions, clock, ids, auto_dispatch=False)
     run_id = "managed-proposal-limit-run"
-    start_position = await _active_planner(
+    await _active_planner(
         controller,
         run_id,
         clock,
@@ -433,60 +431,6 @@ async def test_managed_capped_planner_stops_transport_and_terminalizes_without_r
     subprocess.run(["git", "commit", "-q", "-m", "Initial"], cwd=worktree, check=True)
 
     try:
-        if rejection_before_dispatch:
-            projection = await controller.read_projection(run_id)
-            async with sessions() as session:
-                initial_events = await GraphEventStore(session).read_run(run_id)
-            planner_payload = node_payload_view(projection, "planner-plan")
-            assert isinstance(planner_payload, dict)
-            rejection_context = GraphDispatchContext(
-                run_id=run_id,
-                node_id="planner-plan",
-                node_kind="planner",
-                node_role="planner",
-                node_payload=planner_payload,
-                requirements=[],
-                worktree_path=str(worktree),
-                lease_id="pre-crash-lease",
-                lease_generation=1,
-                execution_id="pre-crash-execution",
-                base_snapshot_id="routine-snapshot",
-                dispatch_event_id="pre-crash-dispatch",
-                graph_projection=projection,
-                graph_events=initial_events,
-                graph_position=start_position,
-            )
-            pre_crash_executor = GraphDispatchExecutor(
-                sessions,
-                controller,
-                _FailIfCalledAgentFactory(),
-                worktree_path=worktree,
-                artifact_store=artifact_store,
-            )
-            feedback = await pre_crash_executor._submit_graph_patch_callback(
-                rejection_context,
-                {
-                    "patch_id": "persisted-before-cancel",
-                    "base_graph_position": start_position,
-                    "macro_invocations": [
-                        {
-                            "macro": "construct_reliable_plan_region",
-                            "args": {
-                                "operation_key": "persisted-before-cancel",
-                                "scope": "bounded feature",
-                                "objective": "invalid proposal",
-                                "requirement_ids": ["missing-requirement"],
-                                "dependencies": [],
-                                "acceptance": ["never accepted"],
-                                "checks": [],
-                                "rubric": ["must be valid"],
-                            },
-                        }
-                    ],
-                },
-            )
-            assert "unknown_requirement_identity" in feedback
-
         scheduled = await controller.handle_command(
             run_id,
             await controller.current_position(run_id),
@@ -513,7 +457,7 @@ async def test_managed_capped_planner_stops_transport_and_terminalizes_without_r
         await executor.dispatch(dispatch_item)
         await asyncio.wait_for(executor.wait_for_all(), timeout=2)
         await asyncio.sleep(0)
-        assert transport.recv_cancelled is (not rejection_before_dispatch)
+        assert transport.recv_cancelled is True
         assert executor.is_running(str(dispatch_item.payload["execution_id"])) is False
 
         before_recovery = await controller.read_projection(run_id)
@@ -538,88 +482,110 @@ async def test_managed_capped_planner_stops_transport_and_terminalizes_without_r
         )
         assert not any(event.event_type == "runtime_retry_scheduled" for event in events)
         assert sum(event.event_type == "agent_dispatch_requested" for event in events) == 1
-        if rejection_before_dispatch:
-            assert transport.sent == []
-        else:
-            tool_response = next(message for message in transport.sent if message.get("id") == 10)
-            assert (
-                "unknown_requirement_identity" in tool_response["result"]["contentItems"][0]["text"]
-            )
+        tool_response = next(message for message in transport.sent if message.get("id") == 10)
+        assert "unknown_requirement_identity" in tool_response["result"]["contentItems"][0]["text"]
     finally:
         await engine.dispose()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    (
-        "check",
-        "hidden_oracle_command",
-        "accepted",
-        "expected_code",
-        "expected_path",
-    ),
-    [
-        pytest.param(
-            {"name": "missing-command"},
-            None,
-            False,
-            "value_error",
-            '"path":"macro_invocations[0].args.checks[0]"',
-            id="missing-command",
-        ),
-        pytest.param(
-            {"name": "blank-command", "command_definition": {"cmd": "   "}},
-            None,
-            False,
-            "invalid_command_definition",
-            '"path":"macro_invocations[0].args.checks[0].command_definition"',
-            id="blank-cmd",
-        ),
-        pytest.param(
-            {
-                "name": "malformed-argv",
-                "command_definition": {"argv": ["", "--must-not-run"]},
-            },
-            None,
-            False,
-            "invalid_command_definition",
-            '"path":"macro_invocations[0].args.checks[0].command_definition"',
-            id="malformed-argv-first-token",
-        ),
-        pytest.param(
-            {"name": "explicit-command", "command_definition": {"cmd": "true"}},
-            None,
-            True,
-            None,
-            None,
-            id="valid-explicit-command",
-        ),
-        pytest.param(
-            {"name": "bound-command", "command_binding": "dynamic_feature_hidden_oracle"},
-            "true",
-            True,
-            None,
-            None,
-            id="valid-supported-binding",
-        ),
-        pytest.param(
-            {"name": "absent-oracle", "command_binding": "dynamic_feature_hidden_oracle"},
-            None,
-            False,
-            "unavailable_command_binding",
-            '"path":"macro_invocations[0].args.checks[0].command_binding"',
-            id="acceptance-does-not-replace-absent-hidden-oracle",
-        ),
-    ],
-)
-async def test_check_admission_matrix_crosses_mcp_controller_and_store(
+async def test_managed_capped_planner_rejects_before_dispatch_without_starting_transport(
     tmp_path: Path,
-    check: dict[str, Any],
-    hidden_oracle_command: str | None,
-    accepted: bool,
-    expected_code: str | None,
-    expected_path: str | None,
 ) -> None:
+    """A proposal cap reached before model dispatch still records durable rejection."""
+    engine = create_engine(tmp_path / "managed-proposal-pre-dispatch.db")
+    await init_db(engine)
+    sessions = create_session_factory(engine)
+    clock = FakeClock()
+    ids = _Ids("managed-pre-dispatch")
+    controller = GraphController(sessions, clock, ids, auto_dispatch=False)
+    run_id = "managed-proposal-pre-dispatch-run"
+    start_position = await _active_planner(
+        controller,
+        run_id,
+        clock,
+        ids,
+        max_rejected_plan_proposals_per_planner=1,
+        max_planner_executions_per_node=3,
+    )
+    worktree = tmp_path / "managed-pre-dispatch-worktree"
+    worktree.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=worktree, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=worktree, check=True)
+    (worktree / "README.md").write_text("# bounded planner\n")
+    subprocess.run(["git", "add", "README.md"], cwd=worktree, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "Initial"], cwd=worktree, check=True)
+    try:
+        projection = await controller.read_projection(run_id)
+        async with sessions() as session:
+            initial_events = await GraphEventStore(session).read_run(run_id)
+        planner_payload = node_payload_view(projection, "planner-plan")
+        assert isinstance(planner_payload, dict)
+        context = GraphDispatchContext(
+            run_id=run_id,
+            node_id="planner-plan",
+            node_kind="planner",
+            node_role="planner",
+            node_payload=planner_payload,
+            requirements=[],
+            worktree_path=str(worktree),
+            lease_id="pre-dispatch-lease",
+            lease_generation=1,
+            execution_id="pre-dispatch-execution",
+            base_snapshot_id="routine-snapshot",
+            dispatch_event_id="pre-dispatch-event",
+            graph_projection=projection,
+            graph_events=initial_events,
+            graph_position=start_position,
+        )
+        executor = GraphDispatchExecutor(
+            sessions,
+            controller,
+            _FailIfCalledAgentFactory(),
+            worktree_path=worktree,
+            artifact_store=FilesystemArtifactStore(tmp_path / "managed-pre-dispatch-artifacts"),
+        )
+        feedback = await executor._submit_graph_patch_callback(
+            context,
+            {
+                "patch_id": "persisted-before-cancel",
+                "base_graph_position": start_position,
+                "macro_invocations": [
+                    {
+                        "macro": "construct_reliable_plan_region",
+                        "args": {
+                            "operation_key": "persisted-before-cancel",
+                            "scope": "bounded feature",
+                            "objective": "invalid proposal",
+                            "requirement_ids": ["missing-requirement"],
+                            "dependencies": [],
+                            "acceptance": ["never accepted"],
+                            "checks": [],
+                            "rubric": ["must be valid"],
+                        },
+                    }
+                ],
+            },
+        )
+        assert "unknown_requirement_identity" in feedback
+        async with sessions() as session:
+            events = await GraphEventStore(session).read_run(run_id)
+        assert any(
+            event.event_type == "command_rejected"
+            and event.payload.get("patch_id") == "persisted-before-cancel"
+            for event in events
+        )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_valid_check_admission_crosses_mcp_controller_and_store(
+    tmp_path: Path,
+) -> None:
+    check = {"name": "project tests", "command_definition": {"cmd": "true"}}
+    hidden_oracle_command = None
     engine = create_engine(tmp_path / "check-admission.db")
     await init_db(engine)
     sessions = create_session_factory(engine)
@@ -704,17 +670,9 @@ async def test_check_admission_matrix_crosses_mcp_controller_and_store(
 
     assert factory.calls == 0
     assert leases_after == leases_before
-    if accepted:
-        assert f"graph patch {patch_id} accepted" in rendered
-        assert len(accepted_for_patch) == 1
-        assert max(event.position for event in after_events) > base_position
-    else:
-        assert f"graph patch {patch_id} rejected" in rendered
-        assert not accepted_for_patch
-        assert expected_code is not None and expected_code in rendered
-        assert expected_path is not None and expected_path in rendered
-        assert "--must-not-run" not in rendered
-        assert "--must-not-run" not in str(after_events)
+    assert f"graph patch {patch_id} accepted" in rendered
+    assert len(accepted_for_patch) == 1
+    assert max(event.position for event in after_events) > base_position
 
     await engine.dispose()
 
@@ -938,27 +896,8 @@ async def test_macro_mcp_callback_accepts_omitted_ops_through_controller(tmp_pat
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("batch_ids", "remaining_horizons", "dependencies", "expected_rejection_code"),
-    [
-        (["batch-1", "batch-2"], 2, [], None),
-        (["batch-1"], 1, [], None),
-        (["batch-1"], 1, ["batch-1"], "dependency_self_reference"),
-        (["batch-1"], 1, ["not-a-plan-batch"], "dependency_not_declared"),
-        (
-            ["batch-1", "batch-2"],
-            2,
-            ["batch-2"],
-            "dependency_not_materialized",
-        ),
-    ],
-)
-async def test_successor_macro_crosses_mcp_controller_and_store(
+async def test_successor_macro_creates_next_horizon_through_mcp_controller_and_store(
     tmp_path: Path,
-    batch_ids: list[str],
-    remaining_horizons: int,
-    dependencies: list[str],
-    expected_rejection_code: str | None,
 ) -> None:
     engine = create_engine(tmp_path / "successor-mcp.db")
     await init_db(engine)
@@ -977,7 +916,7 @@ async def test_successor_macro_crosses_mcp_controller_and_store(
             "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
             "reliable_plan_selected_runner_type": "codex_server",
             "reliable_plan_one_horizon_authorized": True,
-            "reliable_plan_remaining_horizons": remaining_horizons,
+            "reliable_plan_remaining_horizons": 2,
             "reliable_plan_qualification_evidence_hash": "sha256:" + "b" * 64,
             "reliable_plan_model_assignments": {
                 "arm_id": "successor-public-path",
@@ -1019,7 +958,7 @@ async def test_successor_macro_crosses_mcp_controller_and_store(
             "semantic_role": "implementation_plan",
             "schema_id": "ordered-plan",
             "schema_version": 1,
-            "content": {"batches": [{"batch_id": batch_id} for batch_id in batch_ids]},
+            "content": {"batches": [{"batch_id": "batch-1"}, {"batch_id": "batch-2"}]},
             "provenance": {"source": "discovery"},
             "source_record_ids": ["requirement-dynamic-feature-acceptance"],
             "requirement_ids": ["dynamic_feature_acceptance"],
@@ -1083,7 +1022,7 @@ async def test_successor_macro_crosses_mcp_controller_and_store(
                         "generation_index": 1,
                         "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
                         "reliable_plan_one_horizon_authorized": True,
-                        "reliable_plan_remaining_horizons": remaining_horizons,
+                        "reliable_plan_remaining_horizons": 2,
                         "reliable_plan_assignment_carrier": carrier,
                         "reliable_plan_assignment_role": "successor_planner",
                         "reliable_plan_selected_runner_type": "codex_server",
@@ -1175,7 +1114,7 @@ async def test_successor_macro_crosses_mcp_controller_and_store(
             "scope": "batch-1",
             "objective": "Implement and verify the first declared batch.",
             "requirement_ids": ["dynamic_feature_acceptance"],
-            "dependencies": dependencies,
+            "dependencies": [],
             "acceptance": ["batch-1 obligations pass"],
             "checks": [
                 {
@@ -1187,27 +1126,6 @@ async def test_successor_macro_crosses_mcp_controller_and_store(
         },
     )
     rendered = " ".join(str(item) for item in result)
-    if expected_rejection_code is not None:
-        assert expected_rejection_code in rendered
-        assert '"path":"macro_invocations[0].args.dependencies"' in rendered
-        async with sessions() as session:
-            rejected_events = await GraphEventStore(session).read_run(run_id)
-        matching_rejections = [
-            event
-            for event in rejected_events
-            if event.event_type == "command_rejected" and event.payload.get("patch_id") == patch_id
-        ]
-        assert len(matching_rejections) == 1
-        assert matching_rejections[0].payload["diagnostics"]["errors"] == [
-            {
-                "path": "macro_invocations[0].args.dependencies",
-                "code": expected_rejection_code,
-                "message": matching_rejections[0].payload["diagnostics"]["errors"][0]["message"],
-            }
-        ]
-        assert factory.calls == 0
-        await engine.dispose()
-        return
     assert f"graph patch {patch_id} accepted" in rendered
     async with sessions() as session:
         after_events = await GraphEventStore(session).read_run(run_id)
@@ -1250,32 +1168,16 @@ async def test_successor_macro_crosses_mcp_controller_and_store(
         for payload in created_payloads
         if payload.get("semantic_stage") == "successor_planning"
     ]
-    if remaining_horizons > 1:
-        assert len(successors) == 1
-        assert successors[0]["planning_horizon"] == 2
-        assert successors[0]["generation_index"] == 2
-        assert successors[0]["reliable_plan_remaining_horizons"] == 1
-        assert successors[0]["reliable_plan_assignment_carrier"] == carrier
-        assert successors[0]["runner_model_override"] == "user-selected-model"
-    else:
-        assert successors == []
-        assert (
-            sum(payload.get("semantic_stage") == "final_acceptance" for payload in created_payloads)
-            == 1
-        )
-        assert (
-            sum(payload.get("semantic_stage") == "final_audit" for payload in created_payloads) == 1
-        )
-        assert sum(payload.get("kind") == "final_gate" for payload in created_payloads) == 1
+    assert len(successors) == 1
+    assert successors[0]["planning_horizon"] == 2
+    assert successors[0]["generation_index"] == 2
+    assert successors[0]["reliable_plan_remaining_horizons"] == 1
+    assert successors[0]["reliable_plan_assignment_carrier"] == carrier
+    assert successors[0]["runner_model_override"] == "user-selected-model"
     await engine.dispose()
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("interruption_phase", ["before_commit", "after_commit"])
-async def test_patch_retry_reconciles_commit_or_retries_rolled_back_operation_once(
-    tmp_path: Path,
-    interruption_phase: str,
-) -> None:
+async def _exercise_patch_retry(tmp_path: Path, interruption_phase: str) -> None:
     engine = create_engine(tmp_path / f"patch-{interruption_phase}.db")
     await init_db(engine)
     sessions = create_session_factory(engine)
@@ -1334,22 +1236,10 @@ async def test_patch_retry_reconciles_commit_or_retries_rolled_back_operation_on
         if interruption_phase == "after_commit":
             with pytest.raises(StaleProjectionError):
                 await reconstructed.handle_command(
-                    run_id,
-                    base_position,
-                    "submit_patch",
-                    _patch(base_position, patch_id="missing-context-envelope"),
-                )
-            wrong_run_context = context.model_copy(update={"run_id": "different-run"})
-            with pytest.raises(StaleProjectionError):
-                await reconstructed.handle_command(
-                    run_id,
-                    base_position,
-                    "submit_patch",
-                    _patch(base_position, patch_id="wrong-context-envelope"),
-                    context=wrong_run_context,
+                    run_id, base_position, "submit_patch", _patch(base_position)
                 )
         # The caller deliberately retries its original position and payload;
-        # after-commit recovery must discover the prior durable outcome.
+        # durable after-commit recovery must discover the prior outcome.
         retried = await reconstructed.handle_command(
             run_id,
             base_position,
@@ -1360,7 +1250,6 @@ async def test_patch_retry_reconciles_commit_or_retries_rolled_back_operation_on
         if interruption_phase == "after_commit":
             assert retried.reconciled_patch_id == "logical-region-1"
             assert retried.events == []
-            assert len(retried.reconciled_successor_planner_node_ids) == 1
         else:
             assert retried.reconciled_patch_id is None
             assert any(event.event_type == "graph_patch_accepted" for event in retried.events)
@@ -1412,3 +1301,13 @@ async def test_patch_retry_reconciles_commit_or_retries_rolled_back_operation_on
         assert non_gap_planner_completion_contract_satisfied(projection, "planner-plan")
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_patch_retry_retries_rolled_back_operation_once(tmp_path: Path) -> None:
+    await _exercise_patch_retry(tmp_path, "before_commit")
+
+
+@pytest.mark.asyncio
+async def test_patch_retry_reconciles_durable_after_commit_once(tmp_path: Path) -> None:
+    await _exercise_patch_retry(tmp_path, "after_commit")

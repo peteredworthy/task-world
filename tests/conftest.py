@@ -60,7 +60,7 @@ def _isolate_git_session_path() -> Generator[None, None, None]:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_git(tmp_path: Path) -> Generator[None, None, None]:
+def _isolate_git(tmp_path_factory: pytest.TempPathFactory) -> Generator[None, None, None]:
     """Isolate git operations from the project repo and pre-commit state.
 
     Under pytest-xdist (especially inside pre-commit hooks), git env vars
@@ -98,7 +98,7 @@ def _isolate_git(tmp_path: Path) -> Generator[None, None, None]:
 
     os.environ.pop("ORCHESTRATOR_RUN_WORKTREE", None)
     os.environ.pop("ORCHESTRATOR_RUN_BRANCH", None)
-    os.environ["GIT_CEILING_DIRECTORIES"] = str(tmp_path)
+    os.environ["GIT_CEILING_DIRECTORIES"] = str(tmp_path_factory.getbasetemp())
     for var in vars_to_restore:
         os.environ.pop(var, None)
     try:

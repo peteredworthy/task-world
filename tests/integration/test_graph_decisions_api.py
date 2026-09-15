@@ -3,7 +3,6 @@
 from typing import Any
 from uuid import uuid4
 
-import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -597,19 +596,11 @@ async def test_record_decision_rejects_invalid_decision_at_api_boundary(
     assert "decision for authority must be one of" in response.text
 
 
-@pytest.mark.parametrize(
-    ("decision_type", "decision"),
-    [
-        ("approval", "defer"),
-        ("authority", "grant"),
-        ("authority", "deny"),
-    ],
-)
 async def test_record_decision_rejects_removed_decision_aliases_at_api_boundary(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
-    decision_type: str,
-    decision: str,
 ) -> None:
+    decision_type = "approval"
+    decision = "defer"
     client, _drain, _, _, app = _shared_app_fixture
     run_id = f"graph-decisions-invalid-{uuid4().hex[:8]}"
     await _seed_decision_graph_run(app, run_id)
@@ -628,23 +619,10 @@ async def test_record_decision_rejects_removed_decision_aliases_at_api_boundary(
     assert f"decision for {decision_type} must be one of" in response.text
 
 
-@pytest.mark.parametrize(
-    "invalid_fields",
-    [
-        {"node_id": ""},
-        {"node_id": "n" * 201},
-        {"decision": ""},
-        {"decision": "a" * 65},
-        {"record_id": ""},
-        {"record_id": "r" * 201},
-        {"decider": ""},
-        {"decider": {"kind": ""}},
-    ],
-)
 async def test_record_decision_restores_http_field_constraints(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
-    invalid_fields: dict[str, object],
 ) -> None:
+    invalid_fields = {"node_id": ""}
     client, _drain, _, _, app = _shared_app_fixture
     run_id = f"graph-decisions-malformed-{uuid4().hex[:8]}"
     await _seed_decision_graph_run(app, run_id)

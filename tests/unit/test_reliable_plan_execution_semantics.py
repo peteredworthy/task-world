@@ -552,6 +552,31 @@ def test_declared_batch_write_worker_cannot_relabel_itself_corrective_work() -> 
     )
 
 
+@pytest.mark.parametrize("declared_batch_violation", [False, True])
+def test_submission_contract_classifies_declared_batch_violation_exactly(
+    declared_batch_violation: bool,
+) -> None:
+    if declared_batch_violation:
+        projection, _revision_node, _edges = _semantic_plan_revision_facts()
+    else:
+        projection = build_projection([])
+    node = {
+        "node_id": "worker-invalid-contract",
+        "kind": "worker",
+        "role": "builder",
+        "state": "planned",
+        "access_mode": "write",
+        "effect_contract": "effectful_write",
+        "semantic_stage": "corrective_work",
+    }
+
+    classification = classify_write_worker_semantics(
+        node["node_id"], node, projection, edges=[]
+    )
+
+    assert (classification == "invalid_declared_batch_write") is declared_batch_violation
+
+
 def _correction_supersession_facts() -> tuple[Any, dict[str, Any]]:
     projection = build_projection(
         [

@@ -90,6 +90,24 @@ def test_present_empty_node_states_is_valid_complete_evidence() -> None:
     assert result.unavailable == ()
 
 
+@pytest.mark.parametrize(
+    "graph",
+    [
+        {"run_id": "run-1", "node_states": {}, "truncated": True},
+        {
+            "run_id": "run-1",
+            "node_states": {},
+            "collection_meta": {"node_states": {"truncated": True}},
+        },
+    ],
+)
+def test_graph_response_marks_both_truncation_metadata_shapes_incomplete(
+    graph: dict,
+) -> None:
+    parsed = diagnostic._GraphResponse.model_validate(graph)
+    assert parsed.node_states_are_complete() is False
+
+
 def test_wrong_run_and_malformed_node_boundaries_raise_typed_errors() -> None:
     with pytest.raises(ValueError):
         diagnostic.build_diagnostic(

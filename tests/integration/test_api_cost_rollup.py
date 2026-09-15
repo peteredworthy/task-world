@@ -115,25 +115,19 @@ async def test_cost_rollup_reads_only_graph_usage_events_and_applies_sql_filters
     ]
 
 
-@pytest.mark.parametrize(
-    "status",
-    ["draft", "active", "paused", "stopping", "completed", "failed", "cancelled"],
-)
-async def test_cost_rollup_accepts_every_run_status_literal(
-    _shared_app_fixture: tuple[object, object, object, object, object], status: str
+async def test_cost_rollup_accepts_representative_run_status_filter(
+    _shared_app_fixture: tuple[object, object, object, object, object],
 ) -> None:
+    status = "draft"
     client, _, _, _, _ = _shared_app_fixture
     response = await client.get("/api/runs/cost-rollup", params={"status": status})
     assert response.status_code == 200
 
 
-@pytest.mark.parametrize(
-    "runner_type",
-    ["openhands_local", "openhands_docker", "cli_subprocess", "codex_server"],
-)
-async def test_cost_rollup_accepts_every_selectable_runner_literal(
-    _shared_app_fixture: tuple[object, object, object, object, object], runner_type: str
+async def test_cost_rollup_accepts_representative_runner_filter(
+    _shared_app_fixture: tuple[object, object, object, object, object],
 ) -> None:
+    runner_type = "openhands_local"
     client, _, _, _, _ = _shared_app_fixture
     response = await client.get("/api/runs/cost-rollup", params={"runner_type": runner_type})
     assert response.status_code == 200

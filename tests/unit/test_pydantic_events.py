@@ -6,6 +6,7 @@ datetime fields produce ISO 8601 strings in model_dump(mode="json").
 """
 
 from datetime import datetime, timezone
+import json
 
 import pytest
 
@@ -498,6 +499,30 @@ def test_deserialize_event_preserves_non_historical_runner_values(runner_value: 
     assert isinstance(event, AttemptUpdated)
     assert event.agent_runner_type == runner_value
     assert event.agent_settings == {"nested": {"runner_type": runner_value}}
+
+
+@pytest.mark.parametrize(
+    ("legacy_type", "canonical_type", "expected_type"),
+    [
+        ("agent_output_event", "agent_output", AgentOutputEvent),
+        ("agent_error_event", "agent_error", AgentErrorEvent),
+        ("health_check_event", "health_check", HealthCheckEvent),
+    ],
+)
+def test_deserialize_event_accepts_historical_event_type_aliases(
+    legacy_type: str,
+    canonical_type: str,
+    expected_type: type[WorkflowEvent],
+) -> None:
+    payload = {
+        "run_id": "run-alias",
+        "event_type": canonical_type,
+        "timestamp": NOW_ISO,
+    }
+    event = deserialize_event(legacy_type, json.dumps(payload))
+
+    assert isinstance(event, expected_type)
+    assert event.event_type == canonical_type
 
 
 # ---------------------------------------------------------------------------

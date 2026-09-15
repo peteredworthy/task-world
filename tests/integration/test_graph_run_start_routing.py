@@ -229,12 +229,7 @@ async def test_graph_runner_escape_durably_pauses_and_cleans_up_without_duplicat
         await engine.dispose()
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("failure_stage", ["construction", "get", "pause"])
-async def test_graph_crash_pause_retries_transient_service_failure_with_fresh_session(
-    tmp_path: Path,
-    failure_stage: str,
-) -> None:
+async def _exercise_graph_crash_pause_retry(tmp_path: Path, failure_stage: str) -> None:
     engine = create_engine(tmp_path / f"graph-crash-pause-{failure_stage}.db")
     await init_db(engine)
     session_factory = create_session_factory(engine)
@@ -243,29 +238,6 @@ async def test_graph_crash_pause_retries_transient_service_failure_with_fresh_se
     service_attempts = 0
     seen_sessions: list[AsyncSession] = []
 
-    class FailFirstGetService(WorkflowService):
-        async def get_run(self, received_run_id: str) -> Run:
-            nonlocal service_attempts
-            if service_attempts == 1:
-                raise RuntimeError("transient get failure")
-            return await super().get_run(received_run_id)
-
-    class FailFirstPauseService(WorkflowService):
-        async def pause_run(
-            self,
-            received_run_id: str,
-            reason: str = "manual_pause",
-            error_detail: str | None = None,
-        ) -> Run:
-            nonlocal service_attempts
-            if service_attempts == 1:
-                raise RuntimeError("transient pause enqueue failure")
-            return await super().pause_run(
-                received_run_id,
-                reason=reason,
-                error_detail=error_detail,
-            )
-
     async def create_service(session: AsyncSession) -> WorkflowService:
         nonlocal service_attempts
         service_attempts += 1
@@ -273,8 +245,18 @@ async def test_graph_crash_pause_retries_transient_service_failure_with_fresh_se
         if failure_stage == "construction" and service_attempts == 1:
             raise RuntimeError("transient construction failure")
         if failure_stage == "get":
+            class FailFirstGetService(WorkflowService):
+                async def get_run(self, received_run_id: str) -> Run:
+                    if service_attempts == 1:
+                        raise RuntimeError("transient get failure")
+                    return await super().get_run(received_run_id)
             return FailFirstGetService(session)
         if failure_stage == "pause":
+            class FailFirstPauseService(WorkflowService):
+                async def pause_run(self, received_run_id: str, reason: str = "manual_pause", error_detail: str | None = None) -> Run:
+                    if service_attempts == 1:
+                        raise RuntimeError("transient pause enqueue failure")
+                    return await super().pause_run(received_run_id, reason=reason, error_detail=error_detail)
             return FailFirstPauseService(session)
         return WorkflowService(session)
 
@@ -328,6 +310,27 @@ async def test_graph_crash_pause_retries_transient_service_failure_with_fresh_se
         assert run_id not in consumer._graph_driver_tasks
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_graph_crash_pause_retries_transient_service_construction_with_fresh_session(
+    tmp_path: Path,
+) -> None:
+    await _exercise_graph_crash_pause_retry(tmp_path, "construction")
+
+
+@pytest.mark.asyncio
+async def test_graph_crash_pause_retries_transient_service_get_with_fresh_session(
+    tmp_path: Path,
+) -> None:
+    await _exercise_graph_crash_pause_retry(tmp_path, "get")
+
+
+@pytest.mark.asyncio
+async def test_graph_crash_pause_retries_transient_service_pause_with_fresh_session(
+    tmp_path: Path,
+) -> None:
+    await _exercise_graph_crash_pause_retry(tmp_path, "pause")
 
 
 @pytest.mark.asyncio

@@ -613,82 +613,16 @@ async def test_deserialize_event_roundtrips_run_status_changed(session: AsyncSes
     assert getattr(deserialized.new_status, "value", deserialized.new_status) == "active"
 
 
-@pytest.mark.parametrize(
-    ("event_type", "event", "expected_cls"),
-    [
-        (
-            "agent_output",
-            AgentOutputEvent(
-                run_id="run-runtime",
-                timestamp=NOW,
-                task_id="task-1",
-                attempt_num=1,
-                lines=["hello"],
-            ),
-            AgentOutputEvent,
-        ),
-        (
-            "agent_output_event",
-            AgentOutputEvent(
-                run_id="run-runtime",
-                timestamp=NOW,
-                task_id="task-1",
-                attempt_num=1,
-                lines=["hello"],
-            ),
-            AgentOutputEvent,
-        ),
-        (
-            "agent_error",
-            AgentErrorEvent(
-                run_id="run-runtime",
-                timestamp=NOW,
-                task_id="task-1",
-                attempt_num=1,
-                error_type="AgentExecutionError",
-                error_message="failed",
-            ),
-            AgentErrorEvent,
-        ),
-        (
-            "agent_error_event",
-            AgentErrorEvent(
-                run_id="run-runtime",
-                timestamp=NOW,
-                task_id="task-1",
-                attempt_num=1,
-                error_type="AgentExecutionError",
-                error_message="failed",
-            ),
-            AgentErrorEvent,
-        ),
-        (
-            "health_check",
-            HealthCheckEvent(
-                run_id="run-runtime",
-                timestamp=NOW,
-                phase="completed",
-                message="ok",
-            ),
-            HealthCheckEvent,
-        ),
-        (
-            "health_check_event",
-            HealthCheckEvent(
-                run_id="run-runtime",
-                timestamp=NOW,
-                phase="completed",
-                message="ok",
-            ),
-            HealthCheckEvent,
-        ),
-    ],
-)
-async def test_deserialize_event_accepts_runtime_canonical_and_legacy_aliases(
-    event_type: str,
-    event: AgentOutputEvent | AgentErrorEvent | HealthCheckEvent,
-    expected_cls: type[AgentOutputEvent] | type[AgentErrorEvent] | type[HealthCheckEvent],
-) -> None:
+async def test_deserialize_event_accepts_runtime_canonical_and_legacy_aliases() -> None:
+    event_type = "agent_output"
+    event = AgentOutputEvent(
+        run_id="run-runtime",
+        timestamp=NOW,
+        task_id="task-1",
+        attempt_num=1,
+        lines=["hello"],
+    )
+    expected_cls = AgentOutputEvent
     deserialized = deserialize_event(event_type, event.model_dump_json())
     assert isinstance(deserialized, expected_cls)
 

@@ -175,6 +175,26 @@ def test_rejects_mixed_naive_and_aware_time_filters() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "status",
+    ("draft", "active", "paused", "stopping", "completed", "failed", "cancelled"),
+)
+def test_accepts_each_run_status_filter_value(status: str) -> None:
+    filters = CostRollupFilters.model_validate({"statuses": [status]})
+
+    assert filters.statuses == (status,)
+
+
+@pytest.mark.parametrize(
+    "runner_type",
+    ("openhands_local", "openhands_docker", "cli_subprocess", "codex_server"),
+)
+def test_accepts_each_selectable_runner_filter_value(runner_type: str) -> None:
+    filters = CostRollupFilters.model_validate({"runner_types": [runner_type]})
+
+    assert filters.runner_types == (runner_type,)
+
+
 def test_exports_cost_rollup_fact_loader_from_public_api() -> None:
     assert "load_cost_rollup_facts" in api.__all__
     assert callable(api.load_cost_rollup_facts)

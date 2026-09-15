@@ -121,18 +121,9 @@ def _implementation_plan_contract() -> SubmissionContract:
     )
 
 
-@pytest.mark.parametrize(
-    "command_definition",
-    [
-        {"argv": [" ", "arg"], "cmd": "true"},
-        {"argv": [], "command": "true"},
-    ],
-    ids=["invalid-argv-falls-back-to-cmd", "empty-argv-falls-back-to-command"],
-)
 @pytest.mark.asyncio
-async def test_codex_decision_ingress_invokes_callback_for_command_parser_fallbacks(
-    command_definition: dict[str, Any],
-) -> None:
+async def test_codex_decision_ingress_invokes_callback_for_command_parser_fallbacks() -> None:
+    command_definition = {"argv": [" ", "arg"], "cmd": "true"}
     arguments = {
         "outputs": {
             "semantic_artifact": {

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from orchestrator.graph import (
     Actor,
@@ -34,6 +35,7 @@ from orchestrator.graph import (
     reduce_event,
     reliable_plan_assignment_carrier,
     retry_not_before_by_node_view,
+    RecordDecisionCommand,
 )
 from tests.unit.graph_test_utils import canonical_event_payload
 
@@ -12170,6 +12172,47 @@ def test_record_decision_rejects_invalid_decision() -> None:
 
     assert output[0].event_type == "command_rejected"
     assert "payload [value_error]" in output[0].payload["reason"]
+
+
+@pytest.mark.parametrize(
+    "decision_type,decision",
+    [("approval", "defer"), ("authority", "grant"), ("authority", "deny")],
+)
+def test_record_decision_command_rejects_removed_aliases(
+    decision_type: str, decision: str
+) -> None:
+    with pytest.raises(ValidationError, match="must be one of"):
+        RecordDecisionCommand(
+            decision_type=decision_type,
+            node_id="gate-1" if decision_type == "approval" else "authority-1",
+            decision=decision,
+            decider={"kind": "human", "id": "alice"},
+        )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("node_id", ""),
+        ("decision", ""),
+        ("decision", "a" * 65),
+        ("record_id", ""),
+        ("decider", {"kind": ""}),
+    ],
+)
+def test_record_decision_command_rejects_invalid_domain_fields(
+    field: str,
+    value: object,
+) -> None:
+    payload: dict[str, object] = {
+        "decision_type": "approval",
+        "node_id": "gate-1",
+        "decision": "approved",
+        "decider": {"kind": "human", "id": "alice"},
+    }
+    payload[field] = value
+    with pytest.raises(ValidationError):
+        RecordDecisionCommand.model_validate(payload)
 
 
 def test_record_decision_rejects_malformed_typed_authority_record_atomically() -> None:

@@ -403,6 +403,98 @@ def test_constructor_builds_final_acceptance_audit_and_completion_dependencies()
     assert audit["node_id"] in recovery_sources
 
 
+def _successor_dependency_projection(
+    *, materialized_batch: bool, single_batch: bool = False
+) -> Any:
+    plan_record = _plan_record()
+    if single_batch:
+        plan_record["value"]["content"] = {"batches": [{"batch_id": "batch-1"}]}
+    events = [
+        *_base_events(successor=True, remaining=1),
+        event(
+            "node_created",
+            {
+                "node_id": "worker-discovery",
+                "kind": "worker",
+                "role": "discovery",
+                "state": "completed",
+            },
+            position=4,
+        ),
+        event(
+            "node_created",
+            {
+                "node_id": "verifier-plan",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "completed",
+                "semantic_stage": "plan_verification",
+            },
+            position=5,
+        ),
+        event("output_record_accepted", plan_record, position=6),
+        event("output_record_accepted", _plan_verification_record(), position=7),
+    ]
+    if materialized_batch:
+        events.append(
+            event(
+                "node_created",
+                {
+                    "node_id": "verifier-batch-1",
+                    "kind": "verifier",
+                    "role": "verifier",
+                    "state": "completed",
+                    "semantic_stage": "effectful_batch",
+                    "declared_batch_id": "batch-1",
+                    "task_region_id": "batch-1-region",
+                },
+                position=8,
+            )
+        )
+    return build_projection(events)
+
+
+@pytest.mark.parametrize(
+    ("case", "success", "dependencies", "materialized_batch", "match"),
+    [
+        ("two-batches-no-deps", True, [], False, None),
+        ("one-batch-no-deps", True, [], False, None),
+        ("self-dependency", False, ["batch-2"], False, "self dependency"),
+        ("undeclared-dependency", False, ["missing"], False, "undeclared batches"),
+        (
+            "non-materialized-dependency",
+            False,
+            ["batch-1"],
+            False,
+            "not yet materialized",
+        ),
+    ],
+)
+def test_successor_macro_dependency_matrix_is_exact_and_fails_closed(
+    case: str,
+    success: bool,
+    dependencies: list[str],
+    materialized_batch: bool,
+    match: str | None,
+) -> None:
+    if dependencies == [] and match is None:
+        if case == "two-batches-no-deps":
+            projection = build_projection(_base_events(successor=False))
+            args = _semantic_args(scope="whole-feature")
+        else:
+            projection = _successor_dependency_projection(
+                materialized_batch=materialized_batch, single_batch=True
+            )
+            args = _semantic_args(scope="batch-1", dependencies=dependencies)
+        assert _expand(projection, args)
+        return
+
+    projection = _successor_dependency_projection(materialized_batch=materialized_batch)
+    args = _semantic_args(scope="batch-2", dependencies=dependencies)
+    with pytest.raises(ValueError, match=match):
+        _expand(projection, args)
+
+
 def test_constructor_schema_rejects_planner_authored_execution_identity() -> None:
     args = {**_semantic_args(scope="batch-1"), "worker_id": "planner-picked-worker"}
     command = SubmitPatchCommand.model_validate(

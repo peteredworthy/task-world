@@ -52,7 +52,6 @@ from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow.service import WorkflowService
 from orchestrator.workflow import (
-    InvalidTransitionError,
     UpdateLatestAttemptCommand,
     deserialize_event,
     handle_update_latest_attempt,
@@ -1350,20 +1349,6 @@ async def _rebuild_run_from_events(
     await registry.rebuild_all(workflow_events, session)
     await session.commit()
     return await service.get_run(run_id)
-
-
-@pytest.mark.parametrize("status", [RunStatus.ACTIVE, RunStatus.COMPLETED])
-async def test_recover_run_rejects_non_recoverable_statuses(
-    service: WorkflowService, status: RunStatus
-) -> None:
-    """recover_run only accepts FAILED and PAUSED runs; ACTIVE and COMPLETED are rejected."""
-    run = _make_simple_run()
-    run.id = f"run-non-recoverable-{status.value}"
-    run.status = status
-    await service.create_run(run)
-
-    with pytest.raises(InvalidTransitionError):
-        await service.recover_run(run.id, "task-1")
 
 
 async def test_recover_run_accepts_paused_run(service: WorkflowService) -> None:

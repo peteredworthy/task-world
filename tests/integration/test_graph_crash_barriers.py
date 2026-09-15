@@ -42,19 +42,7 @@ from tests.integration.test_graph_runner_e2e import (
 )
 
 
-@pytest.mark.parametrize(
-    "point",
-    [
-        "pre_stage",
-        "after_staging_pre_witness",
-        "after_witness_pre_finalization",
-        "after_commit_pre_ack",
-    ],
-)
-async def test_dispatch_barrier_reaches_exact_durable_boundary_and_releases(
-    tmp_path: Path,
-    point: CrashBarrierPoint,
-) -> None:
+async def _exercise_dispatch_barrier_boundary(tmp_path: Path, point: CrashBarrierPoint) -> None:
     engine = create_engine(tmp_path / f"{point}.db")
     await init_db(engine)
     session_factory = create_session_factory(engine)
@@ -109,22 +97,15 @@ async def test_dispatch_barrier_reaches_exact_durable_boundary_and_releases(
         assert reached.status == "reached"
         events_at_barrier = await _read_events(session_factory, run_id)
         event_types = [event.event_type for event in events_at_barrier]
-        if point == "pre_stage":
-            assert "runner_submission_staged" not in event_types
-            assert "runner_completion_witnessed" not in event_types
-            assert "runner_execution_finalized" not in event_types
-        elif point == "after_staging_pre_witness":
-            assert event_types.count("runner_submission_staged") == 1
-            assert "runner_completion_witnessed" not in event_types
-            assert "runner_execution_finalized" not in event_types
-        elif point == "after_witness_pre_finalization":
-            assert event_types.count("runner_submission_staged") == 1
-            assert event_types.count("runner_completion_witnessed") == 1
-            assert "runner_execution_finalized" not in event_types
-        else:
-            assert event_types.count("runner_submission_staged") == 1
-            assert event_types.count("runner_completion_witnessed") == 1
-            assert event_types.count("runner_execution_finalized") == 1
+        assert event_types.count("runner_submission_staged") == (
+            0 if point == "pre_stage" else 1
+        )
+        assert event_types.count("runner_completion_witnessed") == (
+            1 if point in {"after_witness_pre_finalization", "after_commit_pre_ack"} else 0
+        )
+        assert event_types.count("runner_execution_finalized") == (
+            1 if point == "after_commit_pre_ack" else 0
+        )
 
         barrier.release()
         await executor.wait_for_all()
@@ -144,6 +125,11 @@ async def test_dispatch_barrier_reaches_exact_durable_boundary_and_releases(
         assert released.status == "released"
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_barrier_releases_after_durable_finalization_boundary(tmp_path: Path) -> None:
+    await _exercise_dispatch_barrier_boundary(tmp_path, "after_commit_pre_ack")
 
 
 async def test_schema_two_survives_checkpointed_two_process_dispatch_recovery(

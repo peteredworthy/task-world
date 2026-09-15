@@ -10,9 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.runners import CodexServerAgent
-from orchestrator.runners.types import ExecutionContext
 from orchestrator.config import ChecklistStatus
+from orchestrator.runners import CodexServerAgent, ExecutionContext, SubmissionAcknowledgement
 
 
 def _ctx() -> ExecutionContext:
@@ -31,6 +30,39 @@ async def _noop_checklist(req_id: str, status: ChecklistStatus, note: str | None
 
 async def _noop_submit() -> None:
     pass
+
+
+@pytest.mark.parametrize(
+    ("disposition", "message"),
+    [
+        ("rejected", "submission rejected: acceptance command failed"),
+        ("durably_staged", "durably staged; pending runner completion and not yet accepted"),
+        ("finalized_accepted", "submission is durably finalized and accepted"),
+    ],
+)
+async def test_submit_callback_serializes_each_acknowledgement_disposition(
+    disposition: str,
+    message: str,
+) -> None:
+    async def submit() -> SubmissionAcknowledgement:
+        return SubmissionAcknowledgement.model_validate(
+            {
+                "disposition": disposition,
+                "message": message,
+                "execution_id": "execution-1",
+                "graph_position": 12,
+            }
+        )
+
+    rendered = await CodexServerAgent()._route_tool_call(
+        tool_name="submit",
+        args={},
+        on_checklist_update=_noop_checklist,
+        on_submit=submit,
+    )
+
+    assert f'"disposition":"{disposition}"' in rendered
+    assert message in rendered
 
 
 # ---------------------------------------------------------------------------

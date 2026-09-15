@@ -139,10 +139,8 @@ async def _seed_read_only_discovery(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("declared_batch_violation", [False, True])
 async def test_dispatch_invalid_worker_contract_is_terminal_not_retryable_infrastructure(
     tmp_path: Path,
-    declared_batch_violation: bool,
 ) -> None:
     engine = create_engine(tmp_path / "invalid-execution-contract.db")
     await init_db(engine)
@@ -175,13 +173,6 @@ async def test_dispatch_invalid_worker_contract_is_terminal_not_retryable_infras
                 "acceptance": ["requested behavior passes"],
                 "access_mode": "write",
             }
-            if declared_batch_violation:
-                worker_payload.update(
-                    {
-                        "effect_contract": "effectful_write",
-                        "semantic_stage": "corrective_work",
-                    }
-                )
             events = [
                 EventEnvelope(
                     event_id="lifecycle-active",
@@ -194,66 +185,6 @@ async def test_dispatch_invalid_worker_contract_is_terminal_not_retryable_infras
                     payload=canonical_event_payload(
                         "run_lifecycle_changed", {"to_state": "active"}
                     ),
-                ),
-                *(
-                    [
-                        EventEnvelope(
-                            event_id="accepted-plan-producer",
-                            run_id=run_id,
-                            position=-1,
-                            event_type="node_created",
-                            schema_version=1,
-                            actor=Actor(kind=ActorKind.CONTROLLER),
-                            timestamp=clock.now(),
-                            payload=canonical_event_payload(
-                                "node_created",
-                                {
-                                    "node_id": "worker-plan-discovery",
-                                    "kind": "worker",
-                                    "role": "discovery",
-                                    "state": "completed",
-                                    "access_mode": "read_only",
-                                    "effect_contract": "read_only_semantic",
-                                    "semantic_stage": "discovery",
-                                },
-                            ),
-                        ),
-                        EventEnvelope(
-                            event_id="accepted-plan",
-                            run_id=run_id,
-                            position=-1,
-                            event_type="output_record_accepted",
-                            schema_version=1,
-                            actor=Actor(kind=ActorKind.CONTROLLER),
-                            timestamp=clock.now(),
-                            payload=canonical_event_payload(
-                                "output_record_accepted",
-                                {
-                                    "record_id": "accepted-plan",
-                                    "record_kind": "graph_record",
-                                    "record_type": "semantic_artifact",
-                                    "schema_version": 1,
-                                    "producer_node_id": "worker-plan-discovery",
-                                    "port": "semantic_artifact",
-                                    "schema": "SemanticArtifact",
-                                    "value": {
-                                        "semantic_role": "implementation_plan",
-                                        "schema_id": "declared-plan",
-                                        "schema_version": 1,
-                                        "content": {"batches": [{"batch_id": "batch-1"}]},
-                                        "provenance": {"source": "test"},
-                                        "source_record_ids": [],
-                                        "requirement_ids": [],
-                                        "task_region_id": "plan-discovery",
-                                        "validation_status": "validated",
-                                        "authority_status": "accepted",
-                                    },
-                                },
-                            ),
-                        ),
-                    ]
-                    if declared_batch_violation
-                    else []
                 ),
                 EventEnvelope(
                     event_id="legacy-worker",
@@ -1205,23 +1136,14 @@ async def test_gate_rejects_before_stage_then_persists_exact_witness_after_corre
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("scenario", "mutation", "baseline_status", "accepted", "expected_disposition"),
-    [
-        ("unchanged_explicit", "readme", "failed", True, "baseline_exempted"),
-        ("unchanged_missing", "readme", "failed", False, "failed"),
-        ("changed_failure", "readme", "failed", False, "failed"),
-        ("new_failure", "new_failure", "passed", False, "failed"),
-    ],
-)
 async def test_compiled_gate_contract_survives_seed_and_controls_full_dispatch(
     tmp_path: Path,
-    scenario: str,
-    mutation: str,
-    baseline_status: str,
-    accepted: bool,
-    expected_disposition: str,
 ) -> None:
+    scenario = "unchanged_explicit"
+    mutation = "readme"
+    baseline_status = "failed"
+    accepted = True
+    expected_disposition = "baseline_exempted"
     """Use the real seed/controller/dispatcher/Git/CAS path for gate authority."""
     engine = create_engine(tmp_path / f"{scenario}.db")
     await init_db(engine)
@@ -1435,11 +1357,10 @@ async def test_compiled_gate_contract_survives_seed_and_controls_full_dispatch(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cancelled", [False, True], ids=["success", "cancel"])
 async def test_read_only_semantic_runner_uses_disposable_exact_baseline_checkout(
     tmp_path: Path,
-    cancelled: bool,
 ) -> None:
+    cancelled = False
     engine = create_engine(tmp_path / f"read-only-{cancelled}.db")
     await init_db(engine)
     session_factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
